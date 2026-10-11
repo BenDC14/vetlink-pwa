@@ -2,26 +2,32 @@ export default function LoginPage({ email, password, setEmail, setPassword, onLo
   return (
     <section className="login-card">
       <div className="brand-row">
-        <div className="brand-badge">VetLink</div>
-        <span className="pill">Secure portal</span>
+        <div className="brand-mark" aria-label="VetLink">V</div>
+        <div>
+          <p className="brand-name">VetLink</p>
+          <p className="brand-caption">Clinical workspace</p>
+        </div>
+
       </div>
 
       <div className="hero-copy">
-        <h1>Welcome back</h1>
-        <p>Sign in to continue your veterinary skin assessment workflow.</p>
+        <p className="eyebrow">Welcome back</p>
+        <p>Sign in to continue managing your clinic and patient care.</p>
       </div>
 
       <form className="login-form" onSubmit={onLogin}>
         <label>
-          <span>Email</span>
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@clinic.com" />
+          <span>Work email</span>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@clinic.com" autoComplete="email" />
         </label>
         <label>
           <span>Password</span>
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" />
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" />
         </label>
-        <button className="primary-btn" type="submit">Log in</button>
+        <button className="primary-btn" type="submit">Sign in <span aria-hidden="true">-&gt;</span></button>
       </form>
+
+      <p className="login-note">Access is limited to registered VetLink clinic staff.</p>
     </section>
   )
 }

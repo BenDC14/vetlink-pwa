@@ -46,6 +46,16 @@ input {
   overflow-x: hidden;
 }
 
+.auth-shell {
+  min-height: 100svh;
+  place-items: center;
+  padding: 32px 20px;
+  background:
+    radial-gradient(circle at 15% 20%, rgba(31, 143, 111, 0.13), transparent 34%),
+    radial-gradient(circle at 85% 80%, rgba(47, 124, 255, 0.1), transparent 30%),
+    #f5faf8;
+}
+
 .dashboard-shell {
   width: 100%;
   max-width: 100%;
@@ -100,25 +110,49 @@ input {
 }
 
 .login-card {
+  width: min(100%, 448px);
   display: grid;
-  gap: 16px;
+  gap: 28px;
+  padding: 36px;
+  border-radius: 20px;
+  box-shadow: 0 24px 60px rgba(18, 50, 45, 0.1);
 }
 
 .brand-row {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: 12px;
 }
 
-.brand-badge {
+.brand-mark {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  padding: 8px 12px;
-  border-radius: 999px;
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  border-radius: 12px;
   background: var(--brand-soft);
   color: var(--brand-strong);
   font-weight: 700;
+  font-size: 1.15rem;
+}
+
+.brand-name,
+.brand-caption {
+  margin: 0;
+}
+
+.brand-name {
+  color: var(--text);
+  font-weight: 800;
+  line-height: 1.1;
+}
+
+.brand-caption {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 0.76rem;
 }
 
 .pill,
@@ -128,6 +162,7 @@ input {
   align-items: center;
   justify-content: center;
   padding: 7px 10px;
+  margin-left: auto;
   border-radius: 999px;
   background: var(--surface-2);
   color: var(--muted);
@@ -135,9 +170,11 @@ input {
 }
 
 .hero-copy h1 {
-  margin: 0 0 8px;
-  font-size: clamp(1.6rem, 3vw, 2.3rem);
-  line-height: 1.15;
+  max-width: 350px;
+  margin: 0 0 10px;
+  font-size: clamp(1.8rem, 4vw, 2.35rem);
+  letter-spacing: -0.04em;
+  line-height: 1.08;
 }
 
 .hero-copy p {
@@ -168,6 +205,9 @@ input {
   background: linear-gradient(135deg, var(--brand) 0%, var(--accent) 100%);
   color: white;
   box-shadow: 0 12px 24px rgba(31, 143, 111, 0.2);
+  gap: 8px;
+  padding: 13px 18px;
+  font-weight: 700;
 }
 
 .secondary-btn {
@@ -325,7 +365,7 @@ input {
 
 .login-form {
   display: grid;
-  gap: 12px;
+  gap: 18px;
 }
 
 .dashboard-shell {
@@ -577,6 +617,204 @@ input {
   border-radius: 12px;
   background: var(--surface);
   border: 1px solid #cfcfd1;
+}
+
+/* Staff management & modal additions */
+.staff-header-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.staff-filter-group {
+  display: flex;
+  gap: 10px;
+  flex: 1;
+  max-width: 520px;
+}
+
+.staff-filter-group .search-input {
+  min-height: 44px;
+}
+
+.staff-filter-group select {
+  padding: 8px 14px;
+  border-radius: 6px;
+  border: 1px solid #d9d9dd;
+  background: #f6f6f6;
+  color: var(--text);
+  font-weight: 600;
+  min-height: 44px;
+}
+
+.status-badge.clickable {
+  cursor: pointer;
+  user-select: none;
+  border: none;
+  font: inherit;
+  font-weight: 700;
+  transition: opacity 0.15s ease, transform 0.15s ease;
+}
+.status-badge.clickable:hover {
+  opacity: 0.85;
+  transform: translateY(-1px);
+}
+
+.sync-pending-tag {
+  display: inline-block;
+  font-size: 0.72rem;
+  padding: 2px 6px;
+  background: rgba(255, 123, 91, 0.15);
+  color: #ff7b5b;
+  border-radius: 4px;
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.alert-banner {
+  padding: 12px 16px;
+  border-radius: 8px;
+  margin-bottom: 14px;
+  font-size: 0.92rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.alert-banner.error {
+  background: #fde8e8;
+  color: #9b1c1c;
+  border: 1px solid #f8b4b4;
+}
+.alert-banner.success {
+  background: #def7ec;
+  color: #03543f;
+  border: 1px solid #bcf0da;
+}
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(4px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 1000;
+  padding: 16px;
+}
+
+.modal-dialog {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 480px;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  overflow: hidden;
+  animation: modalFadeIn 0.2s ease-out;
+}
+
+@keyframes modalFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(12px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+.modal-header {
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.modal-header h3 {
+  margin: 0;
+  font-size: 1.15rem;
+  color: var(--text-h);
+}
+
+.modal-close-btn {
+  background: transparent;
+  border: none;
+  font-size: 1.4rem;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  min-width: 44px;
+  min-height: 44px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+}
+.modal-close-btn:hover {
+  background: var(--surface-2);
+  color: var(--text-h);
+}
+
+.modal-form {
+  padding: 20px;
+  display: grid;
+  gap: 14px;
+}
+
+.modal-form label {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.modal-form input,
+.modal-form select {
+  width: 100%;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  min-height: 44px;
+  outline: none;
+}
+
+.modal-form input:focus,
+.modal-form select:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(31, 143, 111, 0.15);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.btn-danger {
+  background: #d9534f;
+  color: white;
+  border: none;
+  border-radius: 8px;
+  padding: 10px 18px;
+  font-weight: 700;
+  cursor: pointer;
+  min-height: 44px;
+}
+.btn-danger:hover {
+  background: #c9302c;
 }
 
 .controls-row {
@@ -1058,11 +1296,40 @@ input {
   border-radius: 12px;
   padding: 12px 14px;
   background: var(--surface-2);
+  color: var(--text);
+  outline: none;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.login-form input::placeholder {
+  color: #8aa19b;
+}
+
+.login-form input:focus {
+  border-color: var(--brand);
+  background: var(--surface);
+  box-shadow: 0 0 0 4px rgba(31, 143, 111, 0.12);
+}
+
+.login-note {
+  margin: -8px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  text-align: center;
 }
 
 @media (max-width: 600px) {
   .app-shell {
     padding-top: 14px;
+  }
+
+  .auth-shell {
+    padding: 20px 14px;
+  }
+
+  .login-card {
+    padding: 28px 22px;
   }
 
   .status-strip {

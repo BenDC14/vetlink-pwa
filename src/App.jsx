@@ -76,7 +76,7 @@ function App() {
   }
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${!loggedIn ? 'auth-shell' : ''}`}>
       {!loggedIn ? (
         <LoginPage email={email} password={password} setEmail={setEmail} setPassword={setPassword} onLogin={handleLogin} />
       ) : (
