@@ -1,4 +1,4 @@
-export default function LoginPage({ email, password, setEmail, setPassword, onLogin }) {
+export default function Login({ email, password, setEmail, setPassword, onLogin }) {
   return (
     <section className="login-card">
       <div className="brand-row">

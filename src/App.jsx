@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import heroImg from './assets/hero.png'
 import './App.css'
-import LoginPage from './pages/LoginPage'
+import Login from './pages/Login'
 import Clinic from './pages/Clinic'
 import Patients from './pages/Patients'
 import Staff from './pages/Staff'
@@ -78,7 +78,7 @@ function App() {
   return (
     <main className={`app-shell ${!loggedIn ? 'auth-shell' : ''}`}>
       {!loggedIn ? (
-        <LoginPage email={email} password={password} setEmail={setEmail} setPassword={setPassword} onLogin={handleLogin} />
+        <Login email={email} password={password} setEmail={setEmail} setPassword={setPassword} onLogin={handleLogin} />
       ) : (
         <div className="dashboard-shell">
           <aside className="dashboard-sidebar">
@@ -113,8 +113,13 @@ function App() {
           <section className="dashboard-panel">
             <header className="dashboard-header">
               <div>
-                <h2>Clinic Overview</h2>
-                <p>Quick insights for today’s veterinary cases</p>
+                <h2>{showTreatment ? 'Treatment' : showAdminApproval ? 'Admin Approval' : showNewPatient ? 'New Patient' : {
+                  clinic: 'Clinic Analysis',
+                  patients: 'Patient Records',
+                  staff: 'Manage Staff',
+                  sync: 'Sync',
+                  pending: 'Pending Approval',
+                }[activeView]}</h2>
               </div>
               <button className="secondary-btn" onClick={() => {
                 setLoggedIn(false)

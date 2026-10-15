@@ -137,7 +137,7 @@ export default function Sync() {
       </div>
 
       <div style={{ marginTop: 20 }}>
-        <h4 style={{ marginBottom: 10, color: 'var(--text-h)' }}>Pending Sync Queue</h4>
+        <h4 style={{ marginBottom: 10, color: '#000' }}>Pending Sync Queue</h4>
         <div className="patients-table-wrap">
           <table className="patients-table staff-table">
             <thead>
