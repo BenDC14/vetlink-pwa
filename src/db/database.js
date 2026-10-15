@@ -279,3 +279,73 @@ export async function deleteStaffUser(id) {
   await tx.done
   return id
 }
+
+export async function getPendingSyncQueue() {
+  const db = await initDatabase()
+  return db.getAll('syncQueue')
+}
+
+export async function performCloudSync(apiBaseUrl = 'http://localhost:8000') {
+  const db = await initDatabase()
+  const queue = await db.getAll('syncQueue')
+
+  if (!queue || queue.length === 0) {
+    return {
+      success: true,
+      syncedCount: 0,
+      errors: [],
+      message: 'Sync queue is empty. All local records are up to date.',
+    }
+  }
+
+  // 1. Push pending changes to FastAPI backend
+  const res = await fetch(`${apiBaseUrl}/api/sync`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ queue }),
+  })
+
+  if (!res.ok) {
+    throw new Error(`Cloud server responded with status HTTP ${res.status}`)
+  }
+
+  const result = await res.json()
+
+  // 2. Clear synced queue items & mark records as 'synced' in IndexedDB
+  if (result.synced_ids && result.synced_ids.length > 0) {
+    const tx = db.transaction(['syncQueue', 'users', 'patients'], 'readwrite')
+    const queueStore = tx.objectStore('syncQueue')
+    const userStore = tx.objectStore('users')
+    const patientStore = tx.objectStore('patients')
+
+    for (const item of queue) {
+      if (result.synced_ids.includes(item.id)) {
+        await queueStore.delete(item.id)
+
+        if (item.entityType === 'users') {
+          const user = await userStore.get(item.entityId)
+          if (user) {
+            user.syncStatus = 'synced'
+            await userStore.put(user)
+          }
+        } else if (item.entityType === 'patients') {
+          const patient = await patientStore.get(item.entityId)
+          if (patient) {
+            patient.syncStatus = 'synced'
+            await patientStore.put(patient)
+          }
+        }
+      }
+    }
+    await tx.done
+  }
+
+  return {
+    success: result.success,
+    syncedCount: result.synced_count || result.synced_ids?.length || 0,
+    errors: result.errors || [],
+    message: `Synchronized ${result.synced_count || result.synced_ids?.length || 0} item(s) to MySQL.`,
+  }
+}

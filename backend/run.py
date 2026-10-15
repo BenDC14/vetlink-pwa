@@ -1,7 +1,17 @@
-import uvicorn
 import os
+import sys
 from pathlib import Path
+import uvicorn
 from dotenv import load_dotenv
+
+# Ensure the project root is in Python's import search path for Uvicorn reload subprocesses
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+# Propagate to child processes spawned by Uvicorn reloader on Windows
+current_pythonpath = os.environ.get("PYTHONPATH", "")
+os.environ["PYTHONPATH"] = f"{str(ROOT_DIR)}{os.pathsep}{current_pythonpath}" if current_pythonpath else str(ROOT_DIR)
 
 # Load backend/.env
 env_path = Path(__file__).parent / ".env"

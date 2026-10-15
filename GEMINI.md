@@ -49,3 +49,13 @@ All local persistent state resides in IndexedDB (`vetlink_local_db`) defined in 
 * **Dev Server**: `npm run dev` (starts Vite with HMR).
 * **Build Verification**: `npm run build` (validates React compilation and service worker manifest generation via `vite-plugin-pwa`).
 * **Linting**: `npm run lint` (ESLint 10 check).
+
+---
+
+## 6. Interaction & Execution Guardrails
+1. **Answer-First Behavior**:
+   * When the user asks a question, seeks clarification, or inquires if a feature is ready/working (e.g., "can I do X?", "how does Y work?"), provide a direct, concise text answer.
+   * Do NOT proactively edit files or run background/terminal commands unless the user explicitly requests an action (e.g., "build this", "fix this", "run the server", "apply the changes").
+2. **Permission Courtesy**:
+   * Never trigger terminal executions or command approval dialogs during purely conversational or informational queries.
+
