@@ -1,4 +1,4 @@
-export default function Pending() {
+export default function PendingApprovals() {
   return (
     <section className="pending-card">
       <div className="pending-banner">3 RESULTS AWAITING APPROVAL FROM STAFF DEVICES</div>

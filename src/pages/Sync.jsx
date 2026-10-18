@@ -52,8 +52,10 @@ export default function Sync() {
       await checkServerHealth()
       setLastSyncTime(new Date().toLocaleTimeString())
       setFeedback({
-        type: 'success',
-        message: result.message || 'Sync completed successfully.',
+        type: result.success ? 'success' : 'error',
+        message: result.success
+          ? result.message
+          : `${result.message}${result.errors?.[0]?.error ? ` ${result.errors[0].error}` : ''}`,
       })
     } catch (err) {
       console.error('Manual sync failed:', err)
@@ -154,7 +156,7 @@ export default function Sync() {
               {queue.length === 0 ? (
                 <tr>
                   <td colSpan="6" style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>
-                    ✓ All local records are synchronized with the cloud!
+                    No local changes are waiting to be uploaded.
                   </td>
                 </tr>
               ) : (

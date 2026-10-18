@@ -2,11 +2,11 @@ import { useState } from 'react'
 import heroImg from './assets/hero.png'
 import './App.css'
 import Login from './pages/Login'
-import Clinic from './pages/Clinic'
+import ClinicalAnalysis from './pages/ClinicalAnalysis'
 import Patients from './pages/Patients'
 import Staff from './pages/Staff'
 import Sync from './pages/Sync'
-import Pending from './pages/Pending'
+import PendingApprovals from './pages/PendingApprovals'
 import NewPatient from './pages/NewPatient'
 import AdminApproval from './pages/AdminApproval'
 import Treatment from './pages/Treatment'
@@ -145,11 +145,11 @@ function App() {
               />
             ) : (
               <>
-                {activeView === 'clinic' && <Clinic />}
+                {activeView === 'clinic' && <ClinicalAnalysis />}
                 {activeView === 'patients' && <Patients />}
                 {activeView === 'staff' && <Staff />}
                 {activeView === 'sync' && <Sync />}
-                {activeView === 'pending' && <Pending />}
+                {activeView === 'pending' && <PendingApprovals />}
               </>
             )}
           </section>

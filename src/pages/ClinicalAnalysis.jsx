@@ -1,4 +1,4 @@
-export default function Clinic() {
+export default function ClinicalAnalysis() {
   return (
     <>
       <div className="metric-grid">

@@ -40,7 +40,7 @@ class SyncItem(BaseModel):
     id: str
     entityType: str
     entityId: str
-    operation: str = "CREATE"  # CREATE, UPDATE, DELETE
+    operation: str  # CREATE, UPDATE, DELETE
     status: Optional[str] = "pending"
     createdAt: Optional[str] = None
     payload: Optional[Dict[str, Any]] = Field(default_factory=dict)
@@ -224,6 +224,19 @@ def sync_push(batch: SyncBatchRequest):
                     operation = item.operation.upper()
                     payload = item.payload or {}
 
+                    if entity_type not in ("users", "patients"):
+                        raise ValueError(f"Unsupported entity type: {item.entityType}")
+                    if operation not in ("CREATE", "UPDATE", "DELETE"):
+                        raise ValueError(f"Unsupported operation: {item.operation}")
+
+                    if operation in ("CREATE", "UPDATE"):
+                        if payload.get("id") != item.entityId:
+                            raise ValueError("Payload ID must match the queued entity ID")
+                        required_fields = ("username", "name") if entity_type == "users" else ("name",)
+                        missing_fields = [field for field in required_fields if not payload.get(field)]
+                        if missing_fields:
+                            raise ValueError(f"Missing required payload fields: {', '.join(missing_fields)}")
+
                     if entity_type == "users":
                         if operation in ("CREATE", "UPDATE"):
                             upsert_user(cursor, payload)
@@ -294,10 +307,16 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp")):
                 users = cursor.fetchall()
                 cursor.execute("SELECT * FROM patients;")
                 patients = cursor.fetchall()
+            cursor.execute(
+                "SELECT DISTINCT entity_type, entity_id FROM sync_queue "
+                "WHERE status = 'processed' AND operation = 'DELETE';"
+            )
+            deleted = cursor.fetchall()
 
             return {
                 "users": users,
                 "patients": patients,
+                "deleted": deleted,
                 "server_time": datetime.utcnow().isoformat(),
             }
     finally:
