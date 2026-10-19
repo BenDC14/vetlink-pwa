@@ -6,7 +6,7 @@ import {
   deleteStaffUser,
 } from '../db/database'
 
-export default function Staff() {
+export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' }) {
   const [staffList, setStaffList] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
@@ -26,6 +26,7 @@ export default function Staff() {
     id: '',
     name: '',
     username: '',
+    temporaryPassword: '',
     role: 'Technician',
     deviceStatus: 'Online',
   })
@@ -75,12 +76,11 @@ export default function Staff() {
   const handleOpenAddModal = () => {
     setEditingStaff(null)
     setFormError('')
-    const nextNum = staffList.length + 1
-    const suggestedId = `ST-${String(nextNum).padStart(3, '0')}`
     setFormData({
-      id: suggestedId,
+      id: '',
       name: '',
       username: '',
+      temporaryPassword: '',
       role: 'Technician',
       deviceStatus: 'Online',
     })
@@ -94,6 +94,7 @@ export default function Staff() {
       id: staff.id,
       name: staff.name,
       username: staff.username || '',
+      temporaryPassword: '',
       role: staff.role || 'Technician',
       deviceStatus: staff.deviceStatus || 'Online',
     })
@@ -116,6 +117,10 @@ export default function Staff() {
       setFormError('Work email / username is required.')
       return
     }
+    if (!editingStaff && formData.temporaryPassword.length < 10) {
+      setFormError('Temporary password must be at least 10 characters.')
+      return
+    }
 
     setIsSaving(true)
     setFormError('')
@@ -130,20 +135,36 @@ export default function Staff() {
         })
         setSuccessMessage(`Updated "${formData.name.trim()}" successfully.`)
       } else {
+        const response = await fetch(`${apiBaseUrl}/api/admin/users`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({
+            name: formData.name.trim(),
+            email: formData.username.trim(),
+            role: formData.role,
+            temporary_password: formData.temporaryPassword,
+          }),
+        })
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.detail || 'Could not create staff login account.')
+
         await addStaffUser({
-          id: formData.id.trim(),
+          id: result.id,
           name: formData.name.trim(),
           username: formData.username.trim(),
           role: formData.role,
           deviceStatus: formData.deviceStatus,
-        })
+        }, { syncStatus: 'synced' })
         setSuccessMessage(`Added "${formData.name.trim()}" to staff database.`)
       }
       await refreshStaff()
       handleCloseModal()
     } catch (err) {
       console.error('Failed to save staff record:', err)
-      setFormError('Failed to save staff record to IndexedDB. Please try again.')
+      setFormError(err.message || 'Failed to save staff record. Please try again.')
     } finally {
       setIsSaving(false)
     }
@@ -361,17 +382,14 @@ export default function Staff() {
                 </div>
               )}
 
-              <label>
-                <span>Staff ID</span>
-                <input
-                  type="text"
-                  value={formData.id}
-                  onChange={(e) => setFormData({ ...formData, id: e.target.value })}
-                  placeholder="ST-001"
-                  disabled={Boolean(editingStaff)}
-                  required
-                />
-              </label>
+              {editingStaff ? (
+                <label>
+                  <span>Staff ID</span>
+                  <input type="text" value={formData.id} disabled />
+                </label>
+              ) : (
+                <p className="id-auto-note">Staff ID will be assigned automatically.</p>
+              )}
 
               <label>
                 <span>Full Name</span>
@@ -394,6 +412,20 @@ export default function Staff() {
                   required
                 />
               </label>
+
+              {!editingStaff && (
+                <label>
+                  <span>Temporary Password</span>
+                  <input
+                    type="password"
+                    value={formData.temporaryPassword}
+                    onChange={(e) => setFormData({ ...formData, temporaryPassword: e.target.value })}
+                    autoComplete="new-password"
+                    minLength={10}
+                    required
+                  />
+                </label>
+              )}
 
               <label>
                 <span>Role</span>

@@ -1,6 +1,6 @@
 import { openDB } from 'idb'
 const DB_NAME = "vetlink_local_db";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const schema = {
   patients: {
@@ -91,6 +91,10 @@ const schema = {
       "resolutionStatus",
       "createdAt"
     ]
+  },
+  idCounters: {
+    keyPath: "prefix",
+    indexes: []
   }
 };
 
@@ -112,27 +116,48 @@ export function initDatabase() {
     })
   }
 
-function createSyncQueueItem(entityType, entityId, operation, payload, createdAt) {
+function createSyncQueueItem(entityType, entityId, operation, payload, createdAt, baseVersion = 0) {
   const id = typeof crypto !== 'undefined' && crypto.randomUUID
     ? crypto.randomUUID()
     : `sync-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
-  return { id, entityType, entityId, operation, payload, status: 'pending', createdAt }
+  return { id, entityType, entityId, operation, payload, baseVersion, status: 'pending', createdAt }
+}
+
+async function createNextRecordId(tx, storeName, prefix, digits, startAt) {
+  const records = await tx.objectStore(storeName).getAll()
+  const queue = await tx.objectStore('syncQueue').getAll()
+  const counterStore = tx.objectStore('idCounters')
+  const counter = await counterStore.get(prefix)
+  const idPattern = new RegExp(`^${prefix}-(\\d+)$`, 'i')
+  const recordIds = records.map((record) => record.id)
+  const queuedIds = queue
+    .filter((item) => item.entityType === storeName)
+    .map((item) => item.entityId)
+  const lastUsed = [...recordIds, ...queuedIds].reduce((maximum, id) => {
+    const match = idPattern.exec(id || '')
+    return match ? Math.max(maximum, Number(match[1])) : maximum
+  }, Math.max(startAt - 1, counter?.lastValue || 0))
+  const nextValue = lastUsed + 1
+  await counterStore.put({ prefix, lastValue: nextValue })
+  return `${prefix}-${String(nextValue).padStart(digits, '0')}`
 }
 
 export async function addPatient(patient) {
   const db = await initDatabase()
   const now = new Date().toISOString()
+  const tx = db.transaction(['patients', 'syncQueue', 'idCounters'], 'readwrite')
+  const id = await createNextRecordId(tx, 'patients', 'PT', 4, 1001)
   const record = {
     ...patient,
+    id,
     updatedAt: now,
     syncStatus: 'pending',
     version: 1,
   }
 
-  const tx = db.transaction(['patients', 'syncQueue'], 'readwrite')
   await tx.objectStore('patients').put(record)
-  await tx.objectStore('syncQueue').put(createSyncQueueItem('patients', record.id, 'CREATE', record, now))
+  await tx.objectStore('syncQueue').put(createSyncQueueItem('patients', record.id, 'CREATE', record, now, 0))
   await tx.done
   return record
 }
@@ -192,10 +217,11 @@ export async function getStaffUsers() {
   return existing
 }
 
-export async function addStaffUser(staff) {
+export async function addStaffUser(staff, { syncStatus = 'pending' } = {}) {
   const db = await initDatabase()
   const now = new Date().toISOString()
-  const id = staff.id?.trim() || `ST-${String(Math.floor(100 + Math.random() * 900))}`
+  const tx = db.transaction(['users', 'syncQueue', 'idCounters'], 'readwrite')
+  const id = staff.id?.trim() || await createNextRecordId(tx, 'users', 'ST', 3, 1)
 
   const record = {
     ...staff,
@@ -204,15 +230,16 @@ export async function addStaffUser(staff) {
     name: staff.name.trim(),
     role: staff.role || 'Technician',
     deviceStatus: staff.deviceStatus || 'Online',
-    syncStatus: 'pending',
+    syncStatus,
     version: 1,
     createdAt: now,
     updatedAt: now,
   }
 
-  const tx = db.transaction(['users', 'syncQueue'], 'readwrite')
   await tx.objectStore('users').put(record)
-  await tx.objectStore('syncQueue').put(createSyncQueueItem('users', id, 'CREATE', record, now))
+  if (syncStatus !== 'synced') {
+    await tx.objectStore('syncQueue').put(createSyncQueueItem('users', id, 'CREATE', record, now, 0))
+  }
   await tx.done
   return record
 }
@@ -227,6 +254,12 @@ export async function updateStaffUser(id, updates) {
     throw new Error(`Staff member with ID ${id} not found`)
   }
 
+  const queueStore = tx.objectStore('syncQueue')
+  const existingQueueItems = await queueStore.index('entityId').getAll(id)
+  const matchingQueueItems = existingQueueItems.filter((item) => item.entityType === 'users')
+  const originalQueueItem = matchingQueueItems[0]
+  const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
+  const operation = matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
   const updatedRecord = {
     ...existing,
     ...updates,
@@ -236,12 +269,13 @@ export async function updateStaffUser(id, updates) {
     role: updates.role || existing.role,
     deviceStatus: updates.deviceStatus || existing.deviceStatus,
     syncStatus: 'pending',
-    version: (existing.version || 1) + 1,
+    version: baseVersion + 1,
     updatedAt: now,
   }
 
   await tx.objectStore('users').put(updatedRecord)
-  await tx.objectStore('syncQueue').put(createSyncQueueItem('users', id, 'UPDATE', updatedRecord, now))
+  for (const item of matchingQueueItems) await queueStore.delete(item.id)
+  await queueStore.put(createSyncQueueItem('users', id, operation, updatedRecord, now, baseVersion))
   await tx.done
   return updatedRecord
 }
@@ -253,8 +287,17 @@ export async function deleteStaffUser(id) {
   const tx = db.transaction(['users', 'syncQueue'], 'readwrite')
   const existing = await tx.objectStore('users').get(id)
   if (existing) {
+    const queueStore = tx.objectStore('syncQueue')
+    const queuedItems = await queueStore.index('entityId').getAll(id)
+    const matchingQueueItems = queuedItems.filter((item) => item.entityType === 'users')
+    const originalQueueItem = matchingQueueItems[0]
+    const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
+    const operation = matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'DELETE'
     await tx.objectStore('users').delete(id)
-    await tx.objectStore('syncQueue').put(createSyncQueueItem('users', id, 'DELETE', { id }, now))
+    for (const item of matchingQueueItems) await queueStore.delete(item.id)
+    if (operation !== 'CREATE') {
+      await queueStore.put(createSyncQueueItem('users', id, 'DELETE', { id }, now, baseVersion))
+    }
   }
   await tx.done
   return id
@@ -265,7 +308,105 @@ export async function getPendingSyncQueue() {
   return db.getAll('syncQueue')
 }
 
-export async function performCloudSync(apiBaseUrl = 'http://localhost:8000') {
+export async function getSyncConflicts() {
+  const db = await initDatabase()
+  const conflicts = await db.getAll('syncConflicts')
+  return conflicts
+    .filter((conflict) => !conflict.resolutionStatus || conflict.resolutionStatus === 'unresolved')
+    .sort((first, second) => (second.createdAt || '').localeCompare(first.createdAt || ''))
+}
+
+export async function resolveSyncConflict(conflictId, resolution) {
+  if (!['local', 'cloud'].includes(resolution)) {
+    throw new Error('Choose either the local or cloud version to resolve this conflict.')
+  }
+
+  const db = await initDatabase()
+  const conflict = await db.get('syncConflicts', conflictId)
+  if (!conflict) throw new Error('This sync conflict could not be found.')
+
+  const storeName = conflict.entityType === 'users' || conflict.entityType === 'patients'
+    ? conflict.entityType
+    : null
+  if (!storeName) throw new Error(`Unsupported conflict type: ${conflict.entityType}`)
+
+  const selected = resolution === 'local' ? conflict.localData : conflict.cloudData
+  if (!selected || selected.id !== conflict.entityId) {
+    throw new Error('The selected conflict version is missing or has an unexpected record ID.')
+  }
+
+  const now = new Date().toISOString()
+  const tx = db.transaction(['syncConflicts', 'syncQueue', storeName], 'readwrite')
+  const conflictStore = tx.objectStore('syncConflicts')
+  const queueStore = tx.objectStore('syncQueue')
+  const recordStore = tx.objectStore(storeName)
+  const queuedItems = await queueStore.index('entityId').getAll(conflict.entityId)
+
+  for (const item of queuedItems) {
+    if (item.entityType === storeName) await queueStore.delete(item.id)
+  }
+
+  const normalized = storeName === 'users'
+    ? {
+        ...selected,
+        deviceStatus: selected.device_status ?? selected.deviceStatus,
+        createdAt: selected.created_at ?? selected.createdAt,
+        updatedAt: selected.updated_at ?? selected.updatedAt,
+      }
+    : {
+        ...selected,
+        areaOfConcern: selected.area_of_concern ?? selected.areaOfConcern,
+        lastVisit: selected.last_visit ?? selected.lastVisit,
+        ownerId: selected.owner_id ?? selected.ownerId,
+        createdBy: selected.created_by ?? selected.createdBy,
+        createdAt: selected.created_at ?? selected.createdAt,
+        updatedAt: selected.updated_at ?? selected.updatedAt,
+      }
+
+  if (resolution === 'local' && selected._deleted) {
+    await recordStore.delete(conflict.entityId)
+    await queueStore.put(createSyncQueueItem(
+      storeName,
+      conflict.entityId,
+      'DELETE',
+      { id: conflict.entityId },
+      now,
+      conflict.cloudData?.version || 0,
+    ))
+  } else if (resolution === 'local') {
+    const localRecord = {
+      ...normalized,
+      syncStatus: 'pending',
+      version: (conflict.cloudData?.version || 0) + 1,
+      updatedAt: now,
+    }
+    await recordStore.put(localRecord)
+    await queueStore.put(createSyncQueueItem(
+      storeName,
+      conflict.entityId,
+      'UPDATE',
+      localRecord,
+      now,
+      conflict.cloudData?.version || 0,
+    ))
+  } else if (selected._deleted) {
+    await recordStore.delete(conflict.entityId)
+  } else {
+    await recordStore.put({ ...normalized, syncStatus: 'synced' })
+  }
+
+  await conflictStore.put({
+    ...conflict,
+    resolutionStatus: 'resolved',
+    resolution,
+    resolvedAt: now,
+  })
+  await tx.done
+
+  return conflict
+}
+
+export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', authToken = '') {
   const db = await initDatabase()
   const queue = await db.getAll('syncQueue')
   let pushResult = { success: true, synced_ids: [], synced_count: 0, errors: [] }
@@ -285,7 +426,10 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000') {
 
     const response = await fetch(`${apiBaseUrl}/api/sync`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
       body: JSON.stringify({ queue: preparedQueue }),
     })
 
@@ -295,38 +439,75 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000') {
 
     pushResult = await response.json()
     const syncedIds = new Set(pushResult.synced_ids || [])
+    const backendConflicts = pushResult.conflicts || []
 
-    if (syncedIds.size > 0) {
-      const tx = db.transaction(['syncQueue', 'users', 'patients'], 'readwrite')
+    if (syncedIds.size > 0 || backendConflicts.length > 0) {
+      const tx = db.transaction(['syncQueue', 'syncConflicts', 'users', 'patients'], 'readwrite')
       const queueStore = tx.objectStore('syncQueue')
+      const conflictStore = tx.objectStore('syncConflicts')
       const userStore = tx.objectStore('users')
       const patientStore = tx.objectStore('patients')
+      const conflictedKeys = new Set()
 
       for (const item of queue) {
-        if (!syncedIds.has(item.id)) continue
+        if (syncedIds.has(item.id)) {
+          await queueStore.delete(item.id)
+
+          const store = item.entityType === 'users' ? userStore : item.entityType === 'patients' ? patientStore : null
+          if (store) {
+            const record = await store.get(item.entityId)
+            const remaining = await queueStore.index('entityId').getAll(item.entityId)
+            if (record && remaining.length === 0) {
+              record.syncStatus = 'synced'
+              await store.put(record)
+            }
+          }
+          continue
+        }
+
+        const conflict = backendConflicts.find((candidate) => candidate.queue_id === item.id || candidate.id === item.id)
+        if (!conflict) continue
         await queueStore.delete(item.id)
+        await conflictStore.put({
+          ...conflict,
+          id: conflict.id || item.id,
+          entityType: conflict.entityType || item.entityType,
+          entityId: conflict.entityId || item.entityId,
+          localData: conflict.localData || item.payload,
+          operation: conflict.operation || item.operation,
+          resolutionStatus: 'unresolved',
+          createdAt: conflict.createdAt || new Date().toISOString(),
+        })
+        conflictedKeys.add(`${item.entityType}:${item.entityId}`)
 
         const store = item.entityType === 'users' ? userStore : item.entityType === 'patients' ? patientStore : null
         if (store) {
-          const record = await store.get(item.entityId)
-          const remaining = await queueStore.index('entityId').getAll(item.entityId)
-          if (record && remaining.length === 0) {
-            record.syncStatus = 'synced'
-            await store.put(record)
+          const localRecord = await store.get(item.entityId)
+          if (localRecord) {
+            localRecord.syncStatus = 'conflict'
+            await store.put(localRecord)
           }
         }
       }
       await tx.done
+      pushResult.conflictedKeys = [...conflictedKeys]
     }
   }
 
-  const pullResponse = await fetch(`${apiBaseUrl}/api/sync/pull`)
+  const pullResponse = await fetch(`${apiBaseUrl}/api/sync/pull`, {
+    headers: { Authorization: `Bearer ${authToken}` },
+  })
   if (!pullResponse.ok) {
     throw new Error(`Cloud pull failed with status HTTP ${pullResponse.status}`)
   }
   const cloudSnapshot = await pullResponse.json()
   const currentQueue = await db.getAll('syncQueue')
   const queuedEntities = new Set(currentQueue.map((item) => `${item.entityType}:${item.entityId}`))
+  const storedConflicts = await getSyncConflicts()
+  const conflictedEntities = new Set([
+    ...(pushResult.conflictedKeys || []),
+    ...storedConflicts.map((item) => `${item.entityType}:${item.entityId}`),
+  ])
 
   const reconcileStore = async (storeName, cloudRecords, deletedRecords, mapRecord) => {
     const localRecords = await db.getAll(storeName)
@@ -338,7 +519,7 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000') {
     const store = tx.objectStore(storeName)
 
     for (const [id, cloudRecord] of cloudById) {
-      if (queuedEntities.has(`${storeName}:${id}`)) continue
+      if (queuedEntities.has(`${storeName}:${id}`) || conflictedEntities.has(`${storeName}:${id}`)) continue
       await store.put({ ...cloudRecord, syncStatus: 'synced' })
     }
 
@@ -346,7 +527,9 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000') {
       const cloudDeleted = deletedRecords.some((item) =>
         item.entity_type === storeName && item.entity_id === localRecord.id,
       )
-      if (cloudDeleted && !cloudById.has(localRecord.id) && !queuedEntities.has(`${storeName}:${localRecord.id}`)) {
+      if (cloudDeleted && !cloudById.has(localRecord.id) &&
+        !queuedEntities.has(`${storeName}:${localRecord.id}`) &&
+        !conflictedEntities.has(`${storeName}:${localRecord.id}`)) {
         await store.delete(localRecord.id)
       }
     }
@@ -378,20 +561,26 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000') {
   for (const storeName of ['users', 'patients']) {
     const localRecords = await db.getAll(storeName)
     for (const record of localRecords) {
-      if (!pendingKeys.has(`${storeName}:${record.id}`)) localIds.add(`${storeName}:${record.id}`)
+      if (!pendingKeys.has(`${storeName}:${record.id}`) &&
+        !conflictedEntities.has(`${storeName}:${record.id}`)) {
+        localIds.add(`${storeName}:${record.id}`)
+      }
     }
   }
   const cloudIds = new Set([
     ...(cloudSnapshot.users || []).map((record) => `users:${record.id}`),
     ...(cloudSnapshot.patients || []).map((record) => `patients:${record.id}`),
-  ].filter((key) => !pendingKeys.has(key)))
+  ].filter((key) => !pendingKeys.has(key) && !conflictedEntities.has(key)))
   const hasUnqueuedMismatch = localIds.size !== cloudIds.size || [...localIds].some((id) => !cloudIds.has(id))
+  const conflictCount = storedConflicts.length
   return {
-    success: pushResult.success !== false && remainingQueue.length === 0 && !hasUnqueuedMismatch,
+    success: pushResult.success !== false && remainingQueue.length === 0 && !hasUnqueuedMismatch && conflictCount === 0,
     syncedCount: pushResult.synced_count || pushResult.synced_ids?.length || 0,
     pendingCount: remainingQueue.length,
     errors: failedItems,
-    message: hasUnqueuedMismatch
+    message: conflictCount > 0
+      ? `${conflictCount} sync conflict(s) need review.`
+      : hasUnqueuedMismatch
       ? 'Sync could not confirm parity: unqueued local and cloud records differ.'
       : remainingQueue.length === 0
         ? 'Local and cloud records are synchronized.'

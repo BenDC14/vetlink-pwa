@@ -17,6 +17,9 @@ CREATE TABLE IF NOT EXISTS users (
   username VARCHAR(128) NOT NULL UNIQUE,
   name VARCHAR(128) NOT NULL,
   role VARCHAR(64) DEFAULT 'Technician',
+  password_hash VARCHAR(255) NULL,
+  must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
+  is_active BOOLEAN NOT NULL DEFAULT TRUE,
   device_status VARCHAR(32) DEFAULT 'Online',
   sync_status VARCHAR(32) DEFAULT 'synced',
   version INT DEFAULT 1,
@@ -25,6 +28,21 @@ CREATE TABLE IF NOT EXISTS users (
   INDEX idx_users_username (username),
   INDEX idx_users_sync (sync_status),
   INDEX idx_users_updated (updated_at)
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS auth_sessions (
+  token_hash CHAR(64) PRIMARY KEY,
+  user_id VARCHAR(64) NOT NULL,
+  expires_at DATETIME NOT NULL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_auth_sessions_user (user_id),
+  INDEX idx_auth_sessions_expires (expires_at),
+  CONSTRAINT fk_auth_sessions_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS id_counters (
+  prefix VARCHAR(16) PRIMARY KEY,
+  last_value INT NOT NULL
 ) ENGINE=InnoDB;
 
 -- --------------------------------------------------------

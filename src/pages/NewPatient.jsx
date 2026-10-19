@@ -2,7 +2,6 @@ import { useState } from 'react'
 import { addPatient } from '../db/database'
 
 export default function NewPatient({ onBack, onViewPending, onCapture }) {
-  const [patientId, setPatientId] = useState('')
   const [name, setName] = useState('')
   const [species, setSpecies] = useState('Canine')
   const [areaOfConcern, setAreaOfConcern] = useState('')
@@ -10,8 +9,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [error, setError] = useState('')
 
   const handleCapture = async () => {
-    if (!patientId.trim() || !name.trim()) {
-      setError('Patient ID and name are required.')
+    if (!name.trim()) {
+      setError('Patient name is required.')
       return
     }
 
@@ -20,7 +19,6 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
 
     try {
       await addPatient({
-        id: patientId.trim(),
         name: name.trim(),
         species,
         areaOfConcern: areaOfConcern.trim(),
@@ -58,10 +56,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
         <div className="new-patient-form-card">
           <div className="form-card-heading">Patient Details</div>
           <div className="new-patient-form">
-            <label>
-              <span>PATIENT ID</span>
-              <input value={patientId} onChange={(event) => setPatientId(event.target.value)} placeholder="PT-1001" />
-            </label>
+            <p className="id-auto-note">Patient ID will be assigned automatically.</p>
             <label>
               <span>PATIENT NAME</span>
               <input value={name} onChange={(event) => setName(event.target.value)} placeholder="Buddy" />

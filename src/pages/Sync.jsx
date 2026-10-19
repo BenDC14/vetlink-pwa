@@ -1,8 +1,17 @@
 import { useState, useEffect } from 'react'
-import { getPendingSyncQueue, performCloudSync } from '../db/database'
+import {
+  getPendingSyncQueue,
+  getSyncConflicts,
+  performCloudSync,
+  resolveSyncConflict,
+} from '../db/database'
 
-export default function Sync() {
+export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }) {
   const [queue, setQueue] = useState([])
+  const [conflicts, setConflicts] = useState([])
+  const [activeTab, setActiveTab] = useState('queue')
+  const [selectedConflictId, setSelectedConflictId] = useState(null)
+  const [isResolving, setIsResolving] = useState(false)
   const [isSyncing, setIsSyncing] = useState(false)
   const [serverStatus, setServerStatus] = useState('checking') // checking, online, offline
   const [serverInfo, setServerInfo] = useState(null)
@@ -18,9 +27,21 @@ export default function Sync() {
     }
   }
 
+  const refreshConflicts = async () => {
+    try {
+      const items = await getSyncConflicts()
+      setConflicts(items)
+      setSelectedConflictId((currentId) =>
+        items.some((item) => item.id === currentId) ? currentId : items[0]?.id || null,
+      )
+    } catch (err) {
+      console.error('Failed to read syncConflicts from IndexedDB:', err)
+    }
+  }
+
   const checkServerHealth = async () => {
     try {
-      const res = await fetch('http://localhost:8000/api/health', { method: 'GET' })
+      const res = await fetch(`${apiBaseUrl}/api/health`, { method: 'GET' })
       if (res.ok) {
         const data = await res.json()
         setServerStatus('online')
@@ -35,9 +56,11 @@ export default function Sync() {
 
   useEffect(() => {
     refreshQueue()
+    refreshConflicts()
     checkServerHealth()
     const interval = setInterval(() => {
       refreshQueue()
+      refreshConflicts()
       checkServerHealth()
     }, 5000)
     return () => clearInterval(interval)
@@ -47,8 +70,9 @@ export default function Sync() {
     setIsSyncing(true)
     setFeedback(null)
     try {
-      const result = await performCloudSync('http://localhost:8000')
+      const result = await performCloudSync(apiBaseUrl, authToken)
       await refreshQueue()
+      await refreshConflicts()
       await checkServerHealth()
       setLastSyncTime(new Date().toLocaleTimeString())
       setFeedback({
@@ -70,6 +94,30 @@ export default function Sync() {
       setIsSyncing(false)
     }
   }
+
+  const handleResolveConflict = async (resolution) => {
+    if (!selectedConflictId) return
+    setIsResolving(true)
+    setFeedback(null)
+    try {
+      await resolveSyncConflict(selectedConflictId, resolution)
+      await Promise.all([refreshQueue(), refreshConflicts()])
+      setFeedback({
+        type: 'success',
+        message: resolution === 'local'
+          ? 'Local version selected and queued to upload.'
+          : 'Cloud version selected and saved on this device.',
+      })
+    } catch (err) {
+      setFeedback({ type: 'error', message: `Could not resolve conflict: ${err.message}` })
+    } finally {
+      setIsResolving(false)
+    }
+  }
+
+  const selectedConflict = conflicts.find((item) => item.id === selectedConflictId)
+
+  const formatRecord = (record) => JSON.stringify(record || {}, null, 2)
 
   return (
     <section className="sync-card">
@@ -138,7 +186,34 @@ export default function Sync() {
         </div>
       </div>
 
-      <div style={{ marginTop: 20 }}>
+      <div className="sync-content">
+        <div className="sync-tabs" role="tablist" aria-label="Sync details">
+          <button
+            className={`sync-tab ${activeTab === 'queue' ? 'active' : ''}`}
+            id="sync-queue-tab"
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'queue'}
+            aria-controls="sync-queue-panel"
+            onClick={() => setActiveTab('queue')}
+          >
+            Pending Queue <span className="sync-tab-count">{queue.length}</span>
+          </button>
+          <button
+            className={`sync-tab ${activeTab === 'conflicts' ? 'active' : ''}`}
+            id="sync-conflicts-tab"
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'conflicts'}
+            aria-controls="sync-conflicts-panel"
+            onClick={() => setActiveTab('conflicts')}
+          >
+            Conflicts <span className="sync-tab-count">{conflicts.length}</span>
+          </button>
+        </div>
+
+        {activeTab === 'queue' ? (
+          <section id="sync-queue-panel" role="tabpanel" aria-labelledby="sync-queue-tab">
         <h4 style={{ marginBottom: 10, color: '#000' }}>Pending Sync Queue</h4>
         <div className="patients-table-wrap">
           <table className="patients-table staff-table">
@@ -178,6 +253,64 @@ export default function Sync() {
             </tbody>
           </table>
         </div>
+          </section>
+        ) : (
+          <section id="sync-conflicts-panel" className="sync-conflicts-panel" role="tabpanel" aria-labelledby="sync-conflicts-tab">
+            {conflicts.length === 0 ? (
+              <div className="sync-empty-state">
+                <h4>No unresolved conflicts</h4>
+                <p>Conflicts appear here when the cloud record changed after this device’s last synced version.</p>
+              </div>
+            ) : (
+              <div className="sync-conflict-layout">
+                <div className="sync-conflict-list" aria-label="Unresolved conflicts">
+                  {conflicts.map((conflict) => (
+                    <button
+                      className={`sync-conflict-item ${selectedConflictId === conflict.id ? 'active' : ''}`}
+                      key={conflict.id}
+                      type="button"
+                      onClick={() => setSelectedConflictId(conflict.id)}
+                    >
+                      <strong>{conflict.entityType} · {conflict.entityId}</strong>
+                      <span>{conflict.createdAt ? new Date(conflict.createdAt).toLocaleString() : 'Date unavailable'}</span>
+                    </button>
+                  ))}
+                </div>
+
+                {selectedConflict && (
+                  <div className="sync-conflict-detail">
+                    <div className="sync-conflict-heading">
+                      <div>
+                        <h4>Review {selectedConflict.entityType} record</h4>
+                        <p>ID: {selectedConflict.entityId}</p>
+                      </div>
+                      <span className="sync-conflict-badge">Needs review</span>
+                    </div>
+                    <div className="sync-version-grid">
+                      <section className="sync-version-panel">
+                        <h5>Local version</h5>
+                        <pre>{formatRecord(selectedConflict.localData)}</pre>
+                      </section>
+                      <section className="sync-version-panel">
+                        <h5>Cloud version</h5>
+                        <pre>{formatRecord(selectedConflict.cloudData)}</pre>
+                      </section>
+                    </div>
+                    <p className="sync-resolution-note">Choose which version to keep. The selected version will become the next shared version across devices.</p>
+                    <div className="sync-resolution-actions">
+                      <button className="secondary-btn" type="button" disabled={isResolving} onClick={() => handleResolveConflict('cloud')}>
+                        Use cloud version
+                      </button>
+                      <button className="action-btn blue" type="button" disabled={isResolving} onClick={() => handleResolveConflict('local')}>
+                        {selectedConflict.localData?._deleted ? 'Keep local deletion' : 'Use local version'}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </section>
   )

@@ -1,11 +1,12 @@
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from typing import Any, Dict, List, Optional
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
 from backend.database import auto_initialize_schema, get_connection, test_connection
+from backend.security import create_session_token, hash_password, hash_session_token, verify_password
 
 app = FastAPI(
     title="VetLink Cloud Sync API",
@@ -44,10 +45,33 @@ class SyncItem(BaseModel):
     status: Optional[str] = "pending"
     createdAt: Optional[str] = None
     payload: Optional[Dict[str, Any]] = Field(default_factory=dict)
+    baseVersion: Optional[int] = None
 
 
 class SyncBatchRequest(BaseModel):
     queue: List[SyncItem]
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class ChangePasswordRequest(BaseModel):
+    current_password: str
+    new_password: str
+
+
+class AdminCreateUserRequest(BaseModel):
+    name: str
+    email: str
+    role: str
+    temporary_password: str
+
+
+def require_admin(user: dict) -> None:
+    if user["role"] != "Clinic Admin":
+        raise HTTPException(status_code=403, detail="Clinic administrator access required")
 
 
 # -----------------------------------------------------------------------------
@@ -91,16 +115,177 @@ def health_check():
         )
 
 
+@app.post("/api/auth/login")
+def login(request: LoginRequest):
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "SELECT id, username, name, role, password_hash, must_change_password, is_active "
+                "FROM users WHERE username = %s",
+                (request.email.strip().lower(),),
+            )
+            user = cursor.fetchone()
+            if (
+                not user
+                or not user["is_active"]
+                or not user["password_hash"]
+                or not verify_password(request.password, user["password_hash"])
+            ):
+                raise HTTPException(status_code=401, detail="Invalid email or password")
+
+            token = create_session_token()
+            expires_at = datetime.utcnow() + timedelta(hours=8)
+            cursor.execute(
+                "INSERT INTO auth_sessions (token_hash, user_id, expires_at) VALUES (%s, %s, %s)",
+                (hash_session_token(token), user["id"], expires_at),
+            )
+            return {
+                "access_token": token,
+                "token_type": "bearer",
+                "expires_at": expires_at.isoformat(),
+                "must_change_password": bool(user["must_change_password"]),
+                "user": {
+                    "id": user["id"],
+                    "email": user["username"],
+                    "name": user["name"],
+                    "role": user["role"],
+                },
+            }
+    finally:
+        conn.close()
+
+
+@app.post("/api/auth/logout")
+def logout(authorization: Optional[str] = Header(default=None)):
+    get_current_user_from_header(authorization)
+    token = authorization.removeprefix("Bearer ").strip()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("DELETE FROM auth_sessions WHERE token_hash = %s", (hash_session_token(token),))
+        return {"success": True}
+    finally:
+        conn.close()
+
+
+@app.post("/api/auth/change-password")
+def change_password(request: ChangePasswordRequest, authorization: Optional[str] = Header(default=None)):
+    user = get_current_user_from_header(authorization)
+    if len(request.new_password) < 12:
+        raise HTTPException(status_code=400, detail="New password must be at least 12 characters")
+
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT password_hash FROM users WHERE id = %s", (user["id"],))
+            row = cursor.fetchone()
+            if not row or not verify_password(request.current_password, row["password_hash"]):
+                raise HTTPException(status_code=401, detail="Current password is incorrect")
+            cursor.execute(
+                "UPDATE users SET password_hash = %s, must_change_password = FALSE WHERE id = %s",
+                (hash_password(request.new_password), user["id"]),
+            )
+        return {"success": True}
+    finally:
+        conn.close()
+
+
+@app.get("/api/auth/me")
+def auth_me(authorization: Optional[str] = Header(default=None)):
+    user = get_current_user_from_header(authorization)
+    return {
+        "id": user["id"],
+        "email": user["username"],
+        "name": user["name"],
+        "role": user["role"],
+        "must_change_password": bool(user["must_change_password"]),
+    }
+
+
+def get_current_user_from_header(authorization: Optional[str]) -> dict:
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Authentication required")
+    token = authorization.removeprefix("Bearer ").strip()
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT u.id, u.username, u.name, u.role, u.must_change_password, u.is_active
+                   FROM auth_sessions s JOIN users u ON u.id = s.user_id
+                   WHERE s.token_hash = %s AND s.expires_at > %s""",
+                (hash_session_token(token), datetime.utcnow()),
+            )
+            user = cursor.fetchone()
+            if not user or not user["is_active"]:
+                raise HTTPException(status_code=401, detail="Session expired or account disabled")
+            return user
+    finally:
+        conn.close()
+
+
+@app.post("/api/admin/users")
+def admin_create_user(request: AdminCreateUserRequest, authorization: Optional[str] = Header(default=None)):
+    admin = get_current_user_from_header(authorization)
+    require_admin(admin)
+    name = request.name.strip()
+    email = request.email.strip().lower()
+    allowed_roles = {"Veterinarian", "Technician", "Assistant", "Clinic Admin"}
+    if not name or "@" not in email:
+        raise HTTPException(status_code=400, detail="A name and valid email are required")
+    if request.role not in allowed_roles:
+        raise HTTPException(status_code=400, detail="Invalid staff role")
+    if len(request.temporary_password) < 10:
+        raise HTTPException(status_code=400, detail="Temporary password must be at least 10 characters")
+
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO id_counters (prefix, last_value) VALUES ('ST', 0) "
+                "ON DUPLICATE KEY UPDATE last_value = last_value"
+            )
+            cursor.execute("SELECT last_value FROM id_counters WHERE prefix = 'ST' FOR UPDATE")
+            counter_value = cursor.fetchone()["last_value"]
+            cursor.execute("SELECT id FROM users WHERE id REGEXP '^ST-[0-9]+$'")
+            existing_ids = cursor.fetchall()
+            maximum_id = max(
+                [int(row["id"].split("-")[1]) for row in existing_ids] + [counter_value],
+            )
+            next_value = maximum_id + 1
+            user_id = f"ST-{next_value:03d}"
+            cursor.execute("UPDATE id_counters SET last_value = %s WHERE prefix = 'ST'", (next_value,))
+            cursor.execute(
+                """INSERT INTO users
+                   (id, username, name, role, password_hash, must_change_password, is_active,
+                    device_status, sync_status, version)
+                   VALUES (%s, %s, %s, %s, %s, TRUE, TRUE, 'Online', 'synced', 1)""",
+                (user_id, email, name, request.role, hash_password(request.temporary_password)),
+            )
+        conn.commit()
+        return {"id": user_id, "email": email, "name": name, "role": request.role, "must_change_password": True}
+    except Exception as err:
+        conn.rollback()
+        if getattr(err, "args", [None])[0] == 1062:
+            raise HTTPException(status_code=409, detail="An account with this email already exists") from err
+        raise
+    finally:
+        conn.close()
+
+
 # -----------------------------------------------------------------------------
 # Data Inspection Endpoints (Easy testing from browser)
 # -----------------------------------------------------------------------------
 @app.get("/api/users")
-def get_all_users():
+def get_all_users(authorization: Optional[str] = Header(default=None)):
     """Returns all staff/users currently stored in MySQL."""
+    user = get_current_user_from_header(authorization)
+    require_admin(user)
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT * FROM users ORDER BY created_at ASC;")
+            cursor.execute("SELECT id, username, name, role, device_status, sync_status, version, created_at, updated_at FROM users ORDER BY created_at ASC;")
             rows = cursor.fetchall()
             return {"users": rows, "count": len(rows)}
     finally:
@@ -108,8 +293,9 @@ def get_all_users():
 
 
 @app.get("/api/patients")
-def get_all_patients():
+def get_all_patients(authorization: Optional[str] = Header(default=None)):
     """Returns all patients currently stored in MySQL."""
+    get_current_user_from_header(authorization)
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
@@ -204,17 +390,19 @@ def delete_patient(cursor, entity_id: str):
 
 
 @app.post("/api/sync")
-def sync_push(batch: SyncBatchRequest):
+def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(default=None)):
     """
     Accepts pending items from IndexedDB syncQueue,
     executes upserts/deletes in MySQL, and returns list of synced item IDs.
     """
+    current_user = get_current_user_from_header(authorization)
     if not batch.queue:
         return {"success": True, "synced_ids": [], "errors": []}
 
     conn = get_connection()
     synced_ids = []
     errors = []
+    conflicts = []
 
     try:
         with conn.cursor() as cursor:
@@ -224,6 +412,8 @@ def sync_push(batch: SyncBatchRequest):
                     operation = item.operation.upper()
                     payload = item.payload or {}
 
+                    if entity_type == "users" and current_user["role"] != "Clinic Admin":
+                        raise ValueError("Only a clinic administrator can sync staff-account changes")
                     if entity_type not in ("users", "patients"):
                         raise ValueError(f"Unsupported entity type: {item.entityType}")
                     if operation not in ("CREATE", "UPDATE", "DELETE"):
@@ -237,15 +427,95 @@ def sync_push(batch: SyncBatchRequest):
                         if missing_fields:
                             raise ValueError(f"Missing required payload fields: {', '.join(missing_fields)}")
 
+                    conn.begin()
+                    table_name = "users" if entity_type == "users" else "patients"
+                    cursor.execute(
+                        f"SELECT * FROM {table_name} WHERE id = %s FOR UPDATE",
+                        (item.entityId,),
+                    )
+                    cloud_record = cursor.fetchone()
+                    supplied_base = item.baseVersion
+                    if supplied_base is None and operation in ("CREATE", "UPDATE"):
+                        supplied_base = max(int(payload.get("version", 1)) - 1, 0)
+
+                    version_mismatch = (
+                        operation in ("CREATE", "UPDATE", "DELETE")
+                        and cloud_record is not None
+                        and supplied_base is not None
+                        and int(cloud_record["version"] or 1) != supplied_base
+                    )
+                    cloud_deleted_conflict = (
+                        operation == "UPDATE"
+                        and cloud_record is None
+                        and supplied_base is not None
+                        and supplied_base > 0
+                    )
+                    unexpected_create = operation == "CREATE" and cloud_record is not None and supplied_base == 0
+
+                    if version_mismatch or cloud_deleted_conflict or unexpected_create:
+                        cloud_version = dict(cloud_record) if cloud_record else {
+                            "id": item.entityId,
+                            "version": 0,
+                            "_deleted": True,
+                        }
+                        cloud_version.pop("password_hash", None)
+                        local_version = dict(payload)
+                        if operation == "DELETE":
+                            local_version["_deleted"] = True
+                        conflict_data = {
+                            "id": item.id,
+                            "entity_type": entity_type,
+                            "entity_id": item.entityId,
+                            "local_data": json.dumps(local_version, default=str),
+                            "cloud_data": json.dumps(cloud_version, default=str),
+                        }
+                        cursor.execute(
+                            """INSERT INTO sync_conflicts
+                               (id, entity_type, entity_id, local_data, cloud_data, resolution_status)
+                               VALUES (%s, %s, %s, %s, %s, 'unresolved')
+                               ON DUPLICATE KEY UPDATE local_data = VALUES(local_data),
+                                 cloud_data = VALUES(cloud_data), resolution_status = 'unresolved'""",
+                            (
+                                conflict_data["id"],
+                                conflict_data["entity_type"],
+                                conflict_data["entity_id"],
+                                conflict_data["local_data"],
+                                conflict_data["cloud_data"],
+                            ),
+                        )
+                        cursor.execute(
+                            """INSERT INTO sync_queue
+                               (id, entity_type, entity_id, operation, status, payload, created_at)
+                               VALUES (%s, %s, %s, %s, 'conflict', %s, %s)
+                               ON DUPLICATE KEY UPDATE status = 'conflict'""",
+                            (item.id, entity_type, item.entityId, operation, json.dumps(payload, default=str), datetime.utcnow()),
+                        )
+                        conn.commit()
+                        conflicts.append({
+                            "id": item.id,
+                            "queue_id": item.id,
+                            "entityType": entity_type,
+                            "entityId": item.entityId,
+                            "localData": local_version,
+                            "cloudData": cloud_version,
+                            "baseVersion": supplied_base,
+                            "operation": operation,
+                            "reason": "The cloud record changed after this device's last synced version.",
+                            "createdAt": datetime.utcnow().isoformat(),
+                        })
+                        continue
+
                     if entity_type == "users":
                         if operation in ("CREATE", "UPDATE"):
-                            upsert_user(cursor, payload)
+                            upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
+                            upsert_user(cursor, upsert_payload)
                         elif operation == "DELETE":
                             delete_user(cursor, item.entityId)
 
                     elif entity_type == "patients":
                         if operation in ("CREATE", "UPDATE"):
-                            upsert_patient(cursor, payload)
+                            upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
+                            upsert_patient(cursor, upsert_payload)
                         elif operation == "DELETE":
                             delete_patient(cursor, item.entityId)
 
@@ -262,14 +532,16 @@ def sync_push(batch: SyncBatchRequest):
                             item.entityType,
                             item.entityId,
                             operation,
-                            json.dumps(payload),
+                            json.dumps(payload, default=str),
                             datetime.utcnow(),
                         ),
                     )
 
+                    conn.commit()
                     synced_ids.append(item.id)
 
                 except Exception as item_err:
+                    conn.rollback()
                     errors.append({
                         "id": item.id,
                         "entityId": item.entityId,
@@ -277,10 +549,11 @@ def sync_push(batch: SyncBatchRequest):
                     })
 
         return {
-            "success": len(errors) == 0,
+            "success": len(errors) == 0 and len(conflicts) == 0,
             "synced_ids": synced_ids,
             "synced_count": len(synced_ids),
             "errors": errors,
+            "conflicts": conflicts,
             "server_time": datetime.utcnow().isoformat(),
         }
 
@@ -289,11 +562,12 @@ def sync_push(batch: SyncBatchRequest):
 
 
 @app.get("/api/sync/pull")
-def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp")):
+def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), authorization: Optional[str] = Header(default=None)):
     """
     Returns records from MySQL that were updated after `since`,
     allowing the PWA client to update its IndexedDB with cloud data.
     """
+    get_current_user_from_header(authorization)
     conn = get_connection()
     try:
         with conn.cursor() as cursor:

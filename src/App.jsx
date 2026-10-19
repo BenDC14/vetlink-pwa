@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import heroImg from './assets/hero.png'
 import './App.css'
 import Login from './pages/Login'
@@ -10,6 +10,8 @@ import PendingApprovals from './pages/PendingApprovals'
 import NewPatient from './pages/NewPatient'
 import AdminApproval from './pages/AdminApproval'
 import Treatment from './pages/Treatment'
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
 const steps = [
   'Log in securely to access your workspace',
@@ -30,6 +32,31 @@ function App() {
   const [showTreatment, setShowTreatment] = useState(false)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('vetlink_auth_token') || '')
+  const [currentUser, setCurrentUser] = useState(null)
+  const [isCheckingSession, setIsCheckingSession] = useState(Boolean(sessionStorage.getItem('vetlink_auth_token')))
+
+  useEffect(() => {
+    if (!authToken) return
+
+    fetch(`${API_BASE_URL}/api/auth/me`, {
+      headers: { Authorization: `Bearer ${authToken}` },
+    })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Session expired')
+        return response.json()
+      })
+      .then((user) => {
+        setCurrentUser(user)
+        if (!user.must_change_password) setLoggedIn(true)
+      })
+      .catch(() => {
+        sessionStorage.removeItem('vetlink_auth_token')
+        setAuthToken('')
+        setCurrentUser(null)
+      })
+      .finally(() => setIsCheckingSession(false))
+  }, [authToken])
 
   const handleImageChange = (event) => {
     const selectedImage = event.target.files?.[0]
@@ -68,23 +95,76 @@ function App() {
     }, 1200)
   }
 
-  const handleLogin = (event) => {
-    event.preventDefault()
-    if (email && password) {
-      setLoggedIn(true)
+  const handleLogin = async ({ email: loginEmail, password: loginPassword }) => {
+    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.detail || 'Unable to sign in')
+
+    sessionStorage.setItem('vetlink_auth_token', result.access_token)
+    setAuthToken(result.access_token)
+    setCurrentUser({ ...result.user, must_change_password: result.must_change_password })
+    if (!result.must_change_password) setLoggedIn(true)
+    return result
+  }
+
+  const handleChangePassword = async ({ currentPassword, newPassword }) => {
+    const response = await fetch(`${API_BASE_URL}/api/auth/change-password`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${authToken}`,
+      },
+      body: JSON.stringify({ current_password: currentPassword, new_password: newPassword }),
+    })
+    const result = await response.json()
+    if (!response.ok) throw new Error(result.detail || 'Unable to change password')
+    setCurrentUser((user) => ({ ...user, must_change_password: false }))
+    setLoggedIn(true)
+  }
+
+  const handleLogout = async () => {
+    try {
+      await fetch(`${API_BASE_URL}/api/auth/logout`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+    } catch {
+      // Clear the local session even when the server cannot be reached.
+    } finally {
+      sessionStorage.removeItem('vetlink_auth_token')
+      setAuthToken('')
+      setCurrentUser(null)
+      setLoggedIn(false)
+      setActiveView('clinic')
+      setShowNewPatient(false)
+      setShowAdminApproval(false)
+      setShowTreatment(false)
     }
   }
 
   return (
     <main className={`app-shell ${!loggedIn ? 'auth-shell' : ''}`}>
-      {!loggedIn ? (
-        <Login email={email} password={password} setEmail={setEmail} setPassword={setPassword} onLogin={handleLogin} />
+      {isCheckingSession ? (
+        <div className="auth-loading" role="status">Checking your session...</div>
+      ) : !loggedIn ? (
+        <Login
+          email={email}
+          password={password}
+          setEmail={setEmail}
+          setPassword={setPassword}
+          onLogin={handleLogin}
+          onChangePassword={handleChangePassword}
+        />
       ) : (
         <div className="dashboard-shell">
           <aside className="dashboard-sidebar">
             <div className="sidebar-brand">
-              <div className="brand-badge">ADMIN</div>
-              <p className="sidebar-subtitle">Veterinarian</p>
+              <div className="brand-badge">{currentUser?.role === 'Clinic Admin' ? 'ADMIN' : 'STAFF'}</div>
+              <p className="sidebar-subtitle">{currentUser?.name || 'Clinic Staff'}</p>
             </div>
             <nav className="sidebar-nav">
               <button className={"nav-item " + (activeView === 'clinic' ? 'active' : '')} onClick={() => { setActiveView('clinic'); setShowNewPatient(false); }}>
@@ -93,9 +173,11 @@ function App() {
               <button className={"nav-item " + (activeView === 'patients' ? 'active' : '')} onClick={() => { setActiveView('patients'); setShowNewPatient(false); }}>
                 <span>Patient Records</span>
               </button>
-              <button className={"nav-item " + (activeView === 'staff' ? 'active' : '')} onClick={() => { setActiveView('staff'); setShowNewPatient(false); }}>
-                <span>Manage Staff</span>
-              </button>
+              {currentUser?.role === 'Clinic Admin' && (
+                <button className={"nav-item " + (activeView === 'staff' ? 'active' : '')} onClick={() => { setActiveView('staff'); setShowNewPatient(false); }}>
+                  <span>Manage Staff</span>
+                </button>
+              )}
               <button className={"nav-item " + (activeView === 'sync' ? 'active' : '')} onClick={() => { setActiveView('sync'); setShowNewPatient(false); }}>
                 <span>Sync</span>
               </button>
@@ -121,13 +203,7 @@ function App() {
                   pending: 'Pending Approval',
                 }[activeView]}</h2>
               </div>
-              <button className="secondary-btn" onClick={() => {
-                setLoggedIn(false)
-                setActiveView('clinic')
-                setShowNewPatient(false)
-                setShowAdminApproval(false)
-                setShowTreatment(false)
-              }}>Log out</button>
+              <button className="secondary-btn" onClick={handleLogout}>Log out</button>
             </header>
 
             {showTreatment ? (
@@ -147,8 +223,8 @@ function App() {
               <>
                 {activeView === 'clinic' && <ClinicalAnalysis />}
                 {activeView === 'patients' && <Patients />}
-                {activeView === 'staff' && <Staff />}
-                {activeView === 'sync' && <Sync />}
+                {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
+                {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'pending' && <PendingApprovals />}
               </>
             )}

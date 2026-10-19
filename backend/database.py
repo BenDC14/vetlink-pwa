@@ -72,6 +72,16 @@ def auto_initialize_schema():
             statements = [s.strip() for s in sql_content.split(";") if s.strip()]
             for stmt in statements:
                 cursor.execute(stmt)
+            cursor.execute("SHOW COLUMNS FROM users")
+            user_columns = {row["Field"] for row in cursor.fetchall()}
+            migrations = {
+                "password_hash": "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NULL",
+                "must_change_password": "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
+                "is_active": "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
+            }
+            for column, statement in migrations.items():
+                if column not in user_columns:
+                    cursor.execute(statement)
         return True
     finally:
         conn.close()
