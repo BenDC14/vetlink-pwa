@@ -69,6 +69,30 @@ class AdminCreateUserRequest(BaseModel):
     temporary_password: str
 
 
+class SyncConflictResolutionRequest(BaseModel):
+    resolution: str
+
+
+def decode_json_value(value):
+    if isinstance(value, str):
+        return json.loads(value)
+    return value
+
+
+def serialize_sync_conflict(row: dict) -> dict:
+    created_at = row.get("created_at")
+    return {
+        "id": row["id"],
+        "entityType": row["entity_type"],
+        "entityId": row["entity_id"],
+        "localData": decode_json_value(row["local_data"]),
+        "cloudData": decode_json_value(row["cloud_data"]),
+        "resolutionStatus": row["resolution_status"],
+        "resolution": row.get("resolution"),
+        "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+    }
+
+
 def require_admin(user: dict) -> None:
     if user["role"] != "Clinic Admin":
         raise HTTPException(status_code=403, detail="Clinic administrator access required")
@@ -172,8 +196,17 @@ def logout(authorization: Optional[str] = Header(default=None)):
 @app.post("/api/auth/change-password")
 def change_password(request: ChangePasswordRequest, authorization: Optional[str] = Header(default=None)):
     user = get_current_user_from_header(authorization)
-    if len(request.new_password) < 12:
-        raise HTTPException(status_code=400, detail="New password must be at least 12 characters")
+    new_password = request.new_password
+    if len(new_password) < 8:
+        raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
+    if not any(character.isalpha() for character in new_password):
+        raise HTTPException(status_code=400, detail="New password must include at least one letter")
+    if not any(character.isdigit() for character in new_password):
+        raise HTTPException(status_code=400, detail="New password must include at least one number")
+    if not any(not character.isalnum() and not character.isspace() for character in new_password):
+        raise HTTPException(status_code=400, detail="New password must include at least one special character")
+    if any(character.isspace() or ord(character) < 32 or ord(character) == 127 for character in new_password):
+        raise HTTPException(status_code=400, detail="Spaces and control characters are not allowed")
 
     conn = get_connection()
     try:
@@ -184,7 +217,7 @@ def change_password(request: ChangePasswordRequest, authorization: Optional[str]
                 raise HTTPException(status_code=401, detail="Current password is incorrect")
             cursor.execute(
                 "UPDATE users SET password_hash = %s, must_change_password = FALSE WHERE id = %s",
-                (hash_password(request.new_password), user["id"]),
+                (hash_password(new_password), user["id"]),
             )
         return {"success": True}
     finally:
@@ -586,12 +619,107 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 "WHERE status = 'processed' AND operation = 'DELETE';"
             )
             deleted = cursor.fetchall()
+            cursor.execute(
+                """SELECT id, entity_type, entity_id, local_data, cloud_data,
+                          resolution_status, resolution, created_at
+                   FROM sync_conflicts WHERE resolution_status = 'unresolved'
+                   ORDER BY created_at DESC"""
+            )
+            conflicts = [serialize_sync_conflict(row) for row in cursor.fetchall()]
 
             return {
                 "users": users,
                 "patients": patients,
                 "deleted": deleted,
+                "conflicts": conflicts,
                 "server_time": datetime.utcnow().isoformat(),
             }
+    finally:
+        conn.close()
+
+
+@app.get("/api/sync/conflicts")
+def get_sync_conflicts(authorization: Optional[str] = Header(default=None)):
+    get_current_user_from_header(authorization)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT id, entity_type, entity_id, local_data, cloud_data,
+                          resolution_status, resolution, created_at
+                   FROM sync_conflicts WHERE resolution_status = 'unresolved'
+                   ORDER BY created_at DESC"""
+            )
+            return {"conflicts": [serialize_sync_conflict(row) for row in cursor.fetchall()]}
+    finally:
+        conn.close()
+
+
+@app.post("/api/sync/conflicts/{conflict_id}/resolve")
+def resolve_sync_conflict(
+    conflict_id: str,
+    request: SyncConflictResolutionRequest,
+    authorization: Optional[str] = Header(default=None),
+):
+    get_current_user_from_header(authorization)
+    if request.resolution not in ("local", "cloud"):
+        raise HTTPException(status_code=400, detail="Resolution must be 'local' or 'cloud'")
+
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                """SELECT id, entity_type, entity_id, local_data, cloud_data,
+                          resolution_status, resolution, created_at
+                   FROM sync_conflicts WHERE id = %s FOR UPDATE""",
+                (conflict_id,),
+            )
+            conflict = cursor.fetchone()
+            if not conflict:
+                raise HTTPException(status_code=404, detail="Sync conflict not found")
+            if conflict["resolution_status"] != "unresolved":
+                raise HTTPException(status_code=409, detail="Sync conflict has already been resolved")
+
+            entity_type = conflict["entity_type"]
+            if entity_type not in ("users", "patients"):
+                raise HTTPException(status_code=400, detail="Unsupported conflict type")
+            table_name = "users" if entity_type == "users" else "patients"
+            cursor.execute(f"SELECT * FROM {table_name} WHERE id = %s FOR UPDATE", (conflict["entity_id"],))
+            current_cloud = cursor.fetchone()
+
+            if request.resolution == "cloud":
+                resolved_record = dict(current_cloud) if current_cloud else {"id": conflict["entity_id"], "_deleted": True}
+            else:
+                local_record = decode_json_value(conflict["local_data"])
+                if local_record.get("_deleted"):
+                    if entity_type == "users":
+                        delete_user(cursor, conflict["entity_id"])
+                    else:
+                        delete_patient(cursor, conflict["entity_id"])
+                    resolved_record = {"id": conflict["entity_id"], "_deleted": True}
+                else:
+                    next_version = int(current_cloud["version"] or 0) + 1 if current_cloud else 1
+                    local_record["version"] = next_version
+                    if entity_type == "users":
+                        upsert_user(cursor, local_record)
+                    else:
+                        upsert_patient(cursor, local_record)
+                    cursor.execute(f"SELECT * FROM {table_name} WHERE id = %s", (conflict["entity_id"],))
+                    resolved_record = cursor.fetchone()
+
+            cursor.execute(
+                "UPDATE sync_conflicts SET resolution_status = 'resolved', resolution = %s WHERE id = %s",
+                (request.resolution, conflict_id),
+            )
+            cursor.execute("UPDATE sync_queue SET status = 'processed' WHERE id = %s", (conflict_id,))
+        conn.commit()
+        return {"success": True, "resolution": request.resolution, "record": resolved_record}
+    except HTTPException:
+        conn.rollback()
+        raise
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()

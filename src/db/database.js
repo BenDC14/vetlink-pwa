@@ -167,6 +167,38 @@ export async function getPatients() {
   return db.getAll('patients')
 }
 
+export async function updatePatient(id, updates) {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const tx = db.transaction(['patients', 'syncQueue'], 'readwrite')
+  const patientStore = tx.objectStore('patients')
+  const queueStore = tx.objectStore('syncQueue')
+  const existing = await patientStore.get(id)
+  if (!existing) throw new Error(`Patient with ID ${id} not found`)
+
+  const queuedItems = await queueStore.index('entityId').getAll(id)
+  const matchingQueueItems = queuedItems.filter((item) => item.entityType === 'patients')
+  const originalQueueItem = matchingQueueItems[0]
+  const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
+  const operation = matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
+  const updatedRecord = {
+    ...existing,
+    ...updates,
+    id,
+    name: updates.name?.trim() || existing.name,
+    areaOfConcern: updates.areaOfConcern?.trim() ?? existing.areaOfConcern ?? '',
+    syncStatus: 'pending',
+    version: baseVersion + 1,
+    updatedAt: now,
+  }
+
+  await patientStore.put(updatedRecord)
+  for (const item of matchingQueueItems) await queueStore.delete(item.id)
+  await queueStore.put(createSyncQueueItem('patients', id, operation, updatedRecord, now, baseVersion))
+  await tx.done
+  return updatedRecord
+}
+
 const DEFAULT_STAFF = [
   {
     id: 'ST-001',
@@ -316,7 +348,26 @@ export async function getSyncConflicts() {
     .sort((first, second) => (second.createdAt || '').localeCompare(first.createdAt || ''))
 }
 
-export async function resolveSyncConflict(conflictId, resolution) {
+export async function saveRemoteSyncConflicts(remoteConflicts) {
+  const db = await initDatabase()
+  const tx = db.transaction('syncConflicts', 'readwrite')
+  const store = tx.objectStore('syncConflicts')
+  const existingConflicts = await store.getAll()
+  const remoteIds = new Set(remoteConflicts.map((conflict) => conflict.id))
+  const now = new Date().toISOString()
+
+  for (const conflict of existingConflicts) {
+    if ((!conflict.resolutionStatus || conflict.resolutionStatus === 'unresolved') && !remoteIds.has(conflict.id)) {
+      await store.put({ ...conflict, resolutionStatus: 'resolved', resolution: 'remote', resolvedAt: now })
+    }
+  }
+  for (const conflict of remoteConflicts) {
+    await store.put({ ...conflict, resolutionStatus: 'unresolved' })
+  }
+  await tx.done
+}
+
+export async function resolveSyncConflict(conflictId, resolution, authoritativeRecord) {
   if (!['local', 'cloud'].includes(resolution)) {
     throw new Error('Choose either the local or cloud version to resolve this conflict.')
   }
@@ -344,6 +395,34 @@ export async function resolveSyncConflict(conflictId, resolution) {
 
   for (const item of queuedItems) {
     if (item.entityType === storeName) await queueStore.delete(item.id)
+  }
+
+  if (authoritativeRecord) {
+    if (authoritativeRecord._deleted) {
+      await recordStore.delete(conflict.entityId)
+    } else {
+      const normalizedRecord = storeName === 'users'
+        ? {
+            ...authoritativeRecord,
+            deviceStatus: authoritativeRecord.device_status ?? authoritativeRecord.deviceStatus,
+            createdAt: authoritativeRecord.created_at ?? authoritativeRecord.createdAt,
+            updatedAt: authoritativeRecord.updated_at ?? authoritativeRecord.updatedAt,
+          }
+        : {
+            ...authoritativeRecord,
+            areaOfConcern: authoritativeRecord.area_of_concern ?? authoritativeRecord.areaOfConcern,
+            lastVisit: authoritativeRecord.last_visit ?? authoritativeRecord.lastVisit,
+            ownerId: authoritativeRecord.owner_id ?? authoritativeRecord.ownerId,
+            createdBy: authoritativeRecord.created_by ?? authoritativeRecord.createdBy,
+            createdAt: authoritativeRecord.created_at ?? authoritativeRecord.createdAt,
+            updatedAt: authoritativeRecord.updated_at ?? authoritativeRecord.updatedAt,
+          }
+      await recordStore.put({ ...normalizedRecord, syncStatus: 'synced' })
+    }
+
+    await conflictStore.put({ ...conflict, resolutionStatus: 'resolved', resolution, resolvedAt: now })
+    await tx.done
+    return conflict
   }
 
   const normalized = storeName === 'users'
@@ -501,6 +580,7 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     throw new Error(`Cloud pull failed with status HTTP ${pullResponse.status}`)
   }
   const cloudSnapshot = await pullResponse.json()
+  await saveRemoteSyncConflicts(cloudSnapshot.conflicts || [])
   const currentQueue = await db.getAll('syncQueue')
   const queuedEntities = new Set(currentQueue.map((item) => `${item.entityType}:${item.entityId}`))
   const storedConflicts = await getSyncConflicts()

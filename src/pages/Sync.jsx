@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import {
   getPendingSyncQueue,
   getSyncConflicts,
   performCloudSync,
   resolveSyncConflict,
+  saveRemoteSyncConflicts,
 } from '../db/database'
 
 export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }) {
@@ -18,17 +19,23 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
   const [feedback, setFeedback] = useState(null) // { type: 'success' | 'error', message: string }
   const [lastSyncTime, setLastSyncTime] = useState(null)
 
-  const refreshQueue = async () => {
+  const refreshQueue = useCallback(async () => {
     try {
       const items = await getPendingSyncQueue()
       setQueue(items || [])
     } catch (err) {
       console.error('Failed to read syncQueue from IndexedDB:', err)
     }
-  }
+  }, [])
 
-  const refreshConflicts = async () => {
+  const refreshConflicts = useCallback(async () => {
     try {
+      const response = await fetch(`${apiBaseUrl}/api/sync/conflicts`, {
+        headers: { Authorization: `Bearer ${authToken}` },
+      })
+      if (!response.ok) throw new Error(`Conflict refresh failed with HTTP ${response.status}`)
+      const result = await response.json()
+      await saveRemoteSyncConflicts(result.conflicts || [])
       const items = await getSyncConflicts()
       setConflicts(items)
       setSelectedConflictId((currentId) =>
@@ -37,9 +44,9 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
     } catch (err) {
       console.error('Failed to read syncConflicts from IndexedDB:', err)
     }
-  }
+  }, [apiBaseUrl, authToken])
 
-  const checkServerHealth = async () => {
+  const checkServerHealth = useCallback(async () => {
     try {
       const res = await fetch(`${apiBaseUrl}/api/health`, { method: 'GET' })
       if (res.ok) {
@@ -52,19 +59,24 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
     } catch {
       setServerStatus('offline')
     }
-  }
+  }, [apiBaseUrl])
 
   useEffect(() => {
-    refreshQueue()
-    refreshConflicts()
-    checkServerHealth()
+    const initialRefresh = window.setTimeout(() => {
+      refreshQueue()
+      refreshConflicts()
+      checkServerHealth()
+    }, 0)
     const interval = setInterval(() => {
       refreshQueue()
       refreshConflicts()
       checkServerHealth()
     }, 5000)
-    return () => clearInterval(interval)
-  }, [])
+    return () => {
+      window.clearTimeout(initialRefresh)
+      clearInterval(interval)
+    }
+  }, [refreshQueue, refreshConflicts, checkServerHealth])
 
   const handleManualSync = async () => {
     setIsSyncing(true)
@@ -100,13 +112,26 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
     setIsResolving(true)
     setFeedback(null)
     try {
-      await resolveSyncConflict(selectedConflictId, resolution)
+      const response = await fetch(
+        `${apiBaseUrl}/api/sync/conflicts/${encodeURIComponent(selectedConflictId)}/resolve`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${authToken}`,
+          },
+          body: JSON.stringify({ resolution }),
+        },
+      )
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || 'Could not resolve conflict on the server.')
+      await resolveSyncConflict(selectedConflictId, resolution, result.record)
       await Promise.all([refreshQueue(), refreshConflicts()])
       setFeedback({
         type: 'success',
         message: resolution === 'local'
-          ? 'Local version selected and queued to upload.'
-          : 'Cloud version selected and saved on this device.',
+          ? 'Local version selected and applied across devices.'
+          : 'Cloud version selected and applied across devices.',
       })
     } catch (err) {
       setFeedback({ type: 'error', message: `Could not resolve conflict: ${err.message}` })
@@ -138,6 +163,7 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
             type="button"
             onClick={() => {
               refreshQueue()
+              refreshConflicts()
               checkServerHealth()
             }}
           >
