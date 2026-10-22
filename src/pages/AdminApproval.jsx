@@ -40,26 +40,51 @@ export default function AdminApproval({ onBack, onApprove, caseData }) {
         </div>
       )}
 
-      {/* Image panels */}
-      <div className="approval-grid">
+      {/* 3-Panel Grad-CAM Visual Explainability (Pages 40-41 of Capstone Paper) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 12, padding: 16, background: '#f8fafc', borderBottom: '1px solid #e2e8f0' }}>
         <div className="approval-panel">
-          <div className="approval-panel-title">Captured Photo</div>
-          {preview ? (
+          <div className="approval-panel-title" style={{ fontWeight: 'bold', fontSize: '0.82rem', marginBottom: 6, color: '#334155' }}>
+            1. Original Image
+          </div>
+          {aiResult?.gradcam?.originalUrl || preview ? (
             <img
-              src={preview}
-              alt="Captured pet photo"
-              style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 6 }}
+              src={aiResult?.gradcam?.originalUrl || preview}
+              alt="Original Image"
+              style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }}
             />
           ) : (
-            <div className="approval-preview">No image captured</div>
+            <div className="approval-preview">No image</div>
           )}
         </div>
+
         <div className="approval-panel">
-          <div className="approval-panel-title">AI Heatmap</div>
-          <div className="approval-preview heatmap" style={{ fontSize: '0.85rem', color: '#888', textAlign: 'center' }}>
-            Grad-CAM visualization<br />
-            <span style={{ fontSize: '0.75rem' }}>(coming in next phase)</span>
+          <div className="approval-panel-title" style={{ fontWeight: 'bold', fontSize: '0.82rem', marginBottom: 6, color: '#334155' }}>
+            2. Heatmap (Jet Colormap)
           </div>
+          {aiResult?.gradcam?.heatmapUrl ? (
+            <img
+              src={aiResult.gradcam.heatmapUrl}
+              alt="AI Heatmap"
+              style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }}
+            />
+          ) : (
+            <div className="approval-preview">Heatmap unavailable</div>
+          )}
+        </div>
+
+        <div className="approval-panel">
+          <div className="approval-panel-title" style={{ fontWeight: 'bold', fontSize: '0.82rem', marginBottom: 6, color: '#334155' }}>
+            3. Grad-CAM Overlay
+          </div>
+          {aiResult?.gradcam?.overlayUrl ? (
+            <img
+              src={aiResult.gradcam.overlayUrl}
+              alt="Grad-CAM Overlay"
+              style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }}
+            />
+          ) : (
+            <div className="approval-preview">Overlay unavailable</div>
+          )}
         </div>
       </div>
 

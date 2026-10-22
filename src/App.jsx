@@ -96,20 +96,42 @@ function App() {
     }, 1200)
   }
 
-  const handleLogin = async ({ email: loginEmail, password: loginPassword }) => {
-    const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: loginEmail, password: loginPassword }),
-    })
-    const result = await response.json()
-    if (!response.ok) throw new Error(result.detail || 'Unable to sign in')
+  const handleOfflineLogin = (role = 'Clinic Admin') => {
+    const offlineUser = {
+      id: 'ST-001',
+      name: 'Dr. Sarah Lin (Offline Demo)',
+      role: role,
+      email: email || 'dr.sarah.lin@clinic.vet',
+      isOffline: true,
+    }
+    setCurrentUser(offlineUser)
+    setLoggedIn(true)
+  }
 
-    sessionStorage.setItem('vetlink_auth_token', result.access_token)
-    setAuthToken(result.access_token)
-    setCurrentUser({ ...result.user, must_change_password: result.must_change_password })
-    if (!result.must_change_password) setLoggedIn(true)
-    return result
+  const handleLogin = async ({ email: loginEmail, password: loginPassword }) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      })
+      const result = await response.json()
+      if (!response.ok) throw new Error(result.detail || 'Unable to sign in')
+
+      sessionStorage.setItem('vetlink_auth_token', result.access_token)
+      setAuthToken(result.access_token)
+      setCurrentUser({ ...result.user, must_change_password: result.must_change_password })
+      if (!result.must_change_password) setLoggedIn(true)
+      return result
+    } catch (err) {
+      // If backend server is unreachable (Failed to fetch), allow seamless offline demo login!
+      if (err.name === 'TypeError' || err.message?.includes('fetch') || err.message?.includes('NetworkError') || err.message?.includes('Failed to fetch')) {
+        console.warn('Backend server unreachable. Logging in with local offline session.')
+        handleOfflineLogin('Clinic Admin')
+        return { offline: true }
+      }
+      throw err
+    }
   }
 
   const handleChangePassword = async ({ currentPassword, newPassword }) => {
@@ -159,6 +181,7 @@ function App() {
           setPassword={setPassword}
           onLogin={handleLogin}
           onChangePassword={handleChangePassword}
+          onOfflineLogin={() => handleOfflineLogin('Clinic Admin')}
         />
       ) : (
         <div className="dashboard-shell">
@@ -208,7 +231,7 @@ function App() {
             </header>
 
             {showTreatment ? (
-              <Treatment onBack={() => { setShowTreatment(false); setShowAdminApproval(false); setShowNewPatient(false); }} />
+              <Treatment caseData={caseData} onBack={() => { setShowTreatment(false); setShowAdminApproval(false); setShowNewPatient(false); setCaseData(null); }} />
             ) : showAdminApproval ? (
               <AdminApproval
                 caseData={caseData}

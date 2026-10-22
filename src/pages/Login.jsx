@@ -1,6 +1,6 @@
 import { useState } from 'react'
 
-export default function Login({ email, password, setEmail, setPassword, onLogin, onChangePassword }) {
+export default function Login({ email, password, setEmail, setPassword, onLogin, onChangePassword, onOfflineLogin }) {
   const [requiresPasswordChange, setRequiresPasswordChange] = useState(false)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
@@ -18,7 +18,7 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
         setPassword('')
       } else {
         const result = await onLogin({ email, password })
-        if (result.must_change_password) setRequiresPasswordChange(true)
+        if (result?.must_change_password) setRequiresPasswordChange(true)
       }
     } catch (submitError) {
       setError(submitError.message)
@@ -56,6 +56,30 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
             </label>
             <button className="primary-btn" type="submit" disabled={isSubmitting}>
               {isSubmitting ? 'Signing in...' : 'Sign in'} <span aria-hidden="true">-&gt;</span>
+            </button>
+            <div style={{ display: 'flex', alignItems: 'center', margin: '14px 0', gap: '8px' }}>
+              <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
+              <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: 600 }}>OR</span>
+              <div style={{ flex: 1, height: '1px', background: '#e2e8f0' }} />
+            </div>
+            <button
+              type="button"
+              className="action-btn"
+              style={{
+                width: '100%',
+                background: '#059669',
+                color: '#fff',
+                padding: '11px 14px',
+                borderRadius: '8px',
+                fontWeight: 600,
+                fontSize: '13px',
+                cursor: 'pointer',
+                border: 'none',
+                transition: 'background 0.2s',
+              }}
+              onClick={onOfflineLogin}
+            >
+              ⚡ Enter Demo / Offline Mode (No Backend Needed)
             </button>
           </>
         ) : (

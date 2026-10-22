@@ -7,9 +7,9 @@
     <meta name="theme-color" content="#ffffff" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>VetLink PWA</title>
-    <!-- TensorFlow.js loaded from CDN to avoid Vite/WASM bundling issues -->
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.9.0/dist/tf.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.10/dist/tf-tflite.min.js"></script>
+    <!-- TensorFlow.js and TFLite (pinned to stable alpha.9 with full WASM binaries) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@3.21.0/dist/tf.min.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js" crossorigin="anonymous"></script>
   </head>
   <body>
     <div id="root"></div>
