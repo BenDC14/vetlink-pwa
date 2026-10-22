@@ -181,7 +181,6 @@ function App() {
           setPassword={setPassword}
           onLogin={handleLogin}
           onChangePassword={handleChangePassword}
-          onOfflineLogin={() => handleOfflineLogin('Clinic Admin')}
         />
       ) : (
         <div className="dashboard-shell">
