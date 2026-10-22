@@ -207,6 +207,21 @@ export default function Treatment({ onBack, caseData }) {
     notes: 'Monitor lesion site daily. Discontinue medication and consult clinic if irritation develops.',
   })
 
+  // FR7: 60% Confidence Decision Boundary Rule (Thesis pp. 11, 41, 46, 56)
+  const isSubThreshold = (aiResult?.confidence !== undefined && aiResult.confidence < 0.60) &&
+                         !diagnosis.toLowerCase().includes('healthy')
+
+  const treatmentSteps = isSubThreshold
+    ? [
+        '⚠️ [CONFIRMATORY LAB TESTING INDICATED] Pre-screening algorithmic confidence is below the 60% decision boundary. Attending veterinarian should execute secondary confirmatory diagnostics (microscopic skin scraping, fungal DTM culture, or tape cytology) to rule out differential conditions.',
+        ...protocol.treatment,
+      ]
+    : protocol.treatment
+
+  const clinicalNotes = isSubThreshold
+    ? `[FR7 Triage Notice] AI pre-screening confidence was below the calibrated 60% decision boundary (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${protocol.notes}`
+    : protocol.notes
+
   return (
     <section className="treatment-card">
       <div className="treatment-banner">
@@ -239,8 +254,10 @@ export default function Treatment({ onBack, caseData }) {
           <div className="treatment-section-title">RECOMMENDED TREATMENT PROTOCOL</div>
           <div className="treatment-section-body treatment-list">
             <ul>
-              {protocol.treatment.map((step, idx) => (
-                <li key={idx}>{step}</li>
+              {treatmentSteps.map((step, idx) => (
+                <li key={idx} style={step.startsWith('⚠️') ? { color: '#b45309', fontWeight: 600, background: '#fef3c7', padding: '6px 10px', borderRadius: 4, listStyleType: 'none', marginLeft: -20, marginBottom: 8 } : {}}>
+                  {step}
+                </li>
               ))}
             </ul>
           </div>
@@ -256,7 +273,7 @@ export default function Treatment({ onBack, caseData }) {
         <div className="treatment-section">
           <div className="treatment-section-title">VETERINARIAN CLINICAL NOTES</div>
           <div className="treatment-section-body">
-            {protocol.notes}
+            {clinicalNotes}
           </div>
         </div>
       </div>

@@ -105,6 +105,19 @@ export default function AdminApproval({ onBack, onApprove, caseData }) {
         </div>
 
         <div className="analysis-row">
+          <span>Decision Boundary (60%)</span>
+          {conf >= 0.60 ? (
+            <span style={{ color: '#16a34a', fontWeight: 'bold', fontSize: '0.85rem' }}>
+              ✓ &ge; 60% (First-Line Care Protocol Auto-Drafted)
+            </span>
+          ) : (
+            <span style={{ color: '#d97706', fontWeight: 'bold', fontSize: '0.85rem' }}>
+              ⚠️ &lt; 60% (Secondary Lab Testing Recommended)
+            </span>
+          )}
+        </div>
+
+        <div className="analysis-row">
           <span>Summary</span>
           <span style={{ textAlign: 'right', fontSize: '0.85rem', maxWidth: '60%' }}>
             {aiResult?.description ?? '—'}
@@ -150,6 +163,12 @@ export default function AdminApproval({ onBack, onApprove, caseData }) {
           Review the AI result above. Approve to generate a treatment recommendation,
           or reject if the result appears incorrect.
         </p>
+
+        {conf < 0.60 && !aiResult?.displayLabel?.toLowerCase().includes('healthy') && (
+          <div style={{ marginBottom: 12, padding: '8px 12px', background: '#fef3c7', borderLeft: '4px solid #f59e0b', borderRadius: 4, fontSize: '0.82rem', color: '#92400e' }}>
+            <strong>Triage Protocol Notice (FR7):</strong> AI confidence is below the 60% decision boundary. Secondary confirmatory diagnostics (skin scraping, fungal culture, or cytology) are recommended prior to initiating first-line therapy.
+          </div>
+        )}
         <button className="capture-btn approve-btn" type="button" onClick={onApprove}>
           ✓ Approve &amp; Generate Treatment
         </button>

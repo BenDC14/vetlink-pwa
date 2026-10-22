@@ -312,6 +312,17 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
                     Confidence: {aiResult.percent}
                   </div>
 
+                  {/* FR7: 60% Decision Boundary (Thesis pp. 11, 41, 46, 56) */}
+                  {aiResult.confidence >= 0.60 ? (
+                    <div style={{ marginTop: 6, padding: '5px 8px', background: 'rgba(22, 101, 52, 0.35)', border: '1px solid #16a34a', borderRadius: 4, fontSize: '0.74rem', color: '#86efac' }}>
+                      ✓ Confidence &ge; 60%: First-line care protocol auto-populated into consultation draft.
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(180, 83, 9, 0.35)', border: '1px solid #d97706', borderRadius: 4, fontSize: '0.74rem', color: '#fde68a' }}>
+                      ⚠️ Confidence &lt; 60% decision boundary: Secondary confirmatory laboratory diagnostics (Skin Scraping, Fungal Culture, or Tape Cytology) recommended.
+                    </div>
+                  )}
+
                   <div style={{ marginTop: 8, fontSize: '0.8rem', color: '#94a3b8' }}>
                     📊 Top 3 Predictions:
                     {aiResult.top3.map((item, i) => (
