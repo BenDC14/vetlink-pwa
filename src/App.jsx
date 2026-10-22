@@ -30,6 +30,7 @@ function App() {
   const [showNewPatient, setShowNewPatient] = useState(false)
   const [showAdminApproval, setShowAdminApproval] = useState(false)
   const [showTreatment, setShowTreatment] = useState(false)
+  const [caseData, setCaseData] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('vetlink_auth_token') || '')
@@ -210,14 +211,15 @@ function App() {
               <Treatment onBack={() => { setShowTreatment(false); setShowAdminApproval(false); setShowNewPatient(false); }} />
             ) : showAdminApproval ? (
               <AdminApproval
-                onBack={() => { setShowAdminApproval(false); setShowNewPatient(false); }}
+                caseData={caseData}
+                onBack={() => { setShowAdminApproval(false); setShowNewPatient(false); setCaseData(null); }}
                 onApprove={() => { setShowTreatment(true); setShowAdminApproval(false); }}
               />
             ) : showNewPatient ? (
               <NewPatient
                 onBack={() => setShowNewPatient(false)}
                 onViewPending={() => { setShowNewPatient(false); setActiveView('pending'); }}
-                onCapture={() => { setShowAdminApproval(true); setShowNewPatient(false); }}
+                onCapture={(data) => { setCaseData(data); setShowAdminApproval(true); setShowNewPatient(false); }}
               />
             ) : (
               <>
