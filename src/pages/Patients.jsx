@@ -309,7 +309,7 @@ export default function Patients() {
 
       {recheckPatient && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="recheck-patient-title">
-          <div className="modal-dialog" style={{ maxWidth: 720 }}>
+          <div className="modal-dialog" style={{ maxWidth: 720, maxHeight: '90vh', overflowY: 'auto' }}>
             <header className="modal-header">
               <h3 id="recheck-patient-title">
                 🩺 Follow-Up Recheck: {recheckPatient.name} ({recheckPatient.species})
