@@ -333,6 +333,17 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
                     ))}
                   </div>
 
+                  {/* Co-occurring / Comorbidity Detection */}
+                  {aiResult.top3?.length > 1 &&
+                   aiResult.top3[1].confidence >= 0.25 &&
+                   (aiResult.top3[0].confidence - aiResult.top3[1].confidence) <= 0.40 &&
+                   !aiResult.top3[0].display.toLowerCase().includes('healthy') &&
+                   !aiResult.top3[1].display.toLowerCase().includes('healthy') && (
+                    <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(59, 130, 246, 0.2)', border: '1px solid #3b82f6', borderRadius: 4, fontSize: '0.74rem', color: '#93c5fd' }}>
+                      🩺 <strong>Suspected Comorbidity:</strong> Elevated probability detected for both {aiResult.top3[0].display} ({(aiResult.top3[0].confidence * 100).toFixed(1)}%) and {aiResult.top3[1].display} ({(aiResult.top3[1].confidence * 100).toFixed(1)}%). Clinical evaluation for secondary opportunistic dermatitis recommended.
+                    </div>
+                  )}
+
                   <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#38bdf8' }}>
                     ⚡ Edge WASM Runtime: &lt;1.5s (Zero Cloud Latency)
                   </div>

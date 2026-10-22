@@ -211,12 +211,22 @@ export default function Treatment({ onBack, caseData }) {
   const isSubThreshold = (aiResult?.confidence !== undefined && aiResult.confidence < 0.60) &&
                          !diagnosis.toLowerCase().includes('healthy')
 
-  const treatmentSteps = isSubThreshold
-    ? [
-        '⚠️ [CONFIRMATORY LAB TESTING INDICATED] Pre-screening algorithmic confidence is below the 60% decision boundary. Attending veterinarian should execute secondary confirmatory diagnostics (microscopic skin scraping, fungal DTM culture, or tape cytology) to rule out differential conditions.',
-        ...protocol.treatment,
-      ]
-    : protocol.treatment
+  // Comorbidity / Dual-Presentation Check
+  const isComorbid = aiResult?.top3?.length > 1 &&
+                     aiResult.top3[1].confidence >= 0.25 &&
+                     (aiResult.top3[0].confidence - aiResult.top3[1].confidence) <= 0.40 &&
+                     !aiResult.top3[0].display.toLowerCase().includes('healthy') &&
+                     !aiResult.top3[1].display.toLowerCase().includes('healthy')
+
+  let treatmentSteps = [...protocol.treatment]
+
+  if (isComorbid) {
+    treatmentSteps.push(`🩺 [COMORBIDITY CONSIDERATION] Strong secondary differential detected for ${aiResult.top3[1].display} (${(aiResult.top3[1].confidence * 100).toFixed(1)}%). If active lesions are multifocal or show secondary inflammation/crusting, consider adjunct topical antiseptic therapy (e.g. Chlorhexidine wash) alongside primary ${diagnosis} management.`)
+  }
+
+  if (isSubThreshold) {
+    treatmentSteps.unshift('⚠️ [CONFIRMATORY LAB TESTING INDICATED] Pre-screening algorithmic confidence is below the 60% decision boundary. Attending veterinarian should execute secondary confirmatory diagnostics (microscopic skin scraping, fungal DTM culture, or tape cytology) to rule out differential conditions.')
+  }
 
   const clinicalNotes = isSubThreshold
     ? `[FR7 Triage Notice] AI pre-screening confidence was below the calibrated 60% decision boundary (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${protocol.notes}`

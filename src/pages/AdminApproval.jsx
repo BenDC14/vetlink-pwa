@@ -169,6 +169,17 @@ export default function AdminApproval({ onBack, onApprove, caseData }) {
             <strong>Triage Protocol Notice (FR7):</strong> AI confidence is below the 60% decision boundary. Secondary confirmatory diagnostics (skin scraping, fungal culture, or cytology) are recommended prior to initiating first-line therapy.
           </div>
         )}
+
+        {/* Comorbidity / Dual-presentation notice for veterinarian review */}
+        {aiResult?.top3?.length > 1 &&
+         aiResult.top3[1].confidence >= 0.25 &&
+         (aiResult.top3[0].confidence - aiResult.top3[1].confidence) <= 0.40 &&
+         !aiResult.top3[0].display.toLowerCase().includes('healthy') &&
+         !aiResult.top3[1].display.toLowerCase().includes('healthy') && (
+          <div style={{ marginBottom: 12, padding: '10px 12px', background: '#eff6ff', borderLeft: '4px solid #3b82f6', borderRadius: 4, fontSize: '0.82rem', color: '#1e40af' }}>
+            <strong>🩺 Suspected Mixed / Co-Occurring Infection:</strong> Simultaneous visual patterns detected for both <strong>{aiResult.top3[0].display} ({(aiResult.top3[0].confidence * 100).toFixed(1)}%)</strong> and <strong>{aiResult.top3[1].display} ({(aiResult.top3[1].confidence * 100).toFixed(1)}%)</strong>. Secondary bacterial dermatitis frequently co-occurs with mite infestations due to self-trauma.
+          </div>
+        )}
         <button className="capture-btn approve-btn" type="button" onClick={onApprove}>
           ✓ Approve &amp; Generate Treatment
         </button>
