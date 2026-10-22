@@ -155,10 +155,76 @@ import { generateGradCAM } from './gradcam'
  * @param {string} species - 'Canine' | 'Feline' | 'Avian' | 'Rabbit'
  * @returns {Promise<{ label, displayLabel, confidence, percent, description, top3, gradcam }>}
  */
+function imageToBase64(imageElement) {
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width  = 224
+    canvas.height = 224
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(imageElement, 0, 0, 224, 224)
+    return canvas.toDataURL('image/jpeg', 0.95)
+  } catch (err) {
+    console.warn('[VetLink AI] Failed to convert image to base64:', err)
+    return null
+  }
+}
+
+/**
+ * Run AI inference on an image element with species-aware diagnostic support.
+ * As detailed in Chapter 3 (Page 40) of the Capstone paper, VetLink enforces
+ * species-aware gating across 4 domestic animal species (Canine, Feline, Avian, Rabbit)
+ * so that clinically impossible cross-species diagnoses (e.g. canine Pyoderma in a rabbit)
+ * are eliminated.
+ *
+ * Primary execution: Native TFLite via FastAPI endpoint (/api/ai/predict) in 0.04s.
+ * Edge fallback: In-browser WASM runner via @tensorflow/tfjs-tflite.
+ *
+ * @param {HTMLImageElement|HTMLCanvasElement} imageElement
+ * @param {string} species - 'Canine' | 'Feline' | 'Avian' | 'Rabbit'
+ * @returns {Promise<{ label, displayLabel, confidence, percent, description, top3, gradcam }>}
+ */
 export async function predict(imageElement, species = 'Canine') {
+  console.time('[VetLink AI] Inference Time')
+
+  // 1. PRIMARY PATH: High-speed native TFLite inference via backend
+  const b64 = imageToBase64(imageElement)
+  if (b64) {
+    const candidateEndpoints = ['/api/ai/predict', 'http://localhost:8000/api/ai/predict']
+    for (const endpoint of candidateEndpoints) {
+      try {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: b64, species }),
+        })
+        if (res.ok) {
+          const data = await res.json()
+          console.timeEnd('[VetLink AI] Inference Time')
+          console.log(`[VetLink AI] Native TFLite result: ${data.label} (${data.percent})`)
+
+          // Generate Grad-CAM 3-panel visualization (matching Colab Cell 8)
+          const gradcam = await generateGradCAM(imageElement)
+
+          return {
+            label:        data.label,
+            displayLabel: data.displayLabel || CLASS_DISPLAY[data.label] || data.label,
+            confidence:   data.confidence,
+            percent:      data.percent || `${(data.confidence * 100).toFixed(1)}%`,
+            description:  CLASS_DESCRIPTIONS[data.label] || '',
+            top3:         data.top3 || [],
+            gradcam,
+          }
+        }
+      } catch (err) {
+        // Continue to fallback
+      }
+    }
+  }
+
+  // 2. FALLBACK PATH: Client-side in-browser WASM inference
+  console.warn('[VetLink AI] Backend unreachable; attempting client-side WASM inference...')
   if (!model) await loadVetLinkModel()
 
-  console.time('[VetLink AI] Edge Inference Time')
   const tf          = window.tf
   const inputTensor = preprocessImage(imageElement)
 
@@ -168,7 +234,6 @@ export async function predict(imageElement, species = 'Canine') {
   try {
     rawOutput = model.predict(inputTensor)
 
-    // Handle return type: direct Tensor vs Object/Map of Tensors
     if (rawOutput instanceof tf.Tensor) {
       outputTensor = rawOutput
     } else if (rawOutput && typeof rawOutput === 'object') {
@@ -180,59 +245,24 @@ export async function predict(imageElement, species = 'Canine') {
     }
 
     const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
-    console.timeEnd('[VetLink AI] Edge Inference Time')
+    console.timeEnd('[VetLink AI] Inference Time')
     const probabilities = Array.from(rawData)
 
     // Allowed classes for the selected patient species
     const allowedClasses = SPECIES_CLASSES[species] || classLabels
 
-    // Check if the WASM output has flat bias distribution due to TF 2.20 INT8 quantization gap
-    // (max - min < 0.05 indicates uncalibrated bias fallback in WASM alpha.9)
-    const maxP = Math.max(...probabilities)
-    const minP = Math.min(...probabilities)
-    const isWasmFlat = (maxP - minP) < 0.05
+    // Filter candidates to the selected species and normalize
+    const candidateList = classLabels
+      .map((label, idx) => ({ label, prob: probabilities[idx] || 0 }))
+      .filter((item) => allowedClasses.includes(item.label))
 
-    let classScores = []
-
-    if (isWasmFlat) {
-      console.log(`[VetLink AI] Applying species-aware clinical gating for ${species}`)
-      if (species === 'Rabbit') {
-        // Matches exact Colab Cell 8 output for the rabbit ringworm case
-        classScores = [
-          { label: 'Rabbit Ringworm', confidence: 1.0 },
-          { label: 'Rabbit_Healthy',  confidence: 0.0 },
-          { label: 'Rabbit Mange',    confidence: 0.0 },
-        ]
-      } else if (species === 'Avian') {
-        classScores = [
-          { label: 'Avian Fowl Pox', confidence: 0.94 },
-          { label: 'Bird_Healthy',   confidence: 0.04 },
-          { label: 'Scaly Face Scaly Leg Mite (Knemidocoptes)', confidence: 0.02 },
-        ]
-      } else {
-        // Canine / Feline
-        classScores = [
-          { label: 'Ringworm',  confidence: 0.92 },
-          { label: 'Pyoderma',  confidence: 0.05 },
-          { label: 'Hotspots',  confidence: 0.02 },
-          { label: 'Mange',     confidence: 0.01 },
-          { label: 'Healthy',   confidence: 0.00 },
-        ]
-      }
-    } else {
-      // Filter candidates to the selected species and normalize
-      const candidateList = classLabels
-        .map((label, idx) => ({ label, prob: probabilities[idx] || 0 }))
-        .filter((item) => allowedClasses.includes(item.label))
-
-      const sumProb = candidateList.reduce((acc, cur) => acc + cur.prob, 0) || 1
-      classScores = candidateList
-        .map((item) => ({
-          label: item.label,
-          confidence: item.prob / sumProb,
-        }))
-        .sort((a, b) => b.confidence - a.confidence)
-    }
+    const sumProb = candidateList.reduce((acc, cur) => acc + cur.prob, 0) || 1
+    const classScores = candidateList
+      .map((item) => ({
+        label: item.label,
+        confidence: item.prob / sumProb,
+      }))
+      .sort((a, b) => b.confidence - a.confidence)
 
     const topItem  = classScores[0] || { label: 'Unknown', confidence: 0 }
     const topLabel = topItem.label
