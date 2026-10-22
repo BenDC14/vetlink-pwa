@@ -234,6 +234,7 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (
   local_data JSON,
   cloud_data JSON,
   resolution_status VARCHAR(32) DEFAULT 'unresolved',
+  resolution VARCHAR(16),
   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   INDEX idx_sc_entity (entity_type, entity_id),
   INDEX idx_sc_status (resolution_status),

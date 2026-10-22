@@ -82,6 +82,10 @@ def auto_initialize_schema():
             for column, statement in migrations.items():
                 if column not in user_columns:
                     cursor.execute(statement)
+            cursor.execute("SHOW COLUMNS FROM sync_conflicts")
+            conflict_columns = {row["Field"] for row in cursor.fetchall()}
+            if "resolution" not in conflict_columns:
+                cursor.execute("ALTER TABLE sync_conflicts ADD COLUMN resolution VARCHAR(16) NULL")
         return True
     finally:
         conn.close()

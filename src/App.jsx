@@ -186,8 +186,7 @@ function App() {
         <div className="dashboard-shell">
           <aside className="dashboard-sidebar">
             <div className="sidebar-brand">
-              <div className="brand-badge">{currentUser?.role === 'Clinic Admin' ? 'ADMIN' : 'STAFF'}</div>
-              <p className="sidebar-subtitle">{currentUser?.name || 'Clinic Staff'}</p>
+              <p className="brand-badge">{currentUser?.role === 'Clinic Admin' ? 'Clinic Admin' : 'Clinic Staff'}</p>
             </div>
             <nav className="sidebar-nav">
               <button className={"nav-item " + (activeView === 'clinic' ? 'active' : '')} onClick={() => { setActiveView('clinic'); setShowNewPatient(false); }}>
@@ -206,7 +205,6 @@ function App() {
               </button>
               <button className={"nav-item nav-warning " + (activeView === 'pending' ? 'active' : '')} onClick={() => { setActiveView('pending'); setShowNewPatient(false); }}>
                 <span>Pending Approval</span>
-                <span className="nav-badge">3</span>
               </button>
             </nav>
             <div className="sidebar-actions">
@@ -249,7 +247,7 @@ function App() {
                 {activeView === 'patients' && <Patients />}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} />}
-                {activeView === 'pending' && <PendingApprovals />}
+                {activeView === 'pending' && <PendingApprovals authToken={authToken} apiBaseUrl={API_BASE_URL} />}
               </>
             )}
           </section>

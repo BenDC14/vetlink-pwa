@@ -1,10 +1,20 @@
 import { useEffect, useState } from 'react'
-import { getPatients } from '../db/database'
+import { getPatients, updatePatient } from '../db/database'
 
 export default function Patients() {
   const [patients, setPatients] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+  const [editingPatient, setEditingPatient] = useState(null)
+  const [formData, setFormData] = useState({ name: '', species: 'Canine', areaOfConcern: '', lastVisit: '', status: 'Active' })
+  const [formError, setFormError] = useState('')
+  const [successMessage, setSuccessMessage] = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+
+  const refreshPatients = async () => {
+    const savedPatients = await getPatients()
+    setPatients(savedPatients)
+  }
 
   useEffect(() => {
     let isMounted = true
@@ -32,6 +42,44 @@ export default function Patients() {
     return patient.id.toLowerCase().includes(query) || patient.name.toLowerCase().includes(query)
   })
 
+  const openEditPatient = (patient) => {
+    setEditingPatient(patient)
+    setFormError('')
+    setFormData({
+      name: patient.name || '',
+      species: patient.species || 'Canine',
+      areaOfConcern: patient.areaOfConcern || '',
+      lastVisit: patient.lastVisit || '',
+      status: patient.status || 'Active',
+    })
+  }
+
+  const handleSavePatient = async (event) => {
+    event.preventDefault()
+    if (!formData.name.trim()) {
+      setFormError('Patient name is required.')
+      return
+    }
+
+    setIsSaving(true)
+    setFormError('')
+    try {
+      await updatePatient(editingPatient.id, {
+        ...formData,
+        name: formData.name.trim(),
+        areaOfConcern: formData.areaOfConcern.trim(),
+      })
+      await refreshPatients()
+      setEditingPatient(null)
+      setSuccessMessage(`${formData.name.trim()} was updated and queued for sync.`)
+    } catch (error) {
+      console.error('Failed to update patient:', error)
+      setFormError(error.message || 'Could not save patient changes.')
+    } finally {
+      setIsSaving(false)
+    }
+  }
+
   return (
     <section className="patients-card">
       <div className="patients-header">
@@ -45,6 +93,7 @@ export default function Patients() {
       </div>
 
       <div className="patients-table-wrap">
+        {successMessage && <div className="alert-banner success" role="status">{successMessage}</div>}
         <table className="patients-table">
           <thead>
             <tr>
@@ -53,13 +102,14 @@ export default function Patients() {
               <th>SPECIES</th>
               <th>LAST VISIT</th>
               <th>STATUS</th>
+              <th>ACTIONS</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan="5">Loading patients...</td></tr>
+              <tr><td colSpan="6">Loading patients...</td></tr>
             ) : visiblePatients.length === 0 ? (
-              <tr><td colSpan="5">No patients saved yet.</td></tr>
+              <tr><td colSpan="6">No patients saved yet.</td></tr>
             ) : visiblePatients.map((patient) => (
               <tr key={patient.id}>
                 <td>{patient.id}</td>
@@ -67,11 +117,65 @@ export default function Patients() {
                 <td>{patient.species}</td>
                 <td>{patient.lastVisit}</td>
                 <td><span className="status-badge">{patient.status}</span></td>
+                <td>
+                  <button className="small-outline" type="button" onClick={() => openEditPatient(patient)}>
+                    EDIT
+                  </button>
+                </td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+
+      {editingPatient && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-patient-title">
+          <div className="modal-dialog">
+            <header className="modal-header">
+              <h3 id="edit-patient-title">Edit Patient Record</h3>
+              <button className="modal-close-btn" type="button" onClick={() => setEditingPatient(null)} aria-label="Close edit patient dialog">✕</button>
+            </header>
+            <form className="modal-form" onSubmit={handleSavePatient}>
+              {formError && <div className="alert-banner error" role="alert">{formError}</div>}
+              <label>
+                <span>Patient ID</span>
+                <input value={editingPatient.id} readOnly />
+              </label>
+              <label>
+                <span>Name</span>
+                <input value={formData.name} onChange={(event) => setFormData({ ...formData, name: event.target.value })} required />
+              </label>
+              <label>
+                <span>Species</span>
+                <select value={formData.species} onChange={(event) => setFormData({ ...formData, species: event.target.value })}>
+                  <option>Canine</option>
+                  <option>Feline</option>
+                  <option>Other</option>
+                </select>
+              </label>
+              <label>
+                <span>Area of Concern</span>
+                <input value={formData.areaOfConcern} onChange={(event) => setFormData({ ...formData, areaOfConcern: event.target.value })} />
+              </label>
+              <label>
+                <span>Last Visit</span>
+                <input type="date" value={formData.lastVisit} onChange={(event) => setFormData({ ...formData, lastVisit: event.target.value })} />
+              </label>
+              <label>
+                <span>Status</span>
+                <select value={formData.status} onChange={(event) => setFormData({ ...formData, status: event.target.value })}>
+                  <option>Active</option>
+                  <option>Inactive</option>
+                </select>
+              </label>
+              <div className="modal-actions">
+                <button className="small-outline" type="button" onClick={() => setEditingPatient(null)} disabled={isSaving}>Cancel</button>
+                <button className="action-btn blue" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Changes'}</button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
