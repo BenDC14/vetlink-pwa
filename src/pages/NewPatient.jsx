@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react'
 import { addPatient, addConsultation, addScreeningResult } from '../db/database'
-import { loadVetLinkModel, predict, loadImageFromFile } from '../vetlink-ai'
+import { loadVetLinkModel, predict, loadImageFromFile, checkImageSharpness } from '../vetlink-ai'
 
 export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [name, setName]                 = useState('')
@@ -14,6 +14,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [previewUrl, setPreviewUrl]     = useState(null)
   const [isAnalyzing, setIsAnalyzing]   = useState(false)
   const [aiResult, setAiResult]         = useState(null)
+  const [sharpnessWarning, setSharpnessWarning] = useState(null)
   const [modelReady, setModelReady]     = useState(false)
   const [modelError, setModelError]     = useState(null)
 
@@ -44,8 +45,13 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
 
     // Run AI automatically after image is selected
     setIsAnalyzing(true)
+    setSharpnessWarning(null)
     try {
       const imgElement = await loadImageFromFile(file)
+      const sharpness  = checkImageSharpness(imgElement)
+      if (!sharpness.isSharp) {
+        setSharpnessWarning(sharpness.message)
+      }
       const result     = await predict(imgElement, species)
       setAiResult(result)
     } catch (err) {
@@ -211,6 +217,23 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
             >
               🔄 RETAKE PHOTO
             </button>
+          )}
+
+          {/* Quality check alert */}
+          {sharpnessWarning && (
+            <div style={{
+              marginTop: 10,
+              padding: '8px 12px',
+              background: '#fffbeb',
+              border: '1px solid #fde68a',
+              borderRadius: 8,
+              color: '#92400e',
+              fontSize: '0.82rem',
+              lineHeight: 1.4,
+              textAlign: 'left',
+            }}>
+              <strong>⚠️ Quality Alert:</strong> {sharpnessWarning}
+            </div>
           )}
         </div>
 

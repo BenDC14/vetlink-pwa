@@ -1661,4 +1661,33 @@ input {
 /* Status chip colors */
 .status-chip.green  { background: #dcfce7; color: #15803d; }
 .status-chip.red    { background: #fee2e2; color: #dc2626; }
-.status-chip.gray   { background: #f3f4f6; color: #6b7280; }
+.status-chip.gray   { background: #f3f4f6; color: #6b7280; }
+
+/* ── Print Styling for Veterinary Prescription Slip ── */
+@media print {
+  body {
+    background: white !important;
+    color: black !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  .no-print,
+  .dashboard-sidebar,
+  .app-header,
+  .brand-row,
+  .hero-actions,
+  .secondary-btn,
+  .primary-btn {
+    display: none !important;
+  }
+  .print-slip {
+    display: block !important;
+    width: 100% !important;
+    max-width: 800px !important;
+    margin: 0 auto !important;
+    padding: 24px !important;
+    font-family: Arial, sans-serif !important;
+    box-sizing: border-box !important;
+  }
+}
+

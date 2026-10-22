@@ -329,3 +329,58 @@ export function loadImageFromFile(file) {
     reader.readAsDataURL(file)
   })
 }
+
+/**
+ * Evaluates image sharpness using a fast edge gradient variance metric on a downscaled canvas.
+ * - Sharp / In-Focus photos exhibit high frequency edge differences (score >= 12).
+ * - Blurry / Out-of-focus photos have smoothed, low variance edges (score < 12).
+ *
+ * @param {HTMLImageElement|HTMLCanvasElement} imgElement
+ * @returns {{ isSharp: boolean, score: number, message: string }}
+ */
+export function checkImageSharpness(imgElement) {
+  try {
+    const canvas = document.createElement('canvas')
+    const size = 128
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(imgElement, 0, 0, size, size)
+    const imgData = ctx.getImageData(0, 0, size, size)
+    const d = imgData.data
+
+    let diffSum = 0
+    let count = 0
+
+    // Compare adjacent horizontal and vertical pixel intensities
+    for (let y = 0; y < size - 1; y += 2) {
+      for (let x = 0; x < size - 1; x += 2) {
+        const idx = (y * size + x) * 4
+        const rightIdx = (y * size + (x + 1)) * 4
+        const downIdx = ((y + 1) * size + x) * 4
+
+        const gray = 0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2]
+        const grayRight = 0.299 * d[rightIdx] + 0.587 * d[rightIdx + 1] + 0.114 * d[rightIdx + 2]
+        const grayDown = 0.299 * d[downIdx] + 0.587 * d[downIdx + 1] + 0.114 * d[downIdx + 2]
+
+        diffSum += Math.abs(gray - grayRight) + Math.abs(gray - grayDown)
+        count += 2
+      }
+    }
+
+    const score = Math.round((diffSum / (count || 1)) * 10) / 10
+    const isSharp = score >= 12
+
+    return {
+      isSharp,
+      score,
+      message: isSharp
+        ? 'Image sharpness is acceptable for clinical AI inference.'
+        : `Image appears blurry or out of focus (Sharpness score: ${score}, recommended ≥ 12). For optimal diagnostic reliability, hold steady and refocus on the lesion.`,
+    }
+  } catch (err) {
+    console.warn('[VetLink AI] Sharpness check error:', err)
+    return { isSharp: true, score: 50, message: 'Sharpness check bypassed.' }
+  }
+}
+
