@@ -1,58 +1,192 @@
 const TREATMENT_PROTOCOLS = {
+  // ── Avian Fowl Pox ──────────────────────────────────────────
+  'Avian Fowl Pox': {
+    treatment: [
+      'Gentle antiseptic cleansing of cutaneous pox lesions with dilute povidone-iodine (1:10 dilution)',
+      'Vitamin A supplementation (oral drop or water-soluble) to promote epithelial mucosal healing',
+      'Isolate affected bird from flock to prevent vector (mosquito) transmission',
+      'Provide soft, easily digestible nutrition and monitor weight daily',
+    ],
+    prescription: 'Topical povidone-iodine 1% swab BID + Vitamin A avian oral supplement for 21 days.',
+    notes: 'Cutaneous (dry) fowl pox is usually self-limiting in 3–4 weeks. Seek emergency care if diphtheritic (wet/mouth) lesions or dyspnea develop.',
+  },
+
+  // ── Bird Healthy ────────────────────────────────────────────
+  'Bird_Healthy': {
+    treatment: [
+      'Patient is dermatologically healthy. Plumage, cere, beak, and legs show normal integrity.',
+      'No medical or pharmacological treatment indicated.',
+      'Maintain balanced avian nutrition (species-specific pellets, fresh greens, and seed moderation).',
+      'Provide clean bathing water daily and maintain adequate ambient cage ventilation.',
+    ],
+    prescription: 'None required (Patient is healthy).',
+    notes: 'Routine avian wellness checkup documented. Schedule routine annual veterinary examination.',
+  },
+  'Healthy (Bird)': {
+    treatment: [
+      'Patient is dermatologically healthy. Plumage, cere, beak, and legs show normal integrity.',
+      'No medical or pharmacological treatment indicated.',
+      'Maintain balanced avian nutrition (species-specific pellets, fresh greens, and seed moderation).',
+      'Provide clean bathing water daily and maintain adequate ambient cage ventilation.',
+    ],
+    prescription: 'None required (Patient is healthy).',
+    notes: 'Routine avian wellness checkup documented. Schedule routine annual veterinary examination.',
+  },
+
+  // ── Scaly Face / Leg Mite (Avian) ───────────────────────────
+  'Scaly Face Scaly Leg Mite (Knemidocoptes)': {
+    treatment: [
+      'Topical or oral Ivermectin (0.2 mg/kg) applied to unfeathered skin of neck or under-wing',
+      'Repeat dosing at 10–14 day intervals for 2–3 treatments to eliminate newly hatched mites',
+      'Apply thin layer of sterile mineral oil or paraffin sparingly to beak and leg crusts to suffocate mites (DO NOT obstruct nares/nostrils)',
+      'Thoroughly sanitize cage, perches, and toys in hot soapy water or safe aviary disinfectant',
+    ],
+    prescription: 'Ivermectin 1% spot-on (1 drop topically on skin of back of neck), repeat on Day 14 and Day 28.',
+    notes: 'Treat all in-contact cage mates. Monitor beak symmetry as chronic infestations can cause permanent beak malformation.',
+  },
+  'Scaly Face / Leg Mite': {
+    treatment: [
+      'Topical or oral Ivermectin (0.2 mg/kg) applied to unfeathered skin of neck or under-wing',
+      'Repeat dosing at 10–14 day intervals for 2–3 treatments to eliminate newly hatched mites',
+      'Apply thin layer of sterile mineral oil or paraffin sparingly to beak and leg crusts to suffocate mites (DO NOT obstruct nares/nostrils)',
+      'Thoroughly sanitize cage, perches, and toys in hot soapy water or safe aviary disinfectant',
+    ],
+    prescription: 'Ivermectin 1% spot-on (1 drop topically on skin of back of neck), repeat on Day 14 and Day 28.',
+    notes: 'Treat all in-contact cage mates. Monitor beak symmetry as chronic infestations can cause permanent beak malformation.',
+  },
+
+  // ── Canine / Feline Healthy ─────────────────────────────────
+  'Healthy': {
+    treatment: [
+      'Patient dermatological status is clinically normal. Skin barrier intact with no erythema, crusting, or alopecia.',
+      'No medical or topical dermatological therapy required.',
+      'Maintain routine veterinary ectoparasite prevention (flea, tick, and mite preventative).',
+      'Maintain regular grooming, balanced diet, and fresh water access.',
+    ],
+    prescription: 'None required (Patient is healthy).',
+    notes: 'Normal physical and integumentary exam. Return for routine annual wellness checkup and vaccinations.',
+  },
+
+  // ── Canine / Feline Hotspots ────────────────────────────────
+  'Hotspots': {
+    treatment: [
+      'Gently clip fur around the moist dermatitis lesion to allow air exposure and drying',
+      'Cleanse lesion with dilute antiseptic chlorhexidine solution (2%)',
+      'Apply topical antimicrobial and anti-inflammatory spray or cream twice daily',
+      'Place Elizabethan collar (cone) to prevent licking, scratching, and self-trauma',
+    ],
+    prescription: 'Gentamicin sulfate 0.1% + Betamethasone valerate 0.1% topical spray BID for 7 days.',
+    notes: 'Acute moist dermatitis is often secondary to flea allergy, ear infection, or atopy. Investigate primary trigger if recurrent.',
+  },
+  'Hot Spots': {
+    treatment: [
+      'Gently clip fur around the moist dermatitis lesion to allow air exposure and drying',
+      'Cleanse lesion with dilute antiseptic chlorhexidine solution (2%)',
+      'Apply topical antimicrobial and anti-inflammatory spray or cream twice daily',
+      'Place Elizabethan collar (cone) to prevent licking, scratching, and self-trauma',
+    ],
+    prescription: 'Gentamicin sulfate 0.1% + Betamethasone valerate 0.1% topical spray BID for 7 days.',
+    notes: 'Acute moist dermatitis is often secondary to flea allergy, ear infection, or atopy. Investigate primary trigger if recurrent.',
+  },
+
+  // ── Canine / Feline Mange ───────────────────────────────────
+  'Mange': {
+    treatment: [
+      'Isoxazoline systemic acaricide therapy (e.g. Fluralaner / Bravecto, Afoxolaner / NexGard, or Selamectin / Revolution)',
+      'Medicated antiseptic/keratolytic bath (Benzoyl Peroxide or Chlorhexidine) to loosen crusts and reduce secondary microbes',
+      'Wash all bedding, blankets, and grooming tools in hot water (>60°C)',
+      'Treat all in-contact household pets simultaneously',
+    ],
+    prescription: 'Isoxazoline chewable single oral dose according to body weight, or Selamectin spot-on. Re-evaluate in 30 days.',
+    notes: 'Sarcoptic mange (scabies) is highly contagious and mildly zoonotic to humans. Wear gloves during handling until resolved.',
+  },
+
+  // ── Canine / Feline Pyoderma ────────────────────────────────
+  'Pyoderma': {
+    treatment: [
+      'Topical antimicrobial therapy: Chlorhexidine 3–4% medicated shampoo baths twice weekly with 10-minute contact time',
+      'Systemic oral antibiotics (Cephalexin or Amoxicillin-Clavulanate) for 14–21 days if lesions are deep or generalized',
+      'Identify and treat underlying predisposing conditions (flea allergy, atopy, or endocrine disease)',
+      'Schedule follow-up clinical examination and cytology in 14 days',
+    ],
+    prescription: 'Cephalexin 22 mg/kg PO BID for 14–21 days + Chlorhexidine 4% mousse/shampoo twice weekly.',
+    notes: 'Recheck cytology in 2 weeks. Continue antibiotic therapy for a minimum of 7 days past complete clinical resolution.',
+  },
+
+  // ── Canine / Feline Ringworm ────────────────────────────────
+  'Ringworm': {
+    treatment: [
+      'Topical antifungal therapy: Miconazole 2% / Chlorhexidine 2% medicated shampoo baths twice weekly',
+      'Systemic oral antifungal (Itraconazole 5–10 mg/kg once daily) for 21–30 days',
+      'Rigorous environmental decontamination: daily vacuuming and wipe hard surfaces with 0.5% sodium hypochlorite (1:10 bleach)',
+      'Isolate patient from other household animals and young children',
+    ],
+    prescription: 'Itraconazole oral solution/capsules (dosed to body weight) SID with a meal for 28 days + Antifungal wash.',
+    notes: 'Dermatophytosis is contagious and zoonotic. Owners must wear disposable gloves. Treatment continues until negative fungal culture.',
+  },
+
+  // ── Rabbit Mange ────────────────────────────────────────────
+  'Rabbit Mange': {
+    treatment: [
+      'Topical Selamectin spot-on (Revolution for puppies/kittens, 6–18 mg/kg) or subcutaneous Ivermectin (0.2–0.4 mg/kg)',
+      'Repeat dosing at 14-day intervals for 2–3 treatments',
+      'Do NOT forcefully pick or peel ear crusts — allow crusts to slough off naturally to prevent auditory canal hemorrhage',
+      'Sanitize hutch, cage, litter box, and accessories with hot soapy water or safe veterinary disinfectant',
+    ],
+    prescription: 'Selamectin spot-on (dosed to body weight) applied topically between shoulder blades; repeat in 14 days.',
+    notes: 'Psoroptes cuniculi (ear mites) causes severe pain and crusting. Isolate from other rabbits until mite scraping confirms cure.',
+  },
+  'Mange (Rabbit)': {
+    treatment: [
+      'Topical Selamectin spot-on (Revolution for puppies/kittens, 6–18 mg/kg) or subcutaneous Ivermectin (0.2–0.4 mg/kg)',
+      'Repeat dosing at 14-day intervals for 2–3 treatments',
+      'Do NOT forcefully pick or peel ear crusts — allow crusts to slough off naturally to prevent auditory canal hemorrhage',
+      'Sanitize hutch, cage, litter box, and accessories with hot soapy water or safe veterinary disinfectant',
+    ],
+    prescription: 'Selamectin spot-on (dosed to body weight) applied topically between shoulder blades; repeat in 14 days.',
+    notes: 'Psoroptes cuniculi (ear mites) causes severe pain and crusting. Isolate from other rabbits until mite scraping confirms cure.',
+  },
+
+  // ── Rabbit Ringworm ─────────────────────────────────────────
   'Rabbit Ringworm': {
     treatment: [
-      'Topical antifungal cream (Miconazole or Clotrimazole 1%) applied twice daily for 2–4 weeks',
-      'Thorough cage & bedding disinfection to eliminate fungal spores (zoonotic protection)',
-      'Consider oral antifungal (Terbinafine or Itraconazole) if lesions become generalized',
-      'Follow-up evaluation and skin scrapings scheduled in 14 days',
+      'Topical antifungal ointment (Miconazole 1% or Clotrimazole 1%) applied twice daily for 2–4 weeks',
+      'Thorough cage & bedding disinfection to eliminate fungal arthrospores',
+      'Consider oral antifungal (Terbinafine 10–20 mg/kg or Itraconazole 5–10 mg/kg) if lesions are generalized',
+      'Schedule follow-up evaluation and skin scrapings in 14 days',
     ],
-    prescription: 'Dispense 30 g Miconazole 1% topical ointment. Apply thin layer around margin of lesion BID.',
-    notes: 'Warn owners that dermatophytosis (ringworm) is zoonotic. Wear disposable gloves during topical applications.',
+    prescription: 'Dispense 30 g Miconazole 1% topical ointment. Apply thin layer around margin of lesion BID for 21 days.',
+    notes: 'Dermatophytosis (ringworm) is zoonotic. Owners should wear disposable gloves during topical applications.',
   },
   'Ringworm (Rabbit)': {
     treatment: [
-      'Topical antifungal cream (Miconazole or Clotrimazole 1%) applied twice daily for 2–4 weeks',
-      'Thorough cage & bedding disinfection to eliminate fungal spores (zoonotic protection)',
-      'Consider oral antifungal (Terbinafine or Itraconazole) if lesions become generalized',
-      'Follow-up evaluation and skin scrapings scheduled in 14 days',
+      'Topical antifungal ointment (Miconazole 1% or Clotrimazole 1%) applied twice daily for 2–4 weeks',
+      'Thorough cage & bedding disinfection to eliminate fungal arthrospores',
+      'Consider oral antifungal (Terbinafine 10–20 mg/kg or Itraconazole 5–10 mg/kg) if lesions are generalized',
+      'Schedule follow-up evaluation and skin scrapings in 14 days',
     ],
-    prescription: 'Dispense 30 g Miconazole 1% topical ointment. Apply thin layer around margin of lesion BID.',
-    notes: 'Warn owners that dermatophytosis (ringworm) is zoonotic. Wear disposable gloves during topical applications.',
+    prescription: 'Dispense 30 g Miconazole 1% topical ointment. Apply thin layer around margin of lesion BID for 21 days.',
+    notes: 'Dermatophytosis (ringworm) is zoonotic. Owners should wear disposable gloves during topical applications.',
   },
-  'Rabbit Mange': {
-    treatment: [
-      'Subcutaneous Ivermectin (0.2–0.4 mg/kg) or topical Selamectin (Revolution)',
-      'Repeat dosing at 14-day intervals for 2–3 treatments',
-      'Clean and sanitize hutch/cage environment with acaricidal solution',
-    ],
-    prescription: 'Selamectin spot-on (15 mg/kg single topical application), repeat in 14 days.',
-    notes: 'Isolate from other rabbits until mite scraping confirms resolution.',
-  },
+
+  // ── Rabbit Healthy ──────────────────────────────────────────
   'Rabbit_Healthy': {
     treatment: [
-      'No medical treatment indicated. Patient skin and coat integrity normal.',
-      'Maintain standard hygiene, hay-based diet, and routine preventative checkups.',
+      'Patient is dermatologically healthy. Fur coat intact, no alopecia, crusting, or ectoparasites observed.',
+      'No medical or pharmacological treatment indicated.',
+      'Maintain standard high-fiber hay diet (unlimited Timothy hay), fresh water, and clean dry bedding.',
     ],
-    prescription: 'None required.',
-    notes: 'Routine health check documented. Return for biannual wellness exam.',
+    prescription: 'None required (Patient is healthy).',
+    notes: 'Routine health check documented. Return for biannual rabbit wellness exam.',
   },
-  'Pyoderma': {
+  'Healthy (Rabbit)': {
     treatment: [
-      'Topical chlorhexidine 2–4% antibacterial shampoo or spray',
-      'Oral systemic antibiotics (Cephalexin or Amoxicillin-Clavulanate) for 14–21 days if deep',
-      'Identify and address underlying allergies, ectoparasites, or endocrine disorders',
+      'Patient is dermatologically healthy. Fur coat intact, no alopecia, crusting, or ectoparasites observed.',
+      'No medical or pharmacological treatment indicated.',
+      'Maintain standard high-fiber hay diet (unlimited Timothy hay), fresh water, and clean dry bedding.',
     ],
-    prescription: 'Cephalexin 22 mg/kg PO BID for 14 days + Chlorhexidine 3% flush.',
-    notes: 'Recheck cytology in 2 weeks. Continue treatment 7 days past clinical resolution.',
-  },
-  'Ringworm': {
-    treatment: [
-      'Topical antifungal therapy (Lime sulfur dip or Miconazole/Chlorhexidine bath)',
-      'Oral Itraconazole 5–10 mg/kg once daily for 21–30 days',
-      'Rigorous environmental vacuuming and 0.5% sodium hypochlorite surface disinfection',
-    ],
-    prescription: 'Itraconazole 100 mg capsules (compounded to patient weight) + topical antifungal wash.',
-    notes: 'Fungal culture or Wood lamp check recommended at week 3 and 4.',
+    prescription: 'None required (Patient is healthy).',
+    notes: 'Routine health check documented. Return for biannual rabbit wellness exam.',
   },
 }
 
@@ -62,7 +196,8 @@ export default function Treatment({ onBack, caseData }) {
   const diagnosis = aiResult?.displayLabel || 'Ringworm (Rabbit)'
 
   const protocol = TREATMENT_PROTOCOLS[diagnosis] ||
-                   TREATMENT_PROTOCOLS[aiResult?.label] || {
+                   TREATMENT_PROTOCOLS[aiResult?.label] ||
+                   (diagnosis.toLowerCase().includes('healthy') ? TREATMENT_PROTOCOLS['Healthy'] : {
     treatment: [
       'Topical dermatological therapy applied twice daily to affected region',
       'Anti-inflammatory or antimicrobial regimen based on clinical cytology',
@@ -70,7 +205,7 @@ export default function Treatment({ onBack, caseData }) {
     ],
     prescription: 'Dispense prescribed medication with detailed dosage and administration schedule.',
     notes: 'Monitor lesion site daily. Discontinue medication and consult clinic if irritation develops.',
-  }
+  })
 
   return (
     <section className="treatment-card">
