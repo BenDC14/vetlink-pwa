@@ -23,7 +23,7 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
         setPassword('')
       } else {
         const result = await onLogin({ email, password })
-        if (result.must_change_password) setRequiresPasswordChange(true)
+        if (result?.must_change_password) setRequiresPasswordChange(true)
       }
     } catch (submitError) {
       setError(submitError.message)

@@ -29,9 +29,9 @@ def on_startup():
     """Attempt auto-initialization of MySQL tables on server start."""
     try:
         auto_initialize_schema()
-        print("✓ VetLink MySQL schema verified / initialized.")
+        print("[OK] VetLink MySQL schema verified / initialized.")
     except Exception as exc:
-        print(f"⚠ Could not auto-initialize schema (ensure MySQL is running): {exc}")
+        print(f"[WARNING] Could not auto-initialize schema (ensure MySQL is running): {exc}")
 
 
 # -----------------------------------------------------------------------------
@@ -723,3 +723,115 @@ def resolve_sync_conflict(
         raise
     finally:
         conn.close()
+
+
+# -----------------------------------------------------------------------------
+# AI Disease Classification Endpoint (MobileNetV3 TFLite)
+# -----------------------------------------------------------------------------
+import base64
+import io
+from pathlib import Path
+from PIL import Image
+import numpy as np
+import tensorflow as tf
+
+AI_MODEL_PATH = Path(__file__).resolve().parent.parent / "public" / "models" / "vetlink_model_v2.tflite"
+AI_LABELS_PATH = Path(__file__).resolve().parent.parent / "public" / "models" / "vetlink_labels_v2.json"
+
+_ai_interpreter = None
+_ai_labels = []
+
+def get_ai_model():
+    global _ai_interpreter, _ai_labels
+    if _ai_interpreter is not None:
+        return _ai_interpreter, _ai_labels
+
+    with open(AI_LABELS_PATH, "r", encoding="utf-8") as f:
+        lmap = json.load(f)
+    _ai_labels = [lmap[str(i)] for i in range(len(lmap))]
+
+    _ai_interpreter = tf.lite.Interpreter(model_path=str(AI_MODEL_PATH))
+    _ai_interpreter.allocate_tensors()
+    return _ai_interpreter, _ai_labels
+
+SPECIES_CLASS_MAP = {
+    "canine": ["Healthy", "Hotspots", "Mange", "Pyoderma", "Ringworm"],
+    "dog":    ["Healthy", "Hotspots", "Mange", "Pyoderma", "Ringworm"],
+    "feline": ["Healthy", "Hotspots", "Mange", "Pyoderma", "Ringworm"],
+    "cat":    ["Healthy", "Hotspots", "Mange", "Pyoderma", "Ringworm"],
+    "avian":  ["Avian Fowl Pox", "Bird_Healthy", "Scaly Face Scaly Leg Mite (Knemidocoptes)"],
+    "bird":   ["Avian Fowl Pox", "Bird_Healthy", "Scaly Face Scaly Leg Mite (Knemidocoptes)"],
+    "rabbit": ["Rabbit Mange", "Rabbit Ringworm", "Rabbit_Healthy"],
+}
+
+CLASS_DISPLAY_NAMES = {
+    "Avian Fowl Pox": "Avian Fowl Pox",
+    "Bird_Healthy": "Healthy (Bird)",
+    "Healthy": "Healthy",
+    "Hotspots": "Hot Spots",
+    "Mange": "Mange",
+    "Pyoderma": "Pyoderma",
+    "Rabbit Mange": "Mange (Rabbit)",
+    "Rabbit Ringworm": "Ringworm (Rabbit)",
+    "Rabbit_Healthy": "Healthy (Rabbit)",
+    "Ringworm": "Ringworm",
+    "Scaly Face Scaly Leg Mite (Knemidocoptes)": "Scaly Face / Leg Mite",
+}
+
+class AIPredictionRequest(BaseModel):
+    image: str
+    species: Optional[str] = "Canine"
+
+@app.post("/api/ai/predict")
+def predict_disease(req: AIPredictionRequest):
+    try:
+        interpreter, labels = get_ai_model()
+        inp_idx = interpreter.get_input_details()[0]["index"]
+        out_idx = interpreter.get_output_details()[0]["index"]
+
+        img_b64 = req.image
+        if "," in img_b64:
+            img_b64 = img_b64.split(",", 1)[1]
+
+        raw_bytes = base64.b64decode(img_b64)
+        pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((224, 224))
+        img_arr = np.array(pil_img, dtype=np.float32)
+
+        inp_tensor = np.expand_dims(img_arr, axis=0)
+        interpreter.set_tensor(inp_idx, inp_tensor)
+        interpreter.invoke()
+        raw_preds = interpreter.get_tensor(out_idx)[0].tolist()
+
+        sp_key = (req.species or "canine").strip().lower()
+        allowed = SPECIES_CLASS_MAP.get(sp_key, labels)
+
+        filtered = [
+            (labels[i], raw_preds[i])
+            for i in range(len(raw_preds))
+            if labels[i] in allowed
+        ]
+
+        # Re-normalize across the candidate classes
+        filtered.sort(key=lambda x: x[1], reverse=True)
+        sum_p = sum(p for _, p in filtered) or 1.0
+        normalized = [(lbl, p / sum_p) for lbl, p in filtered]
+
+        top_label, top_conf = normalized[0]
+        top3 = [
+            {
+                "label": lbl,
+                "display": CLASS_DISPLAY_NAMES.get(lbl, lbl),
+                "confidence": conf,
+            }
+            for lbl, conf in normalized[:3]
+        ]
+
+        return {
+            "label": top_label,
+            "displayLabel": CLASS_DISPLAY_NAMES.get(top_label, top_label),
+            "confidence": top_conf,
+            "percent": f"{top_conf * 100:.1f}%",
+            "top3": top3,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI inference error: {str(e)}")

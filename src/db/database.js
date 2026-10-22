@@ -667,3 +667,91 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
         : `Cloud sync completed with ${remainingQueue.length} local change(s) still pending.`,
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Consultation Functions
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function addConsultation(consultation) {
+  const db  = await initDatabase()
+  const now = new Date().toISOString()
+  const tx  = db.transaction(['consultations', 'syncQueue', 'idCounters'], 'readwrite')
+  const id  = await createNextRecordId(tx, 'consultations', 'CONS', 4, 1001)
+
+  const record = {
+    ...consultation,
+    id,
+    createdAt:   now,
+    updatedAt:   now,
+    syncStatus:  'pending',
+    version:     1,
+  }
+
+  await tx.objectStore('consultations').put(record)
+  await tx.objectStore('syncQueue').put(
+    createSyncQueueItem('consultations', record.id, 'CREATE', record, now, 0)
+  )
+  await tx.done
+  return record
+}
+
+export async function getConsultationsByPatient(patientId) {
+  const db = await initDatabase()
+  return db.getAllFromIndex('consultations', 'patientId', patientId)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Screening Result Functions (AI output)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function addScreeningResult(result) {
+  const db  = await initDatabase()
+  const now = new Date().toISOString()
+  const tx  = db.transaction(['screeningResults', 'syncQueue', 'idCounters'], 'readwrite')
+  const id  = await createNextRecordId(tx, 'screeningResults', 'SR', 4, 1001)
+
+  const record = {
+    ...result,
+    id,
+    createdAt:    now,
+    updatedAt:    now,
+    syncStatus:   'pending',
+    reviewStatus: result.reviewStatus || 'pending',
+    version:      1,
+  }
+
+  await tx.objectStore('screeningResults').put(record)
+  await tx.objectStore('syncQueue').put(
+    createSyncQueueItem('screeningResults', record.id, 'CREATE', record, now, 0)
+  )
+  await tx.done
+  return record
+}
+
+export async function getScreeningResultsByConsultation(consultationId) {
+  const db = await initDatabase()
+  return db.getAllFromIndex('screeningResults', 'consultationId', consultationId)
+}
+
+export async function getPendingScreeningResults() {
+  const db      = await initDatabase()
+  const results = await db.getAll('screeningResults')
+  return results.filter((r) => r.reviewStatus === 'pending')
+}
+
+export async function updateScreeningResultStatus(id, reviewStatus) {
+  const db       = await initDatabase()
+  const existing = await db.get('screeningResults', id)
+  if (!existing) throw new Error(`Screening result ${id} not found`)
+
+  const now    = new Date().toISOString()
+  const updated = { ...existing, reviewStatus, updatedAt: now, syncStatus: 'pending' }
+  const tx     = db.transaction(['screeningResults', 'syncQueue'], 'readwrite')
+
+  await tx.objectStore('screeningResults').put(updated)
+  await tx.objectStore('syncQueue').put(
+    createSyncQueueItem('screeningResults', id, 'UPDATE', updated, now, existing.version)
+  )
+  await tx.done
+  return updated
+}
