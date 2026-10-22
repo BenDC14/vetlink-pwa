@@ -48,30 +48,36 @@ export async function generateGradCAM(imageElement, alpha = 0.5) {
 
   // 2. Compute 7x7 spatial activation grid
   // MobileNetV3's final convolutional layer (activation_19) produces a 7x7 spatial feature map.
-  // We analyze dermatological lesion saliency across the 7x7 patch grid (contrast, saturation, texture variation).
+  // We compute dermatological lesion saliency using:
+  //   a) Erythema Index (2R - G - B): Highlights inflamed, erythematous, or ulcerated tissue.
+  //   b) Local Edge Gradient: Detects scabbing, crusting, and annular lesion borders.
+  //   c) Background / Lighting Suppression: Filters out white walls, glares, and background shadows.
+  //   d) Receptive Field Prior: Focused on the clinical region of interest.
   const gridSize = 7
   const patchW   = Math.floor(width / gridSize)
   const patchH   = Math.floor(height / gridSize)
   const grid     = Array.from({ length: gridSize }, () => new Float32Array(gridSize))
 
-  // Compute global image statistics
-  let globalR = 0, globalG = 0, globalB = 0, count = 0
+  // Estimate animal baseline fur color from non-extreme pixels
+  let furR = 0, furG = 0, furB = 0, furCount = 0
   for (let i = 0; i < origPixels.length; i += 4) {
-    globalR += origPixels[i]
-    globalG += origPixels[i + 1]
-    globalB += origPixels[i + 2]
-    count++
+    const r = origPixels[i], g = origPixels[i + 1], b = origPixels[i + 2]
+    const lum = 0.299 * r + 0.587 * g + 0.114 * b
+    // Ignore extreme overexposed glares or deep shadows
+    if (lum > 35 && lum < 225) {
+      furR += r; furG += g; furB += b; furCount++
+    }
   }
-  globalR /= count
-  globalG /= count
-  globalB /= count
+  furR /= (furCount || 1)
+  furG /= (furCount || 1)
+  furB /= (furCount || 1)
 
   // Evaluate each 7x7 cell
   for (let gy = 0; gy < gridSize; gy++) {
     for (let gx = 0; gx < gridSize; gx++) {
-      let patchDiff = 0
-      let patchVar  = 0
-      let pCount    = 0
+      let erythemaSum = 0
+      let textureSum  = 0
+      let patchValid  = 0
 
       const startY = gy * patchH
       const endY   = Math.min(startY + patchH, height)
@@ -84,26 +90,41 @@ export async function generateGradCAM(imageElement, alpha = 0.5) {
           const r = origPixels[idx]
           const g = origPixels[idx + 1]
           const b = origPixels[idx + 2]
-
-          // Color distance from animal baseline (highlights alopecia / redness / crusting)
-          const dist = Math.sqrt((r - globalR) ** 2 + (g - globalG) ** 2 + (b - globalB) ** 2)
-          patchDiff += dist
-
-          // Local luminance contrast (skin lesion border)
           const lum = 0.299 * r + 0.587 * g + 0.114 * b
-          patchVar += Math.abs(lum - 128)
-          pCount++
+
+          // Suppress out-of-focus background glare (> 230) or background dark voids (< 25)
+          if (lum > 230 || lum < 25) continue
+
+          // 1. Erythema / Hemoglobin inflammation index: 2*R - G - B
+          const erythema = Math.max(0, 2 * r - g - b)
+          erythemaSum += erythema
+
+          // 2. Local skin texture gradient (alopecia / crust border vs uniform fur)
+          if (x + 1 < endX && y + 1 < endY) {
+            const rightIdx = (y * width + (x + 1)) * 4
+            const downIdx  = ((y + 1) * width + x) * 4
+            const rLum     = 0.299 * origPixels[rightIdx] + 0.587 * origPixels[rightIdx + 1] + 0.114 * origPixels[rightIdx + 2]
+            const dLum     = 0.299 * origPixels[downIdx]  + 0.587 * origPixels[downIdx + 1]  + 0.114 * origPixels[downIdx + 2]
+            textureSum    += Math.abs(lum - rLum) + Math.abs(lum - dLum)
+          }
+
+          patchValid++
         }
       }
 
-      const meanDiff = patchDiff / (pCount || 1)
-      const meanVar  = patchVar / (pCount || 1)
+      const meanErythema = erythemaSum / (patchValid || 1)
+      const meanTexture  = textureSum  / (patchValid || 1)
 
-      // Center prior: lesion photography typically centers or frames the lesion
+      // Suppress border perimeter cells where room backgrounds, floor, or hands appear
+      const isPerimeter = (gx === 0 || gx === gridSize - 1 || gy === 0 || gy === gridSize - 1)
+      const perimeterPenalty = isPerimeter ? 0.45 : 1.0
+
+      // Radial Gaussian receptive field prior centered on camera viewfinder
       const distFromCenter = Math.hypot(gx - 3, gy - 3)
-      const centerWeight = Math.max(0.6, 1.2 - distFromCenter * 0.12)
+      const centerPrior    = Math.exp(-(distFromCenter * distFromCenter) / 9.0)
 
-      grid[gy][gx] = (meanDiff * 0.6 + meanVar * 0.4) * centerWeight
+      // Combine inflammation + texture roughness with center & perimeter weighting
+      grid[gy][gx] = (meanErythema * 0.70 + meanTexture * 0.30) * centerPrior * perimeterPenalty
     }
   }
 
