@@ -167,6 +167,38 @@ export async function getPatients() {
   return db.getAll('patients')
 }
 
+export async function mergeCloudPatients(cloudPatients) {
+  const db = await initDatabase()
+  const tx = db.transaction(['patients', 'syncQueue', 'syncConflicts'], 'readwrite')
+  const patientStore = tx.objectStore('patients')
+  const queueItems = await tx.objectStore('syncQueue').getAll()
+  const conflicts = await tx.objectStore('syncConflicts').getAll()
+  const pendingKeys = new Set(queueItems.map((item) => `${item.entityType}:${item.entityId}`))
+  const conflictKeys = new Set(
+    conflicts
+      .filter((item) => !item.resolutionStatus || item.resolutionStatus === 'unresolved')
+      .map((item) => `${item.entityType}:${item.entityId}`),
+  )
+
+  for (const patient of cloudPatients) {
+    const id = patient.id
+    if (!id || pendingKeys.has(`patients:${id}`) || conflictKeys.has(`patients:${id}`)) continue
+
+    await patientStore.put({
+      ...patient,
+      id,
+      areaOfConcern: patient.area_of_concern ?? patient.areaOfConcern ?? '',
+      lastVisit: patient.last_visit ?? patient.lastVisit ?? '',
+      ownerId: patient.owner_id ?? patient.ownerId,
+      createdBy: patient.created_by ?? patient.createdBy,
+      createdAt: patient.created_at ?? patient.createdAt,
+      updatedAt: patient.updated_at ?? patient.updatedAt,
+      syncStatus: 'synced',
+    })
+  }
+  await tx.done
+}
+
 export async function updatePatient(id, updates) {
   const db = await initDatabase()
   const now = new Date().toISOString()

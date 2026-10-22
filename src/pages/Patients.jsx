@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
-import { getPatients, updatePatient } from '../db/database'
+import { getPatients, mergeCloudPatients, updatePatient } from '../db/database'
 
-export default function Patients() {
+export default function Patients({ authToken, apiBaseUrl = 'http://localhost:8000', isOffline = false }) {
   const [patients, setPatients] = useState([])
   const [searchTerm, setSearchTerm] = useState('')
   const [isLoading, setIsLoading] = useState(true)
+  const [cloudError, setCloudError] = useState('')
   const [editingPatient, setEditingPatient] = useState(null)
   const [formData, setFormData] = useState({ name: '', species: 'Canine', areaOfConcern: '', lastVisit: '', status: 'Active' })
   const [formError, setFormError] = useState('')
@@ -19,23 +20,41 @@ export default function Patients() {
   useEffect(() => {
     let isMounted = true
 
-    getPatients()
-      .then((savedPatients) => {
+    const loadPatients = async () => {
+      try {
+        const localPatients = await getPatients()
         if (isMounted) {
-          setPatients(savedPatients)
+          setPatients(localPatients)
         }
-      })
-      .catch((error) => console.error('Failed to load patients:', error))
-      .finally(() => {
+
+        if (isOffline || !authToken) return
+
+        const response = await fetch(`${apiBaseUrl}/api/patients`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        })
+        const result = await response.json()
+        if (!response.ok) throw new Error(result.detail || `Patient request failed with HTTP ${response.status}`)
+
+        await mergeCloudPatients(result.patients || [])
+        const mergedPatients = await getPatients()
         if (isMounted) {
-          setIsLoading(false)
+          setPatients(mergedPatients)
+          setCloudError('')
         }
-      })
+      } catch (error) {
+        console.error('Failed to load cloud patients:', error)
+        if (isMounted) setCloudError(error.message || 'Could not retrieve records from the cloud.')
+      } finally {
+        if (isMounted) setIsLoading(false)
+      }
+    }
+
+    loadPatients()
 
     return () => {
       isMounted = false
     }
-  }, [])
+  }, [apiBaseUrl, authToken, isOffline])
 
   const visiblePatients = patients.filter((patient) => {
     const query = searchTerm.toLowerCase()
@@ -94,6 +113,11 @@ export default function Patients() {
 
       <div className="patients-table-wrap">
         {successMessage && <div className="alert-banner success" role="status">{successMessage}</div>}
+        {cloudError && (
+          <div className="alert-banner error" role="alert">
+            Cloud records could not be loaded: {cloudError} Showing records saved on this device.
+          </div>
+        )}
         <table className="patients-table">
           <thead>
             <tr>

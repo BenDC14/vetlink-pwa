@@ -731,9 +731,6 @@ def resolve_sync_conflict(
 import base64
 import io
 from pathlib import Path
-from PIL import Image
-import numpy as np
-import tensorflow as tf
 
 AI_MODEL_PATH = Path(__file__).resolve().parent.parent / "public" / "models" / "vetlink_model_v2.tflite"
 AI_LABELS_PATH = Path(__file__).resolve().parent.parent / "public" / "models" / "vetlink_labels_v2.json"
@@ -745,6 +742,8 @@ def get_ai_model():
     global _ai_interpreter, _ai_labels
     if _ai_interpreter is not None:
         return _ai_interpreter, _ai_labels
+
+    import tensorflow as tf
 
     with open(AI_LABELS_PATH, "r", encoding="utf-8") as f:
         lmap = json.load(f)
@@ -785,6 +784,9 @@ class AIPredictionRequest(BaseModel):
 @app.post("/api/ai/predict")
 def predict_disease(req: AIPredictionRequest):
     try:
+        import numpy as np
+        from PIL import Image
+
         interpreter, labels = get_ai_model()
         inp_idx = interpreter.get_input_details()[0]["index"]
         out_idx = interpreter.get_output_details()[0]["index"]
