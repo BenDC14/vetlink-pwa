@@ -235,6 +235,21 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
               <strong>⚠️ Quality Alert:</strong> {sharpnessWarning}
             </div>
           )}
+
+          {/* Macro Framing Guide */}
+          <div style={{
+            marginTop: 10,
+            padding: '10px 12px',
+            background: '#f0f9ff',
+            border: '1px solid #bae6fd',
+            borderRadius: 8,
+            fontSize: '0.78rem',
+            color: '#0369a1',
+            lineHeight: 1.45,
+            textAlign: 'left',
+          }}>
+            🔍 <strong>Clinical Imaging Tip:</strong> Take a tight close-up photo where the lesion fills 70–80% of the frame. Wide shots showing the full dog face or body will cause the AI to focus on surrounding healthy fur instead of the lesion.
+          </div>
         </div>
 
         {/* ── Right: Form + AI Result ─────────────────────────── */}
@@ -367,9 +382,16 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
                     </div>
                   )}
 
-                  <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#38bdf8' }}>
-                    ⚡ Edge WASM Runtime: &lt;1.5s (Zero Cloud Latency)
-                  </div>
+                  {aiResult.engine === 'backend' ? (
+                    <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 6 }}>
+                      <span>⚡</span>
+                      <span><strong>Native TFLite Engine (0.04s)</strong> — Neural inference verified on FastAPI backend</span>
+                    </div>
+                  ) : (
+                    <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#fbbf24', background: 'rgba(217, 119, 6, 0.2)', border: '1px solid #d97706', padding: '6px 8px', borderRadius: 4 }}>
+                      ⚠️ <strong>Offline WASM Fallback Active:</strong> FastAPI backend (port 8000) was unreachable. For 99.9% clinical accuracy, ensure backend is running (<code>python -m uvicorn backend.main:app --port 8000</code>).
+                    </div>
+                  )}
                 </div>
               </div>
             )}

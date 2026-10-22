@@ -213,6 +213,7 @@ export async function predict(imageElement, species = 'Canine') {
             description:  CLASS_DESCRIPTIONS[data.label] || '',
             top3:         data.top3 || [],
             gradcam,
+            engine:       'backend',
           }
         }
       } catch (err) {
@@ -277,6 +278,10 @@ export async function predict(imageElement, species = 'Canine') {
     // Generate Grad-CAM 3-panel visualization (Original, Heatmap, Overlay)
     const gradcam = await generateGradCAM(imageElement)
 
+    const maxP = Math.max(...probabilities)
+    const minP = Math.min(...probabilities)
+    const isUniform = (maxP - minP) < 0.05
+
     return {
       label:        topLabel,
       displayLabel: CLASS_DISPLAY[topLabel] || topLabel,
@@ -285,6 +290,8 @@ export async function predict(imageElement, species = 'Canine') {
       description:  CLASS_DESCRIPTIONS[topLabel] || '',
       top3,
       gradcam,
+      engine:       'wasm',
+      isUniform,
     }
   } finally {
     inputTensor.dispose()
