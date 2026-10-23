@@ -7,6 +7,7 @@ import {
   addScreeningResult,
   getScreeningResultsByConsultation
 } from '../db/database'
+import CameraCaptureModal from '../components/CameraCaptureModal'
 
 export default function Patients() {
   const [patients, setPatients] = useState([])
@@ -28,6 +29,7 @@ export default function Patients() {
   const [recheckPreview, setRecheckPreview]             = useState(null)
   const [isSavingRecheck, setIsSavingRecheck]           = useState(false)
   const [recheckError, setRecheckError]                 = useState('')
+  const [isRecheckCameraOpen, setIsRecheckCameraOpen]   = useState(false)
   const recheckInputRef                                 = useRef(null)
 
   const refreshPatients = async () => {
@@ -126,6 +128,14 @@ export default function Patients() {
 
   const handleRecheckFileChange = (e) => {
     const file = e.target.files?.[0]
+    if (!file) return
+    setRecheckFile(file)
+    if (recheckPreview) URL.revokeObjectURL(recheckPreview)
+    setRecheckPreview(URL.createObjectURL(file))
+    e.target.value = ''
+  }
+
+  const handleRecheckCameraCapture = (file) => {
     if (!file) return
     setRecheckFile(file)
     if (recheckPreview) URL.revokeObjectURL(recheckPreview)
@@ -357,14 +367,40 @@ export default function Patients() {
                         alt="Today's recheck lesion"
                         style={{ width: '100%', height: 160, objectFit: 'cover', borderRadius: 8, border: '1px solid #86efac' }}
                       />
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        style={{ marginTop: 6, width: '100%', padding: '4px 8px', fontSize: '0.78rem' }}
-                        onClick={() => recheckInputRef.current?.click()}
-                      >
-                        🔄 Retake Today's Photo
-                      </button>
+                      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          style={{
+                            flex: 1,
+                            padding: '6px 8px',
+                            fontSize: '0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                          }}
+                          onClick={() => setIsRecheckCameraOpen(true)}
+                        >
+                          <span>📸</span> Retake (Camera)
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          style={{
+                            flex: 1,
+                            padding: '6px 8px',
+                            fontSize: '0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                          }}
+                          onClick={() => recheckInputRef.current?.click()}
+                        >
+                          <span>📁</span> Upload File
+                        </button>
+                      </div>
                     </div>
                   ) : (
                     <div
@@ -373,16 +409,57 @@ export default function Patients() {
                         height: 160,
                         border: '2px dashed #86efac',
                         borderRadius: 8,
-                        display: 'grid',
-                        placeItems: 'center',
-                        color: '#166534',
-                        cursor: 'pointer',
-                        fontSize: '0.85rem',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: 8,
+                        padding: 10,
                         background: 'white',
+                        boxSizing: 'border-box',
                       }}
-                      onClick={() => recheckInputRef.current?.click()}
                     >
-                      📷 Snap / Upload Today's Photo
+                      <span style={{ fontSize: '1.6rem' }}>📷</span>
+                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#166534', textAlign: 'center' }}>
+                        Snap or Upload Today's Photo
+                      </span>
+                      <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+                        <button
+                          type="button"
+                          className="action-btn blue"
+                          style={{
+                            flex: 1,
+                            padding: '6px 8px',
+                            fontSize: '0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                            background: '#16a34a',
+                          }}
+                          onClick={() => setIsRecheckCameraOpen(true)}
+                        >
+                          <span>📸</span> Live Camera
+                        </button>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          style={{
+                            flex: 1,
+                            padding: '6px 8px',
+                            fontSize: '0.75rem',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            gap: 4,
+                            background: '#f8fafc',
+                            border: '1px solid #cbd5e1',
+                          }}
+                          onClick={() => recheckInputRef.current?.click()}
+                        >
+                          <span>📁</span> Upload File
+                        </button>
+                      </div>
                     </div>
                   )}
                   <input
@@ -470,6 +547,14 @@ export default function Patients() {
           </div>
         </div>
       )}
+
+      {/* Recheck Live Camera Modal */}
+      <CameraCaptureModal
+        isOpen={isRecheckCameraOpen}
+        onClose={() => setIsRecheckCameraOpen(false)}
+        onCapture={handleRecheckCameraCapture}
+        onFallbackUpload={() => recheckInputRef.current?.click()}
+      />
     </section>
   )
 }

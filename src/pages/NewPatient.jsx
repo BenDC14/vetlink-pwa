@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from 'react'
 import { addPatient, addConsultation, addScreeningResult } from '../db/database'
 import { loadVetLinkModel, predict, loadImageFromFile, checkImageSharpness } from '../vetlink-ai'
+import CameraCaptureModal from '../components/CameraCaptureModal'
 
 export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [name, setName]                 = useState('')
@@ -17,6 +18,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [sharpnessWarning, setSharpnessWarning] = useState(null)
   const [modelReady, setModelReady]     = useState(false)
   const [modelError, setModelError]     = useState(null)
+  const [isCameraOpen, setIsCameraOpen] = useState(false)
 
   const fileInputRef = useRef(null)
 
@@ -29,9 +31,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
     return () => { cancelled = true }
   }, [])
 
-  // When user picks a file, show preview and immediately run AI
-  const handleFileChange = async (event) => {
-    const file = event.target.files?.[0]
+  // Process image from either live camera snapshot or file upload
+  const processImageFile = async (file) => {
     if (!file) return
 
     // Revoke previous preview URL to avoid memory leaks
@@ -62,6 +63,20 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
     }
   }
 
+  // When user picks a file, show preview and immediately run AI
+  const handleFileChange = (event) => {
+    const file = event.target.files?.[0]
+    if (file) {
+      processImageFile(file)
+    }
+    event.target.value = ''
+  }
+
+  // When user snaps photo from live camera
+  const handleCameraCapture = (file) => {
+    processImageFile(file)
+  }
+
   // When species changes, re-run AI if an image is already loaded
   const handleSpeciesChange = async (newSpecies) => {
     setSpecies(newSpecies)
@@ -79,8 +94,18 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
     }
   }
 
-  // Called when "CAPTURE & RUN AI" button is clicked — opens camera/file picker
+  // Called when user wants to take live photo with camera
   const handleOpenCamera = () => {
+    if (!name.trim()) {
+      setError('Please enter a patient name first.')
+      return
+    }
+    setError('')
+    setIsCameraOpen(true)
+  }
+
+  // Called when user wants to upload from file storage
+  const handleOpenFilePicker = () => {
     if (!name.trim()) {
       setError('Please enter a patient name first.')
       return
@@ -197,26 +222,66 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
           ) : (
             <div
               className="image-placeholder"
-              style={{ cursor: 'pointer' }}
-              onClick={handleOpenCamera}
-              role="button"
-              aria-label="Click to capture or upload a photo"
+              style={{
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: 12,
+                padding: '24px 16px',
+                textAlign: 'center',
+              }}
             >
-              📷 Click to capture photo
+              <div style={{ fontSize: '2.4rem' }}>📷</div>
+              <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#334155' }}>
+                Capture or Upload Patient Photo
+              </div>
+              <div style={{ fontSize: '0.78rem', color: '#64748b', maxWidth: 220, lineHeight: 1.35 }}>
+                Use your device camera for a live photo or select an existing image file
+              </div>
+              <div style={{ display: 'flex', gap: 8, marginTop: 4, width: '100%', maxWidth: 260 }}>
+                <button
+                  type="button"
+                  className="action-btn blue"
+                  style={{ flex: 1, padding: '9px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={handleOpenCamera}
+                >
+                  <span>📸</span> Live Camera
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ flex: 1, padding: '9px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={handleOpenFilePicker}
+                >
+                  <span>📁</span> Upload File
+                </button>
+              </div>
             </div>
           )}
 
-          {/* Retake button */}
+          {/* Retake buttons */}
           {previewUrl && (
-            <button
-              type="button"
-              className="secondary-btn"
-              style={{ marginTop: 8, width: '100%' }}
-              onClick={handleOpenCamera}
-              disabled={isAnalyzing || isSaving}
-            >
-              🔄 RETAKE PHOTO
-            </button>
+            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                onClick={handleOpenCamera}
+                disabled={isAnalyzing || isSaving}
+              >
+                <span>📸</span> Retake (Camera)
+              </button>
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                onClick={handleOpenFilePicker}
+                disabled={isAnalyzing || isSaving}
+              >
+                <span>📁</span> Upload File
+              </button>
+            </div>
           )}
 
           {/* Quality check alert */}
@@ -397,17 +462,42 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
             )}
 
             <div className="form-actions-row" style={{ flexDirection: 'column', gap: 8 }}>
-              {/* Step 1: Capture photo */}
+              {/* Step 1: Capture or Upload photo */}
               {!previewUrl && (
-                <button
-                  className="capture-btn"
-                  type="button"
-                  onClick={handleOpenCamera}
-                  disabled={isSaving || isAnalyzing}
-                >
-                  <span>📷</span>
-                  CAPTURE & RUN AI
-                </button>
+                <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+                  <button
+                    className="capture-btn"
+                    type="button"
+                    onClick={handleOpenCamera}
+                    disabled={isSaving || isAnalyzing}
+                    style={{ flex: 1.2, margin: 0 }}
+                  >
+                    <span>📸</span>
+                    TAKE LIVE PHOTO
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    type="button"
+                    onClick={handleOpenFilePicker}
+                    disabled={isSaving || isAnalyzing}
+                    style={{
+                      flex: 1,
+                      margin: 0,
+                      padding: '12px 14px',
+                      fontSize: '0.88rem',
+                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      gap: 6,
+                      background: '#f8fafc',
+                      border: '1px solid #cbd5e1',
+                    }}
+                  >
+                    <span>📁</span>
+                    UPLOAD FILE
+                  </button>
+                </div>
               )}
 
               {/* Step 2: Save after AI result is ready */}
@@ -435,6 +525,14 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
           VIEW PENDING APPROVALS
         </button>
       </div>
+
+      {/* Cross-platform Live Camera Viewfinder Modal */}
+      <CameraCaptureModal
+        isOpen={isCameraOpen}
+        onClose={() => setIsCameraOpen(false)}
+        onCapture={handleCameraCapture}
+        onFallbackUpload={handleOpenFilePicker}
+      />
     </section>
   )
 }
