@@ -338,9 +338,10 @@ export function loadImageFromFile(file) {
 }
 
 /**
- * Evaluates image sharpness using a fast edge gradient variance metric on a downscaled canvas.
- * - Sharp / In-Focus photos exhibit high frequency edge differences (score >= 12).
- * - Blurry / Out-of-focus photos have smoothed, low variance edges (score < 12).
+ * Evaluates image sharpness using the industry-standard Laplacian Operator Variance (∇²).
+ * Replicates OpenCV's cv2.Laplacian(img, cv2.CV_64F).var() in client-side JavaScript.
+ * - Sharp / In-Focus photos exhibit strong high-frequency edge peaks (variance >= 45).
+ * - Blurry / Out-of-focus photos smear out edges, dropping variance near zero (< 45).
  *
  * @param {HTMLImageElement|HTMLCanvasElement} imgElement
  * @returns {{ isSharp: boolean, score: number, message: string }}
@@ -348,7 +349,7 @@ export function loadImageFromFile(file) {
 export function checkImageSharpness(imgElement) {
   try {
     const canvas = document.createElement('canvas')
-    const size = 128
+    const size = 224
     canvas.width = size
     canvas.height = size
     const ctx = canvas.getContext('2d')
@@ -356,38 +357,53 @@ export function checkImageSharpness(imgElement) {
     const imgData = ctx.getImageData(0, 0, size, size)
     const d = imgData.data
 
-    let diffSum = 0
+    // 1. Grayscale luminance buffer
+    const gray = new Float32Array(size * size)
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      gray[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+    }
+
+    // 2. 3x3 Discrete Laplacian Kernel:
+    //    [ 0,  1,  0 ]
+    //    [ 1, -4,  1 ]
+    //    [ 0,  1,  0 ]
+    let sum = 0
+    let sumSq = 0
     let count = 0
 
-    // Compare adjacent horizontal and vertical pixel intensities
-    for (let y = 0; y < size - 1; y += 2) {
-      for (let x = 0; x < size - 1; x += 2) {
-        const idx = (y * size + x) * 4
-        const rightIdx = (y * size + (x + 1)) * 4
-        const downIdx = ((y + 1) * size + x) * 4
+    for (let y = 1; y < size - 1; y++) {
+      const rowIdx = y * size
+      for (let x = 1; x < size - 1; x++) {
+        const center = gray[rowIdx + x]
+        const up     = gray[(y - 1) * size + x]
+        const down   = gray[(y + 1) * size + x]
+        const left   = gray[rowIdx + (x - 1)]
+        const right  = gray[rowIdx + (x + 1)]
 
-        const gray = 0.299 * d[idx] + 0.587 * d[idx + 1] + 0.114 * d[idx + 2]
-        const grayRight = 0.299 * d[rightIdx] + 0.587 * d[rightIdx + 1] + 0.114 * d[rightIdx + 2]
-        const grayDown = 0.299 * d[downIdx] + 0.587 * d[downIdx + 1] + 0.114 * d[downIdx + 2]
-
-        diffSum += Math.abs(gray - grayRight) + Math.abs(gray - grayDown)
-        count += 2
+        const lap = up + down + left + right - 4.0 * center
+        sum += lap
+        sumSq += lap * lap
+        count++
       }
     }
 
-    const score = Math.round((diffSum / (count || 1)) * 10) / 10
-    const isSharp = score >= 12
+    // 3. Variance = E[X²] - (E[X])²
+    const mean = sum / (count || 1)
+    const variance = Math.round(((sumSq / (count || 1)) - mean * mean) * 10) / 10
+
+    // Threshold: Focused clinical skin/fur textures score ≥ 45. Blurry or out-of-focus shots score < 45.
+    const isSharp = variance >= 45
 
     return {
       isSharp,
-      score,
+      score: variance,
       message: isSharp
-        ? 'Image sharpness is acceptable for clinical AI inference.'
-        : `Image appears blurry or out of focus (Sharpness score: ${score}, recommended ≥ 12). For optimal diagnostic reliability, hold steady and refocus on the lesion.`,
+        ? 'Image sharpness is optimal for clinical AI inference.'
+        : `Image appears blurry or out of focus (Laplacian sharpness: ${variance}, recommended ≥ 45). Blurry images smear fine crust and pustule textures, which can cause the AI to mistakenly classify skin lesions as "Healthy". Please hold steady and refocus closely on the lesion.`,
     }
   } catch (err) {
     console.warn('[VetLink AI] Sharpness check error:', err)
-    return { isSharp: true, score: 50, message: 'Sharpness check bypassed.' }
+    return { isSharp: true, score: 100, message: 'Sharpness check bypassed.' }
   }
 }
 
