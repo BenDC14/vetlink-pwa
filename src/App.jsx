@@ -257,7 +257,7 @@ function App() {
             ) : (
               <>
                 {activeView === 'clinic' && <ClinicalAnalysis />}
-                {activeView === 'patients' && <Patients />}
+                {activeView === 'patients' && <Patients authToken={authToken} apiBaseUrl={API_BASE_URL} isOffline={currentUser?.isOffline} />}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'pending' && <PendingApprovals authToken={authToken} apiBaseUrl={API_BASE_URL} />}
