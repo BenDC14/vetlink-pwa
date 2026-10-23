@@ -28,6 +28,39 @@ export function checkComorbidity(top3) {
   return { isComorbid: false }
 }
 
+// Clinical check for early-stage dermatological overlap (e.g. early Demodex vs Ringworm on canine face)
+export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '') {
+  if (!aiResult) return null
+  const topLabel = aiResult.displayLabel || aiResult.label || ''
+  const isCanineOrFeline = species === 'Canine' || species === 'Feline'
+  if (!isCanineOrFeline) return null
+
+  const isRingworm = topLabel.toLowerCase().includes('ringworm')
+  const isHealthyWithConcern = topLabel.toLowerCase().includes('healthy') &&
+    (areaOfConcern.toLowerCase().match(/(face|ear|eye|cheek|muzzle|nose|head|rash|red|itch|loss|hair)/) ||
+     (aiResult.top3?.some((t) => !t.display.toLowerCase().includes('healthy') && t.confidence >= 0.04)))
+
+  if (isRingworm) {
+    return {
+      type: 'ringworm_vs_mange',
+      title: '🔬 Early-Stage Clinical Differential Advisory',
+      message: 'Focal alopecia and facial erythema share near-identical visual features between early localized Demodectic Mange and Dermatophytosis (Ringworm). A confirmatory deep skin scraping is strongly advised to rule out Demodex mites before administering topical antifungals or corticosteroids.',
+      overrideHint: 'If scraping reveals Demodex mites, use the Clinical Override dropdown in Admin Approval to confirm Mange.',
+    }
+  }
+
+  if (isHealthyWithConcern) {
+    return {
+      type: 'subclinical_mange_alert',
+      title: '🔬 Subclinical / Early-Stage Lesion Advisory',
+      message: 'Early-stage localized mange with subtle erythema and early hair thinning often lacks florid crusts, causing visual classification to align with intact skin. If clinical pruritus or focal redness is present, microscopic skin scraping is recommended.',
+      overrideHint: 'Attending veterinarian may override the tentative triage classification in Admin Approval if clinical lesions are confirmed.',
+    }
+  }
+
+  return null
+}
+
 export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [name, setName]                 = useState('')
   const [species, setSpecies]           = useState('Canine')
@@ -477,6 +510,20 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
                     return (
                       <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(59, 130, 246, 0.25)', border: '1px solid #3b82f6', borderRadius: 6, fontSize: '0.78rem', color: '#bfdbfe', lineHeight: 1.4 }}>
                         🩺 <strong>Suspected Comorbidity / Secondary Condition:</strong> Elevated probability detected for both <strong>{comorb.primary} ({(comorb.primaryConf * 100).toFixed(1)}%)</strong> and <strong>{comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%)</strong>. Clinical evaluation for secondary opportunistic infection (e.g. bacterial colonization over fungal/parasitic lesion) recommended.
+                      </div>
+                    )
+                  })()}
+
+                  {/* Early-Stage Subclinical / Facial Differential Advisory */}
+                  {(() => {
+                    const diff = checkEarlyStageDifferential(aiResult, species, areaOfConcern)
+                    if (!diff) return null
+                    return (
+                      <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(168, 85, 247, 0.2)', border: '1px solid #a855f7', borderRadius: 6, fontSize: '0.78rem', color: '#e9d5ff', lineHeight: 1.4 }}>
+                        <strong>{diff.title}:</strong> {diff.message}
+                        <div style={{ marginTop: 4, fontSize: '0.72rem', color: '#d8b4fe' }}>
+                          💡 <em>{diff.overrideHint}</em>
+                        </div>
                       </div>
                     )
                   })()}

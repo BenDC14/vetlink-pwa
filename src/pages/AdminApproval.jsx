@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { updateConsultation } from '../db/database'
-import { checkComorbidity } from './NewPatient'
+import { checkComorbidity, checkEarlyStageDifferential } from './NewPatient'
 
 const SPECIES_DIAGNOSES = {
   Canine: [
@@ -39,6 +39,7 @@ export default function AdminApproval({ onBack, onApprove, caseData }) {
 
   // Comorbidity check
   const comorb = checkComorbidity(aiResult?.top3)
+  const earlyDiff = checkEarlyStageDifferential(aiResult, patient?.species, patient?.areaOfConcern)
   const [includePrimary, setIncludePrimary]     = useState(true)
   const [includeSecondary, setIncludeSecondary] = useState(Boolean(comorb.isComorbid))
 
@@ -241,6 +242,22 @@ export default function AdminApproval({ onBack, onApprove, caseData }) {
                 />
                 <span><strong>Concurrent Secondary:</strong> {comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%) — <em>Secondary opportunistic dermatitis</em></span>
               </label>
+            </div>
+          </div>
+        )}
+
+        {/* Early-Stage Subclinical / Facial Differential Advisory */}
+        {earlyDiff && !overrideDiagnosis && (
+          <div style={{ marginBottom: 14, padding: '12px 14px', background: 'rgba(168, 85, 247, 0.12)', border: '1px solid #c084fc', borderLeft: '4px solid #a855f7', borderRadius: 8 }}>
+            <div style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#6b21a8', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>🔬</span>
+              <span>{earlyDiff.title}</span>
+            </div>
+            <p style={{ fontSize: '0.82rem', color: '#3b0764', margin: '0 0 8px', lineHeight: 1.45 }}>
+              {earlyDiff.message}
+            </p>
+            <div style={{ fontSize: '0.78rem', color: '#7e22ce', fontWeight: 600 }}>
+              💡 <em>{earlyDiff.overrideHint}</em>
             </div>
           </div>
         )}
