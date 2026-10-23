@@ -194,14 +194,17 @@ const TREATMENT_PROTOCOLS = {
 }
 
 export default function Treatment({ onBack, caseData }) {
-  const patient      = caseData?.patient
-  const consultation = caseData?.consultation
-  const aiResult     = caseData?.aiResult
-  const diagnosis    = aiResult?.displayLabel || 'Ringworm (Rabbit)'
+  const patient            = caseData?.patient
+  const consultation       = caseData?.consultation
+  const aiResult           = caseData?.aiResult
+  const diagnosis          = caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Ringworm'
+  const secondaryDiagnosis  = caseData?.approvedSecondary || caseData?.secondaryDiagnosis || null
+  const isComorbid         = Boolean(caseData?.isComorbid || secondaryDiagnosis)
+  const isOverridden       = Boolean(caseData?.isOverridden)
 
-  const protocol = TREATMENT_PROTOCOLS[diagnosis] ||
-                   TREATMENT_PROTOCOLS[aiResult?.label] ||
-                   (diagnosis.toLowerCase().includes('healthy') ? TREATMENT_PROTOCOLS['Healthy'] : {
+  const primaryProtocol = TREATMENT_PROTOCOLS[diagnosis] ||
+                         TREATMENT_PROTOCOLS[aiResult?.label] ||
+                         (diagnosis.toLowerCase().includes('healthy') ? TREATMENT_PROTOCOLS['Healthy'] : {
     treatment: [
       'Topical dermatological therapy applied twice daily to affected region',
       'Anti-inflammatory or antimicrobial regimen based on clinical cytology',
@@ -211,33 +214,63 @@ export default function Treatment({ onBack, caseData }) {
     notes: 'Monitor lesion site daily. Discontinue medication and consult clinic if irritation develops.',
   })
 
+  const secondaryProtocol = secondaryDiagnosis ? (
+    TREATMENT_PROTOCOLS[secondaryDiagnosis] ||
+    (secondaryDiagnosis.toLowerCase().includes('healthy') ? null : {
+      treatment: [
+        `Targeted adjunct therapy for concurrent ${secondaryDiagnosis}`,
+        'Antimicrobial or antifungal wash twice weekly',
+      ],
+      prescription: `Adjunct therapy for concurrent ${secondaryDiagnosis}.`,
+      notes: `Concurrent management for ${secondaryDiagnosis}.`,
+    })
+  ) : null
+
   // FR7: 60% Confidence Decision Boundary Rule (Thesis pp. 11, 41, 46, 56)
   const isSubThreshold = (aiResult?.confidence !== undefined && aiResult.confidence < 0.60) &&
-                         !diagnosis.toLowerCase().includes('healthy')
+                         !diagnosis.toLowerCase().includes('healthy') && !isOverridden
 
-  // Comorbidity / Dual-Presentation Check
-  const isComorbid = aiResult?.top3?.length > 1 &&
-                     aiResult.top3[1].confidence >= 0.25 &&
-                     (aiResult.top3[0].confidence - aiResult.top3[1].confidence) <= 0.40 &&
-                     !aiResult.top3[0].display.toLowerCase().includes('healthy') &&
-                     !aiResult.top3[1].display.toLowerCase().includes('healthy')
+  let treatmentSteps = [...primaryProtocol.treatment]
 
-  let treatmentSteps = [...protocol.treatment]
+  // Dual condition / Comorbidity steps
+  if (isComorbid && secondaryProtocol) {
+    treatmentSteps.push(`🩺 [CONCURRENT PROTOCOL: ${secondaryDiagnosis.toUpperCase()}] ${secondaryProtocol.treatment[0]}`)
+    if (secondaryProtocol.treatment[1]) {
+      treatmentSteps.push(`🩺 [ADJUNCT STEP] ${secondaryProtocol.treatment[1]}`)
+    }
+  }
 
-  if (isComorbid) {
-    treatmentSteps.push(`🩺 [COMORBIDITY CONSIDERATION] Strong secondary differential detected for ${aiResult.top3[1].display} (${(aiResult.top3[1].confidence * 100).toFixed(1)}%). If active lesions are multifocal or show secondary inflammation/crusting, consider adjunct topical antiseptic therapy (e.g. Chlorhexidine wash) alongside primary ${diagnosis} management.`)
+  // Pharmacological contraindication alert if hot spots + ringworm
+  const isHotSpotAndRingworm = (diagnosis.toLowerCase().includes('hot') && secondaryDiagnosis?.toLowerCase().includes('ringworm')) ||
+                               (diagnosis.toLowerCase().includes('ringworm') && secondaryDiagnosis?.toLowerCase().includes('hot'))
+
+  if (isHotSpotAndRingworm) {
+    treatmentSteps.push(`⚠️ [STEROID CAUTION IN DUAL PRESENTATION] Betamethasone topical spray rapidly controls acute hot spot pain, but topical corticosteroids can exacerbate dermatophyte (Ringworm) proliferation. Taper steroid as soon as hot spot dries, and maintain continuous antifungal application.`)
   }
 
   if (isSubThreshold) {
     treatmentSteps.unshift('⚠️ [CONFIRMATORY LAB TESTING INDICATED] Pre-screening algorithmic confidence is below the 60% decision boundary. Attending veterinarian should execute secondary confirmatory diagnostics (microscopic skin scraping, fungal DTM culture, or tape cytology) to rule out differential conditions.')
   }
 
-  const initialNotes = isSubThreshold
-    ? `[FR7 Triage Notice] AI pre-screening confidence was below the calibrated 60% decision boundary (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${protocol.notes}`
-    : protocol.notes
+  // Initial combined prescription text
+  let initialPrescription = primaryProtocol.prescription
+  if (isComorbid && secondaryProtocol) {
+    initialPrescription = `1. PRIMARY (${diagnosis.toUpperCase()}):\n${primaryProtocol.prescription}\n\n2. CONCURRENT (${secondaryDiagnosis.toUpperCase()}):\n${secondaryProtocol.prescription}`
+  }
+
+  // Initial combined notes text
+  let initialNotes = primaryProtocol.notes
+  if (isComorbid && secondaryProtocol) {
+    initialNotes = `[COMORBIDITY MANAGEMENT: ${diagnosis} + ${secondaryDiagnosis}] ${primaryProtocol.notes} ${isHotSpotAndRingworm ? 'Caution with corticosteroid duration due to concurrent fungal infection.' : ''}`
+  }
+  if (isOverridden) {
+    initialNotes = `[VETERINARIAN CLINICAL OVERRIDE]: Attending clinician modified diagnosis to ${diagnosis}${caseData?.overrideNotes ? `: "${caseData.overrideNotes}"` : '.'} ${initialNotes}`
+  } else if (isSubThreshold) {
+    initialNotes = `[FR7 Triage Notice]: AI pre-screening confidence was below the calibrated 60% decision boundary (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${initialNotes}`
+  }
 
   // Interactive Editable State for Veterinarian Customization
-  const [prescription, setPrescription]   = useState(protocol.prescription)
+  const [prescription, setPrescription]   = useState(initialPrescription)
   const [clinicalNotes, setClinicalNotes] = useState(initialNotes)
   const [isSaving, setIsSaving]           = useState(false)
   const [saveMessage, setSaveMessage]     = useState('')
@@ -251,6 +284,8 @@ export default function Treatment({ onBack, caseData }) {
       if (consultation?.id) {
         await updateConsultation(consultation.id, {
           diagnosis,
+          secondaryDiagnosis,
+          isComorbid,
           treatmentPlan: prescription,
           clinicalNotes: clinicalNotes,
         })
@@ -300,20 +335,34 @@ export default function Treatment({ onBack, caseData }) {
         <div className="treatment-panel">
           <div className="treatment-section treatment-highlight">
             <div className="treatment-section-title">VALIDATED DIAGNOSIS</div>
-            <div className="treatment-section-body" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-              <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1e293b' }}>
-                {diagnosis}
-              </span>
-              {aiResult?.percent && (
-                <span style={{ fontSize: '0.9rem', color: '#16a34a', fontWeight: 'bold' }}>
-                  AI Confidence: {aiResult.percent}
+            <div className="treatment-section-body" style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1e293b' }}>
+                  {diagnosis} {isOverridden ? '🔬 (Clinical Override)' : ''}
                 </span>
+                {aiResult?.percent && !isOverridden && (
+                  <span style={{ fontSize: '0.9rem', color: '#16a34a', fontWeight: 'bold' }}>
+                    AI Confidence: {aiResult.percent}
+                  </span>
+                )}
+              </div>
+              {isComorbid && secondaryDiagnosis && (
+                <div style={{ padding: '6px 10px', background: '#dbeafe', borderRadius: 6, border: '1px solid #93c5fd', color: '#1e40af', fontSize: '0.85rem' }}>
+                  🩺 <strong>Concurrent Co-Occurring Condition:</strong> {secondaryDiagnosis} (Secondary opportunistic infection)
+                </div>
+              )}
+              {isOverridden && caseData?.overrideNotes && (
+                <div style={{ padding: '6px 10px', background: '#fae8ff', borderRadius: 6, border: '1px solid #e879f9', color: '#701a75', fontSize: '0.85rem' }}>
+                  🔬 <strong>Veterinarian Clinical Reason:</strong> {caseData.overrideNotes}
+                </div>
               )}
             </div>
           </div>
 
           <div className="treatment-section">
-            <div className="treatment-section-title">RECOMMENDED TREATMENT PROTOCOL (CLINICAL GUIDELINE)</div>
+            <div className="treatment-section-title">
+              {isComorbid ? 'RECOMMENDED DUAL-CONDITION CARE PROTOCOL' : 'RECOMMENDED TREATMENT PROTOCOL (CLINICAL GUIDELINE)'}
+            </div>
             <div className="treatment-section-body treatment-list">
               <ul>
                 {treatmentSteps.map((step, idx) => (
@@ -427,8 +476,7 @@ export default function Treatment({ onBack, caseData }) {
           </div>
           <div>
             <strong>Attending Clinician:</strong> Dr. Sarah Lin, DVM<br />
-            <strong>Area of Concern:</strong> {patient?.areaOfConcern || 'Cutaneous lesion screening'}<br />
-            <strong>Validated Diagnosis:</strong> <u>{diagnosis}</u> ({aiResult?.percent || 'N/A'})
+            <strong>Validated Diagnosis:</strong> <u>{diagnosis}</u>{isComorbid && secondaryDiagnosis ? ` + ${secondaryDiagnosis} (Concurrent)` : ''} {isOverridden ? '[Clinical Override]' : (aiResult?.percent ? `(${aiResult.percent})` : '')}
           </div>
         </div>
 

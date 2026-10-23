@@ -1,9 +1,52 @@
+import { useState } from 'react'
+import { updateConsultation } from '../db/database'
+import { checkComorbidity } from './NewPatient'
+
+const SPECIES_DIAGNOSES = {
+  Canine: [
+    'Healthy',
+    'Hot Spots',
+    'Mange',
+    'Pyoderma',
+    'Ringworm',
+  ],
+  Feline: [
+    'Healthy',
+    'Hot Spots',
+    'Mange',
+    'Pyoderma',
+    'Ringworm',
+  ],
+  Rabbit: [
+    'Rabbit Healthy',
+    'Rabbit Mange',
+    'Rabbit Ringworm',
+  ],
+  Avian: [
+    'Bird Healthy',
+    'Avian Fowl Pox',
+    'Scaly Face Scaly Leg Mite (Knemidocoptes)',
+  ],
+}
+
 export default function AdminApproval({ onBack, onApprove, caseData }) {
   // caseData is passed from App.jsx after NewPatient saves successfully
   // Shape: { patient, consultation, aiResult, previewUrl }
-  const patient  = caseData?.patient
-  const aiResult = caseData?.aiResult
-  const preview  = caseData?.previewUrl
+  const patient      = caseData?.patient
+  const consultation = caseData?.consultation
+  const aiResult     = caseData?.aiResult
+  const preview      = caseData?.previewUrl
+
+  // Comorbidity check
+  const comorb = checkComorbidity(aiResult?.top3)
+  const [includePrimary, setIncludePrimary]     = useState(true)
+  const [includeSecondary, setIncludeSecondary] = useState(Boolean(comorb.isComorbid))
+
+  // Early-stage / Clinical Diagnostic Override State
+  const [overrideDiagnosis, setOverrideDiagnosis] = useState('')
+  const [overrideNotes, setOverrideNotes]         = useState('')
+  const [showOverridePanel, setShowOverridePanel] = useState(false)
+  const [isSaving, setIsSaving]                   = useState(false)
 
   // Confidence color
   const conf = aiResult?.confidence ?? 0
@@ -170,20 +213,141 @@ export default function AdminApproval({ onBack, onApprove, caseData }) {
           </div>
         )}
 
-        {/* Comorbidity / Dual-presentation notice for veterinarian review */}
-        {aiResult?.top3?.length > 1 &&
-         aiResult.top3[1].confidence >= 0.25 &&
-         (aiResult.top3[0].confidence - aiResult.top3[1].confidence) <= 0.40 &&
-         !aiResult.top3[0].display.toLowerCase().includes('healthy') &&
-         !aiResult.top3[1].display.toLowerCase().includes('healthy') && (
-          <div style={{ marginBottom: 12, padding: '10px 12px', background: '#eff6ff', borderLeft: '4px solid #3b82f6', borderRadius: 4, fontSize: '0.82rem', color: '#1e40af' }}>
-            <strong>🩺 Suspected Mixed / Co-Occurring Infection:</strong> Simultaneous visual patterns detected for both <strong>{aiResult.top3[0].display} ({(aiResult.top3[0].confidence * 100).toFixed(1)}%)</strong> and <strong>{aiResult.top3[1].display} ({(aiResult.top3[1].confidence * 100).toFixed(1)}%)</strong>. Secondary bacterial dermatitis frequently co-occurs with mite infestations due to self-trauma.
+        {/* Comorbidity / Dual-presentation notice & Checkboxes */}
+        {comorb.isComorbid && !overrideDiagnosis && (
+          <div style={{ marginBottom: 14, padding: '12px 14px', background: '#eff6ff', border: '1px solid #bfdbfe', borderLeft: '4px solid #3b82f6', borderRadius: 8 }}>
+            <div style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#1e40af', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>🩺</span>
+              <span>Suspected Mixed / Co-Occurring Dermatitis</span>
+            </div>
+            <p style={{ fontSize: '0.8rem', color: '#334155', margin: '0 0 10px', lineHeight: 1.4 }}>
+              Simultaneous visual indicators detected for both conditions. Select which diagnoses to confirm into the treatment protocol:
+            </p>
+            <div style={{ display: 'grid', gap: 6, fontSize: '0.84rem' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: includePrimary ? '#dbeafe' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                <input
+                  type="checkbox"
+                  checked={includePrimary}
+                  onChange={(e) => setIncludePrimary(e.target.checked)}
+                />
+                <span><strong>Primary Condition:</strong> {comorb.primary} ({(comorb.primaryConf * 100).toFixed(1)}%)</span>
+              </label>
+
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: includeSecondary ? '#e0e7ff' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                <input
+                  type="checkbox"
+                  checked={includeSecondary}
+                  onChange={(e) => setIncludeSecondary(e.target.checked)}
+                />
+                <span><strong>Concurrent Secondary:</strong> {comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%) — <em>Secondary opportunistic dermatitis</em></span>
+              </label>
+            </div>
           </div>
         )}
-        <button className="capture-btn approve-btn" type="button" onClick={onApprove}>
-          ✓ Approve &amp; Generate Treatment
+
+        {/* Veterinarian Clinical Override / Early-Stage Adjustment */}
+        <div style={{ marginBottom: 14, padding: '12px 14px', background: '#fdf4ff', border: '1px solid #f5d0fe', borderLeft: '4px solid #c026d3', borderRadius: 8 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+            <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#86198f', display: 'flex', alignItems: 'center', gap: 6 }}>
+              <span>🔬</span>
+              <span>Clinical Diagnostic Adjustment / Early-Stage Override</span>
+            </span>
+            <button
+              type="button"
+              className="secondary-btn"
+              style={{ fontSize: '0.74rem', padding: '3px 8px' }}
+              onClick={() => setShowOverridePanel(!showOverridePanel)}
+            >
+              {showOverridePanel ? 'Hide Options ▲' : 'Adjust Diagnosis ▼'}
+            </button>
+          </div>
+          <p style={{ fontSize: '0.78rem', color: '#4a044e', margin: '0 0 8px', lineHeight: 1.35 }}>
+            Did the AI classify an early-stage lesion as "Healthy" (e.g. early Mange with subtle erythema)? As attending veterinarian, you may override the AI pre-screening below.
+          </p>
+
+          {showOverridePanel && (
+            <div style={{ marginTop: 8, display: 'grid', gap: 8 }}>
+              <label style={{ fontSize: '0.8rem', color: '#701a75' }}>
+                <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Select Verified Clinical Diagnosis:</span>
+                <select
+                  value={overrideDiagnosis}
+                  onChange={(e) => setOverrideDiagnosis(e.target.value)}
+                  style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #d946ef', fontSize: '0.85rem' }}
+                >
+                  <option value="">-- Use AI Pre-Screening Result ({aiResult?.displayLabel}) --</option>
+                  {(SPECIES_DIAGNOSES[patient?.species || 'Canine'] || SPECIES_DIAGNOSES.Canine).map((diag) => (
+                    <option key={diag} value={diag}>
+                      {diag} {diag.toLowerCase() === 'mange' ? '(e.g. Early / Subclinical Mange)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              {overrideDiagnosis && (
+                <label style={{ fontSize: '0.8rem', color: '#701a75' }}>
+                  <span style={{ display: 'block', fontWeight: 600, marginBottom: 4 }}>Clinical Reason / Observation Notes:</span>
+                  <input
+                    type="text"
+                    value={overrideNotes}
+                    onChange={(e) => setOverrideNotes(e.target.value)}
+                    placeholder="e.g. Early-stage focal erythema on muzzle margin; confirmed by clinical scraping."
+                    style={{ width: '100%', padding: '6px 10px', borderRadius: 6, border: '1px solid #d946ef', fontSize: '0.82rem', boxSizing: 'border-box' }}
+                  />
+                </label>
+              )}
+            </div>
+          )}
+
+          {overrideDiagnosis && (
+            <div style={{ marginTop: 8, padding: '6px 8px', background: '#fae8ff', border: '1px solid #e879f9', borderRadius: 6, fontSize: '0.78rem', color: '#701a75' }}>
+              ✓ <strong>Active Clinical Override:</strong> Will prescribe care protocol for <strong>{overrideDiagnosis}</strong> instead of {aiResult?.displayLabel}.
+            </div>
+          )}
+        </div>
+
+        <button
+          className="capture-btn approve-btn"
+          type="button"
+          disabled={isSaving}
+          onClick={async () => {
+            setIsSaving(true)
+            const isOverridden = Boolean(overrideDiagnosis)
+            const finalPrimary = isOverridden
+              ? overrideDiagnosis
+              : (includePrimary ? (aiResult?.displayLabel || 'Healthy') : (comorb.secondary || 'Healthy'))
+            const finalSecondary = (!isOverridden && includePrimary && includeSecondary && comorb.isComorbid)
+              ? comorb.secondary
+              : null
+            const isComorbidActive = Boolean(finalSecondary)
+
+            if (consultation?.id) {
+              try {
+                await updateConsultation(consultation.id, {
+                  diagnosis: finalPrimary,
+                  secondaryDiagnosis: finalSecondary,
+                  isComorbid: isComorbidActive,
+                  reviewStatus: 'approved',
+                  isOverridden,
+                  overrideNotes: isOverridden ? overrideNotes || 'Adjusted based on clinical veterinary examination' : null,
+                })
+              } catch (err) {
+                console.warn('Could not update consultation in database:', err)
+              }
+            }
+
+            setIsSaving(false)
+            onApprove({
+              approvedDiagnosis: finalPrimary,
+              approvedSecondary: finalSecondary,
+              isComorbid: isComorbidActive,
+              isOverridden,
+              overrideNotes,
+            })
+          }}
+        >
+          {isSaving ? '⏳ Saving Consultation...' : '✓ Approve & Generate Treatment'}
         </button>
-        <button className="secondary-btn reject-btn" type="button" onClick={onBack}>
+        <button className="secondary-btn reject-btn" type="button" onClick={onBack} disabled={isSaving}>
           ✗ Reject Result
         </button>
       </div>

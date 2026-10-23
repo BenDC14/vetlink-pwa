@@ -681,10 +681,12 @@ export async function addConsultation(consultation) {
   const record = {
     ...consultation,
     id,
-    createdAt:   now,
-    updatedAt:   now,
-    syncStatus:  'pending',
-    version:     1,
+    secondaryDiagnosis: consultation.secondaryDiagnosis || null,
+    isComorbid:         Boolean(consultation.isComorbid),
+    createdAt:          now,
+    updatedAt:          now,
+    syncStatus:         'pending',
+    version:            1,
   }
 
   await tx.objectStore('consultations').put(record)
@@ -739,11 +741,14 @@ export async function addScreeningResult(result) {
   const record = {
     ...result,
     id,
-    createdAt:    now,
-    updatedAt:    now,
-    syncStatus:   'pending',
-    reviewStatus: result.reviewStatus || 'pending',
-    version:      1,
+    aiSecondaryLabel:      result.aiSecondaryLabel || null,
+    aiSecondaryConfidence: result.aiSecondaryConfidence || null,
+    isComorbid:            Boolean(result.isComorbid),
+    createdAt:             now,
+    updatedAt:             now,
+    syncStatus:            'pending',
+    reviewStatus:          result.reviewStatus || 'pending',
+    version:               1,
   }
 
   await tx.objectStore('screeningResults').put(record)

@@ -233,7 +233,20 @@ function App() {
               <AdminApproval
                 caseData={caseData}
                 onBack={() => { setShowAdminApproval(false); setShowNewPatient(false); setCaseData(null); }}
-                onApprove={() => { setShowTreatment(true); setShowAdminApproval(false); }}
+                onApprove={(approvedPayload) => {
+                  if (approvedPayload) {
+                    setCaseData((prev) => ({
+                      ...prev,
+                      ...approvedPayload,
+                      approvedDiagnosis: approvedPayload.approvedDiagnosis || prev?.aiResult?.displayLabel,
+                      approvedSecondary: approvedPayload.approvedSecondary || null,
+                      isComorbid: Boolean(approvedPayload.isComorbid),
+                      isOverridden: Boolean(approvedPayload.isOverridden),
+                    }))
+                  }
+                  setShowTreatment(true);
+                  setShowAdminApproval(false);
+                }}
               />
             ) : showNewPatient ? (
               <NewPatient

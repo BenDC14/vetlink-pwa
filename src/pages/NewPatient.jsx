@@ -3,6 +3,31 @@ import { addPatient, addConsultation, addScreeningResult } from '../db/database'
 import { loadVetLinkModel, predict, loadImageFromFile, checkImageSharpness } from '../vetlink-ai'
 import CameraCaptureModal from '../components/CameraCaptureModal'
 
+// Clinical check for co-occurring dermatitis or secondary opportunistic infection
+export function checkComorbidity(top3) {
+  if (!top3 || top3.length < 2) return { isComorbid: false }
+  const p1 = top3[0]
+  const p2 = top3[1]
+  const isP1Healthy = p1.display.toLowerCase().includes('healthy')
+  const isP2Healthy = p2.display.toLowerCase().includes('healthy')
+  if (isP1Healthy || isP2Healthy) return { isComorbid: false }
+
+  // Clinical threshold: 2nd disease elevated >= 20%, or differential delta <= 55% with secondary >= 15%
+  const delta = p1.confidence - p2.confidence
+  const hasSignal = p2.confidence >= 0.20 || (delta <= 0.55 && p2.confidence >= 0.15)
+
+  if (hasSignal) {
+    return {
+      isComorbid: true,
+      primary: p1.display,
+      primaryConf: p1.confidence,
+      secondary: p2.display,
+      secondaryConf: p2.confidence,
+    }
+  }
+  return { isComorbid: false }
+}
+
 export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [name, setName]                 = useState('')
   const [species, setSpecies]           = useState('Canine')
@@ -133,38 +158,47 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
         status:        'Active',
       })
 
-      // 2. Save consultation linked to the patient
+      // 2. Check for comorbidity / secondary presentation
+      const comorb = checkComorbidity(aiResult.top3)
+
+      // 3. Save consultation linked to the patient
       const consultation = await addConsultation({
-        patientId:       patient.id,
-        clinicalNotes:   areaOfConcern.trim(),
-        diagnosis:       aiResult.label,
-        treatmentPlan:   '',
+        patientId:          patient.id,
+        clinicalNotes:      areaOfConcern.trim(),
+        diagnosis:          aiResult.label,
+        secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
+        isComorbid:         comorb.isComorbid,
+        treatmentPlan:      '',
       })
 
-      // 3. Convert image to base64 for local storage
+      // 4. Convert image to base64 for local storage
       const base64Image = await fileToBase64(selectedFile)
 
-      // 4. Save screening result linked to the consultation
+      // 5. Save screening result linked to the consultation
       await addScreeningResult({
-        consultationId:  consultation.id,
-        imageId:         null,
-        imageData:       base64Image,
-        aiLabel:         aiResult.label,
-        aiDisplayLabel:  aiResult.displayLabel,
-        aiConfidence:    aiResult.confidence,
-        aiPercent:       aiResult.percent,
-        aiDescription:   aiResult.description,
-        aiTop3:          JSON.stringify(aiResult.top3),
+        consultationId:        consultation.id,
+        imageId:               null,
+        imageData:             base64Image,
+        aiLabel:               aiResult.label,
+        aiDisplayLabel:        aiResult.displayLabel,
+        aiConfidence:          aiResult.confidence,
+        aiPercent:             aiResult.percent,
+        aiSecondaryLabel:      comorb.isComorbid ? comorb.secondary : null,
+        aiSecondaryConfidence: comorb.isComorbid ? comorb.secondaryConf : null,
+        isComorbid:            comorb.isComorbid,
+        aiDescription:         aiResult.description,
+        aiTop3:                JSON.stringify(aiResult.top3),
         species,
-        reviewStatus:    'pending',
+        reviewStatus:          'pending',
       })
 
-      // 5. Navigate to AdminApproval with the full result
+      // 6. Navigate to AdminApproval with the full result
       onCapture({
         patient,
         consultation,
         aiResult,
         previewUrl,
+        comorbidityInfo: comorb,
       })
 
     } catch (saveError) {
@@ -437,15 +471,15 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
                   </div>
 
                   {/* Co-occurring / Comorbidity Detection */}
-                  {aiResult.top3?.length > 1 &&
-                   aiResult.top3[1].confidence >= 0.25 &&
-                   (aiResult.top3[0].confidence - aiResult.top3[1].confidence) <= 0.40 &&
-                   !aiResult.top3[0].display.toLowerCase().includes('healthy') &&
-                   !aiResult.top3[1].display.toLowerCase().includes('healthy') && (
-                    <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(59, 130, 246, 0.2)', border: '1px solid #3b82f6', borderRadius: 4, fontSize: '0.74rem', color: '#93c5fd' }}>
-                      🩺 <strong>Suspected Comorbidity:</strong> Elevated probability detected for both {aiResult.top3[0].display} ({(aiResult.top3[0].confidence * 100).toFixed(1)}%) and {aiResult.top3[1].display} ({(aiResult.top3[1].confidence * 100).toFixed(1)}%). Clinical evaluation for secondary opportunistic dermatitis recommended.
-                    </div>
-                  )}
+                  {(() => {
+                    const comorb = checkComorbidity(aiResult.top3)
+                    if (!comorb.isComorbid) return null
+                    return (
+                      <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(59, 130, 246, 0.25)', border: '1px solid #3b82f6', borderRadius: 6, fontSize: '0.78rem', color: '#bfdbfe', lineHeight: 1.4 }}>
+                        🩺 <strong>Suspected Comorbidity / Secondary Condition:</strong> Elevated probability detected for both <strong>{comorb.primary} ({(comorb.primaryConf * 100).toFixed(1)}%)</strong> and <strong>{comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%)</strong>. Clinical evaluation for secondary opportunistic infection (e.g. bacterial colonization over fungal/parasitic lesion) recommended.
+                      </div>
+                    )
+                  })()}
 
                   {aiResult.engine === 'backend' ? (
                     <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 6 }}>
