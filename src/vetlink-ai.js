@@ -200,6 +200,16 @@ export async function predict(imageElement, species = 'Canine') {
         if (res.ok) {
           const data = await res.json()
           console.timeEnd('[VetLink AI] Inference Time')
+
+          if (data.rejected) {
+            return {
+              rejected: true,
+              reason: data.reason || 'NON_ANIMAL',
+              detected: data.detected,
+              message: data.message,
+            }
+          }
+
           console.log(`[VetLink AI] Native TFLite result: ${data.label} (${data.percent})`)
 
           // Generate Grad-CAM 3-panel visualization (matching Colab Cell 8)
@@ -338,15 +348,18 @@ export function loadImageFromFile(file) {
 }
 
 /**
- * Evaluates image sharpness using the industry-standard Laplacian Operator Variance (∇²).
- * Replicates OpenCV's cv2.Laplacian(img, cv2.CV_64F).var() in client-side JavaScript.
- * - Sharp / In-Focus photos exhibit strong high-frequency edge peaks (variance >= 45).
- * - Blurry / Out-of-focus photos smear out edges, dropping variance near zero (< 45).
+ * Comprehensive Clinical Image Quality Gate & Pre-Inference Validation.
+ * Evaluates 5 clinical imaging dimensions before invoking the AI model:
+ * 1. Illumination / Underexposure: Rejects dark photos (mean luminance < 32).
+ * 2. Glare / Overexposure: Rejects flash reflection and bleached margins (mean > 225 or >30% saturated).
+ * 3. Surface Detail / Contrast: Rejects uniform/flat surfaces like walls, paper, or camera blockage (stdDev < 14).
+ * 4. High-Frequency Focus / Sharpness: Replicates OpenCV cv2.Laplacian().var() (variance < 45.0).
+ * 5. Biological Gamut: Rejects pure digital screens, synthetic neon graphics, or IDE editors.
  *
  * @param {HTMLImageElement|HTMLCanvasElement} imgElement
- * @returns {{ isSharp: boolean, score: number, message: string }}
+ * @returns {{ isValid: boolean, reason?: string, title?: string, message: string, instructions?: string, score?: number }}
  */
-export function checkImageSharpness(imgElement) {
+export function validateClinicalImageQuality(imgElement) {
   try {
     const canvas = document.createElement('canvas')
     const size = 224
@@ -357,19 +370,97 @@ export function checkImageSharpness(imgElement) {
     const imgData = ctx.getImageData(0, 0, size, size)
     const d = imgData.data
 
-    // 1. Grayscale luminance buffer
+    let totalLuminance = 0
+    let overexposedPixels = 0
+    let underexposedPixels = 0
+    let biologicalColorPixels = 0
+    let coldScreenPixels = 0
+    let warmOrganicPixels = 0
+
     const gray = new Float32Array(size * size)
+    const n = size * size
+
     for (let i = 0, p = 0; i < d.length; i += 4, p++) {
-      gray[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+      const r = d[i]
+      const g = d[i + 1]
+      const b = d[i + 2]
+
+      // Luminance (Rec. 601)
+      const lum = 0.299 * r + 0.587 * g + 0.114 * b
+      gray[p] = lum
+      totalLuminance += lum
+
+      if (lum > 245) overexposedPixels++
+      if (lum < 20) underexposedPixels++
+
+      // Screen / Monitor / Slate UI detection
+      // 1. Cold blue/slate UI pixels (b > r + 10 && b > g - 8)
+      // 2. Dark cyan/slate background pixels (e.g., #0f172a, #1e293b, #334155: r < 75 && b > r + 8)
+      const isColdSlateOrScreen = (b > r + 12 && b > g - 8) || (r < 75 && b > r + 8 && b > 25)
+      if (isColdSlateOrScreen) {
+        coldScreenPixels++
+      }
+
+      // Warm organic animal tissue (erythema, pink skin, tan/brown fur, scabs)
+      // Red is dominant over green and blue (r > g && r > b + 10)
+      const isWarmOrganic = (r > g && r > b + 10) || (r > 120 && g > 70 && b < 100 && r > b + 20)
+      if (isWarmOrganic) {
+        warmOrganicPixels++
+      }
+
+      // Synthetic neons
+      const isSyntheticBlue = (b > r + 45 && b > g + 45 && b > 120) // Blue screen / IDE
+      const isPureNeonGreen = (g > r + 65 && g > b + 65 && g > 130)
+      if (!isSyntheticBlue && !isPureNeonGreen) {
+        biologicalColorPixels++
+      }
     }
 
-    // 2. 3x3 Discrete Laplacian Kernel:
-    //    [ 0,  1,  0 ]
-    //    [ 1, -4,  1 ]
-    //    [ 0,  1,  0 ]
-    let sum = 0
-    let sumSq = 0
-    let count = 0
+    const meanLuminance = totalLuminance / n
+
+    // 1. Lighting Check: Too Dark
+    if (meanLuminance < 32 || (underexposedPixels / n) > 0.65) {
+      return {
+        isValid: false,
+        reason: 'TOO_DARK',
+        title: '📷 Image Rejected: Insufficient Lighting (Too Dark)',
+        message: `Average image brightness is only ${Math.round((meanLuminance / 255) * 100)}%. In dark shadows, fine lesion margins, erythema, and pustules cannot be differentiated from healthy fur.`,
+        instructions: 'Please move the animal into a well-lit area or turn on device lighting before retaking.',
+      }
+    }
+
+    // 2. Lighting Check: Overexposed / Flash Glare
+    if (meanLuminance > 225 || (overexposedPixels / n) > 0.35) {
+      return {
+        isValid: false,
+        reason: 'OVEREXPOSED',
+        title: '☀️ Image Rejected: Severe Glare / Overexposure',
+        message: 'Severe flash washout or direct glare detected across the lesion. White glare erases skin inflammation, crusting, and micro-textures.',
+        instructions: 'Please tilt the camera slightly away from direct flash reflection and retake without harsh glare.',
+      }
+    }
+
+    // 3. Contrast Check: Uniform / Obstructed Surface
+    let varianceLum = 0
+    for (let p = 0; p < n; p++) {
+      const diff = gray[p] - meanLuminance
+      varianceLum += diff * diff
+    }
+    const stdDevLuminance = Math.sqrt(varianceLum / n)
+    if (stdDevLuminance < 14) {
+      return {
+        isValid: false,
+        reason: 'UNIFORM_SURFACE',
+        title: '🧱 Image Rejected: Blank / Obstructed Surface',
+        message: 'A flat, uniform surface (such as a wall, desk, paper, or camera blockage) was detected without visible skin or fur textures.',
+        instructions: 'Please ensure the camera is aimed directly at the animal patient\'s skin or fur lesion.',
+      }
+    }
+
+    // 4. Sharpness Check: Laplacian Operator Variance (∇² f)
+    let sumLap = 0
+    let sumSqLap = 0
+    let lapCount = 0
 
     for (let y = 1; y < size - 1; y++) {
       const rowIdx = y * size
@@ -381,29 +472,113 @@ export function checkImageSharpness(imgElement) {
         const right  = gray[rowIdx + (x + 1)]
 
         const lap = up + down + left + right - 4.0 * center
-        sum += lap
-        sumSq += lap * lap
-        count++
+        sumLap += lap
+        sumSqLap += lap * lap
+        lapCount++
       }
     }
 
-    // 3. Variance = E[X²] - (E[X])²
-    const mean = sum / (count || 1)
-    const variance = Math.round(((sumSq / (count || 1)) - mean * mean) * 10) / 10
+    const meanLap = sumLap / (lapCount || 1)
+    const lapVariance = Math.round(((sumSqLap / (lapCount || 1)) - meanLap * meanLap) * 10) / 10
 
-    // Threshold: Focused clinical skin/fur textures score ≥ 45. Blurry or out-of-focus shots score < 45.
-    const isSharp = variance >= 45
+    if (lapVariance < 45.0) {
+      return {
+        isValid: false,
+        reason: 'BLURRY',
+        title: '🔍 Image Rejected: Motion Blur / Out of Focus',
+        message: `Image sharpness score is ${lapVariance} (minimum clinical threshold: 45.0). Blurry images smear fine scabs and pustules, causing diagnostic errors.`,
+        instructions: 'Please hold the device steady, tap the lesion area on screen to focus, and capture again.',
+        score: lapVariance,
+      }
+    }
+
+    // 5. Digital Screen / Computer Monitor Check
+    const coldRatio = coldScreenPixels / n
+    const warmRatio = warmOrganicPixels / n
+    if (coldRatio > 0.28 || (coldRatio > 0.16 && warmRatio < 0.10)) {
+      return {
+        isValid: false,
+        reason: 'DIGITAL_SCREEN',
+        title: '💻 Image Rejected: Computer Monitor / Digital Screen Detected',
+        message: 'The captured frame appears to be a computer monitor, software interface, or digital display rather than an animal patient. VetLink only analyzes direct photos of animal skin or fur lesions.',
+        instructions: 'Please point your camera directly at the animal patient (dog, cat, bird, or rabbit) with proper focus on the lesion.',
+      }
+    }
+
+    // 6. Biological Gamut Check
+    if ((biologicalColorPixels / n) < 0.30) {
+      return {
+        isValid: false,
+        reason: 'NON_BIOLOGICAL',
+        title: '⚠️ Image Rejected: Non-Biological Subject Detected',
+        message: 'The frame appears to capture a digital screen, synthetic graphic, or non-organic surface rather than animal tissue.',
+        instructions: 'Please point your camera at an actual animal skin lesion.',
+      }
+    }
 
     return {
-      isSharp,
-      score: variance,
-      message: isSharp
-        ? 'Image sharpness is optimal for clinical AI inference.'
-        : `Image appears blurry or out of focus (Laplacian sharpness: ${variance}, recommended ≥ 45). Blurry images smear fine crust and pustule textures, which can cause the AI to mistakenly classify skin lesions as "Healthy". Please hold steady and refocus closely on the lesion.`,
+      isValid: true,
+      sharpnessScore: lapVariance,
+      brightness: Math.round((meanLuminance / 255) * 100),
+      contrast: Math.round(stdDevLuminance),
+      message: 'Image passed all clinical quality and focus gates.',
     }
   } catch (err) {
-    console.warn('[VetLink AI] Sharpness check error:', err)
-    return { isSharp: true, score: 100, message: 'Sharpness check bypassed.' }
+    console.warn('[VetLink AI] Quality validation bypass on error:', err)
+    return { isValid: true, bypass: true, message: 'Quality check bypassed.' }
   }
+}
+
+/**
+ * Backwards compatibility helper for checkImageSharpness.
+ */
+export function checkImageSharpness(imgElement) {
+  const q = validateClinicalImageQuality(imgElement)
+  return {
+    isSharp: q.isValid,
+    score: q.sharpnessScore || 50,
+    message: q.message,
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Veterinary Dermatological Symptoms Master Dictionary & Knowledge Base
+// -----------------------------------------------------------------------------
+export const MASTER_SYMPTOMS = [
+  { id: 'SYM-PRURITUS', name: 'Pruritus (Severe Itching / Scratching / Licking)', shortName: 'Pruritus / Itching' },
+  { id: 'SYM-ERYTHEMA', name: 'Erythema (Skin Redness / Active Inflammation)', shortName: 'Erythema / Redness' },
+  { id: 'SYM-ALOPECIA', name: 'Alopecia (Focal / Generalized Hair Loss)', shortName: 'Alopecia / Hair Loss' },
+  { id: 'SYM-SCALING',  name: 'Scaling & Crusts (Flaking / Dandruff / Scabs)', shortName: 'Scaling & Crusts' },
+  { id: 'SYM-PUSTULES', name: 'Pustules & Papules (Pus-filled Bumps / Pimples)', shortName: 'Pustules & Papules' },
+  { id: 'SYM-EXUDATE',  name: 'Moist Exudate (Oozing / Sticky / Matted Fur)', shortName: 'Moist Exudate / Hotspot' },
+  { id: 'SYM-ODOR',     name: 'Malodorous / Rancid Yeast Odor', shortName: 'Rancid Yeast Odor' },
+  { id: 'SYM-LICHEN',   name: 'Lichenification (Thickened, Darkened Leathery Skin)', shortName: 'Lichenification' },
+]
+
+export const DISEASE_HALLMARK_SYMPTOMS = {
+  'Flea Allergy Dermatitis': ['SYM-PRURITUS', 'SYM-ERYTHEMA', 'SYM-ALOPECIA', 'SYM-SCALING'],
+  'Ringworm':                ['SYM-ALOPECIA', 'SYM-SCALING', 'SYM-PRURITUS'],
+  'Rabbit Ringworm':         ['SYM-ALOPECIA', 'SYM-SCALING'],
+  'Hot Spots':               ['SYM-EXUDATE', 'SYM-ERYTHEMA', 'SYM-PRURITUS', 'SYM-ODOR'],
+  'Hotspots':                ['SYM-EXUDATE', 'SYM-ERYTHEMA', 'SYM-PRURITUS', 'SYM-ODOR'],
+  'Mange':                   ['SYM-ALOPECIA', 'SYM-SCALING', 'SYM-LICHEN', 'SYM-PRURITUS'],
+  'Rabbit Mange':            ['SYM-SCALING', 'SYM-ALOPECIA', 'SYM-PRURITUS'],
+  'Pyoderma':                ['SYM-PUSTULES', 'SYM-ERYTHEMA', 'SYM-SCALING'],
+  'Scaly Face Scaly Leg Mite (Knemidocoptes)': ['SYM-SCALING', 'SYM-LICHEN'],
+  'Avian Fowl Pox':          ['SYM-PUSTULES', 'SYM-SCALING'],
+  'Healthy':                 [],
+  'Rabbit Healthy':          [],
+  'Bird Healthy':            [],
+}
+
+export function getSuggestedSymptomsForDisease(diseaseLabel) {
+  if (!diseaseLabel) return []
+  const norm = diseaseLabel.toLowerCase()
+  for (const [key, symptomIds] of Object.entries(DISEASE_HALLMARK_SYMPTOMS)) {
+    if (norm.includes(key.toLowerCase()) || key.toLowerCase().includes(norm)) {
+      return symptomIds
+    }
+  }
+  return []
 }
 

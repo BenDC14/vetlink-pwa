@@ -1,6 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { addPatient, cacheCloudPatient, addConsultation, addScreeningResult } from '../db/database'
-import { loadVetLinkModel, predict, loadImageFromFile, checkImageSharpness } from '../vetlink-ai'
+import { addPatient, addConsultation, addScreeningResult, addConsultationSymptoms } from '../db/database'
+import {
+  loadVetLinkModel,
+  predict,
+  loadImageFromFile,
+  validateClinicalImageQuality,
+  MASTER_SYMPTOMS,
+  getSuggestedSymptomsForDisease
+} from '../vetlink-ai'
 import CameraCaptureModal from '../components/CameraCaptureModal'
 
 // Clinical check for co-occurring dermatitis or secondary opportunistic infection
@@ -30,53 +37,86 @@ export function checkComorbidity(top3) {
 
 // Clinical check for early-stage dermatological overlap (e.g. early Demodex vs Ringworm on canine face)
 export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '') {
-  if (!aiResult) return null
-  const topLabel = aiResult.displayLabel || aiResult.label || ''
-  const isCanineOrFeline = species === 'Canine' || species === 'Feline'
-  if (!isCanineOrFeline) return null
+  try {
+    if (!aiResult) return null
+    const topLabel = (aiResult.displayLabel || aiResult.label || '').toLowerCase()
+    const isCanineOrFeline = species === 'Canine' || species === 'Feline'
+    if (!isCanineOrFeline) return null
 
-  const isRingworm = topLabel.toLowerCase().includes('ringworm')
-  const isHealthyWithConcern = topLabel.toLowerCase().includes('healthy') &&
-    (areaOfConcern.toLowerCase().match(/(face|ear|eye|cheek|muzzle|nose|head|rash|red|itch|loss|hair)/) ||
-     (aiResult.top3?.some((t) => !t.display.toLowerCase().includes('healthy') && t.confidence >= 0.04)))
+    const top3 = aiResult.top3 || []
+    const mangeContender = top3.find((t) => (t.label || t.display || '').toLowerCase().includes('mange'))
+    const mangeConfidence = mangeContender ? (mangeContender.confidence || 0) : 0
 
-  if (isRingworm) {
-    return {
-      type: 'ringworm_vs_mange',
-      title: '🔬 Early-Stage Clinical Differential Advisory',
-      message: 'Focal alopecia and facial erythema share near-identical visual features between early localized Demodectic Mange and Dermatophytosis (Ringworm). A confirmatory deep skin scraping is strongly advised to rule out Demodex mites before administering topical antifungals or corticosteroids.',
-      overrideHint: 'If scraping reveals Demodex mites, confirm the diagnosis with a veterinarian before treatment.',
+    const isRingworm = topLabel.includes('ringworm')
+    const areaText = (areaOfConcern || '').toLowerCase()
+    const areaMatchesFace = Boolean(
+      areaText.match(/(face|ear|eye|cheek|muzzle|nose|head)/)
+    )
+
+    // Clinical Differential Rule (Option A):
+    // Only trigger if Mange is a genuine differential contender (>= 5%)
+    // or facial lesion with borderline confidence (< 85% with Mange > 0.5%)
+    const hasMangeDifferentialContest =
+      isRingworm && (
+        mangeConfidence >= 0.05 ||
+        (areaMatchesFace && (aiResult.confidence || 0) < 0.85 && mangeConfidence > 0.005)
+      )
+
+    if (hasMangeDifferentialContest) {
+      return {
+        type: 'ringworm_vs_mange',
+        title: '🔬 Clinical Differential Advisory (Mange vs. Ringworm)',
+        message: `Diagnostic ambiguity detected: Preliminary AI scan favors Ringworm (${aiResult.percent || ''}), but Mange is also present in differential contenders (${(mangeConfidence * 100).toFixed(1)}%). Focal alopecia and facial/ear crusts share visual mimics between Demodex mites and Dermatophytosis. A deep skin scraping is advised.`,
+        overrideHint: 'If skin scrape reveals Demodex mites, use the Clinical Override dropdown in Clinical Review to confirm Mange.',
+      }
     }
-  }
 
-  if (isHealthyWithConcern) {
-    return {
-      type: 'subclinical_mange_alert',
-      title: '🔬 Subclinical / Early-Stage Lesion Advisory',
-      message: 'Early-stage localized mange with subtle erythema and early hair thinning often lacks florid crusts, causing visual classification to align with intact skin. If clinical pruritus or focal redness is present, microscopic skin scraping is recommended.',
-      overrideHint: 'Have a veterinarian review this advisory alongside the physical exam and any diagnostic tests.',
+    const isHealthyWithConcern = topLabel.includes('healthy') &&
+      (Boolean(areaText.match(/(face|ear|eye|cheek|muzzle|nose|head|rash|red|itch|loss|hair)/)) ||
+        top3.some((t) => !(t.display || t.label || '').toLowerCase().includes('healthy') && (t.confidence || 0) >= 0.04))
+
+    if (isHealthyWithConcern) {
+      return {
+        type: 'subclinical_mange_alert',
+        title: '🔬 Subclinical / Early-Stage Lesion Advisory',
+        message: 'Early-stage localized mange with subtle erythema and early hair thinning often lacks florid crusts, causing visual classification to align with intact skin. If clinical pruritus or focal redness is present, microscopic skin scraping is recommended.',
+        overrideHint: 'Attending veterinarian may override the tentative triage classification in Clinical Review if clinical lesions are confirmed.',
+      }
     }
-  }
 
-  return null
+    return null
+  } catch (err) {
+    console.warn('[VetLink CDSS] checkEarlyStageDifferential error:', err)
+    return null
+  }
 }
 
-export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 'http://localhost:8000', isOffline = false }) {
-  const [name, setName]                 = useState('')
-  const [species, setSpecies]           = useState('Canine')
+export default function NewPatient({ onBack, onViewPending, onCapture, currentUser }) {
+  const [name, setName] = useState('')
+  const [species, setSpecies] = useState('Canine')
   const [areaOfConcern, setAreaOfConcern] = useState('')
-  const [isSaving, setIsSaving]         = useState(false)
-  const [error, setError]               = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
 
   // Image & AI state
   const [selectedFile, setSelectedFile] = useState(null)
-  const [previewUrl, setPreviewUrl]     = useState(null)
-  const [isAnalyzing, setIsAnalyzing]   = useState(false)
-  const [aiResult, setAiResult]         = useState(null)
-  const [sharpnessWarning, setSharpnessWarning] = useState(null)
-  const [modelReady, setModelReady]     = useState(false)
-  const [modelError, setModelError]     = useState(null)
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [aiResult, setAiResult] = useState(null)
+  const [qualityRejection, setQualityRejection] = useState(null)
+  const [modelReady, setModelReady] = useState(false)
+  const [modelError, setModelError] = useState(null)
   const [isCameraOpen, setIsCameraOpen] = useState(false)
+
+  // Clinical Symptoms & Lab Test State
+  const [selectedSymptoms, setSelectedSymptoms] = useState([])
+  const [otherSymptoms, setOtherSymptoms] = useState('')
+  const [labTestRequired, setLabTestRequired] = useState(false)
+  const [labTestReason, setLabTestReason] = useState('')
+
+  // Role-based Assistant Flow State
+  const [intakeSuccess, setIntakeSuccess] = useState(false)
+  const [savedSummary, setSavedSummary] = useState(null)
 
   const fileInputRef = useRef(null)
 
@@ -100,25 +140,82 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
     setSelectedFile(file)
     setPreviewUrl(url)
     setAiResult(null)
+    setQualityRejection(null)
     setError('')
+    setIntakeSuccess(false)
 
     // Run AI automatically after image is selected
     setIsAnalyzing(true)
-    setSharpnessWarning(null)
     try {
       const imgElement = await loadImageFromFile(file)
-      const sharpness  = checkImageSharpness(imgElement)
-      if (!sharpness.isSharp) {
-        setSharpnessWarning(sharpness.message)
+
+      // Step 1: Client-Side Clinical Image Quality & Anti-Blur Gate
+      const quality = validateClinicalImageQuality(imgElement)
+      if (!quality.isValid) {
+        setQualityRejection({
+          title: quality.title || 'Image Rejected: Quality Gate Failed',
+          reason: quality.reason || 'LOW_QUALITY',
+          message: quality.message,
+          instructions: quality.instructions || 'Please retake or upload a clearer close-up photo of the animal lesion.',
+          score: quality.score,
+        })
+        setIsAnalyzing(false)
+        return // HARD STOP - Reject before calling neural network!
       }
-      const result     = await predict(imgElement, species)
+
+      // Step 2: Animal Verification & Disease Classification (Backend TFLite / WASM)
+      const result = await predict(imgElement, species)
+
+      // Step 2b: Server-Side Inanimate / Non-Animal Gate Check
+      if (result.rejected) {
+        setQualityRejection({
+          title: '🚫 Image Rejected: Non-Animal Subject Detected',
+          reason: result.reason || 'NON_ANIMAL',
+          detected: result.detected,
+          message: result.message || 'VetLink is trained exclusively on domestic animal dermatological lesions (Canine, Feline, Avian, Rabbit). Non-animal subjects are rejected to prevent diagnostic errors and model overload.',
+          instructions: 'Please take or upload a photo showing an actual animal patient with a visible skin or fur condition.',
+        })
+        setIsAnalyzing(false)
+        return // HARD STOP - Do not accept non-animal images!
+      }
+
       setAiResult(result)
+
+      // Intelligent Symptom Pre-selection & Lab Test Auto-evaluation
+      if (result.confidence >= 0.60) {
+        const primarySymptoms = getSuggestedSymptomsForDisease(result.displayLabel)
+        const comorb = checkComorbidity(result.top3)
+        const secondarySymptoms = comorb.isComorbid ? getSuggestedSymptomsForDisease(comorb.secondary) : []
+        const merged = Array.from(new Set([...primarySymptoms, ...secondarySymptoms]))
+        setSelectedSymptoms(merged)
+        setLabTestRequired(false)
+        setLabTestReason('')
+      } else {
+        // Low confidence: keep checkboxes blank to avoid cognitive bias
+        setSelectedSymptoms([])
+        setLabTestRequired(true)
+        setLabTestReason('AI confidence below 60% decision boundary. Confirmatory lab test (Skin scrape / fungal DTM) recommended.')
+      }
+
+      // Check subclinical early differential
+      const earlyDiff = checkEarlyStageDifferential(result, species, areaOfConcern)
+      if (earlyDiff) {
+        setLabTestRequired(true)
+        setLabTestReason(earlyDiff.message)
+      }
+
     } catch (err) {
       console.error('AI inference failed:', err)
       setError(`AI could not analyze this image: ${err.message || err}`)
     } finally {
       setIsAnalyzing(false)
     }
+  }
+
+  const toggleSymptom = (symptomId) => {
+    setSelectedSymptoms((prev) =>
+      prev.includes(symptomId) ? prev.filter((id) => id !== symptomId) : [...prev, symptomId]
+    )
   }
 
   // When user picks a file, show preview and immediately run AI
@@ -135,15 +232,26 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
     processImageFile(file)
   }
 
-  // When species changes, re-run AI if an image is already loaded
+  // When species changes, re-run AI if an image is already loaded and valid
   const handleSpeciesChange = async (newSpecies) => {
     setSpecies(newSpecies)
-    if (selectedFile) {
+    if (selectedFile && !qualityRejection) {
       setIsAnalyzing(true)
       try {
         const imgElement = await loadImageFromFile(selectedFile)
-        const result     = await predict(imgElement, newSpecies)
-        setAiResult(result)
+        const result = await predict(imgElement, newSpecies)
+        if (result.rejected) {
+          setQualityRejection({
+            title: '🚫 Image Rejected: Non-Animal Subject Detected',
+            reason: result.reason || 'NON_ANIMAL',
+            detected: result.detected,
+            message: result.message,
+            instructions: 'Please take or upload a photo showing an animal patient.',
+          })
+          setAiResult(null)
+        } else {
+          setAiResult(result)
+        }
       } catch (err) {
         console.error('Re-inference failed:', err)
       } finally {
@@ -176,64 +284,47 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
   const handleSave = async () => {
     if (!name.trim()) { setError('Patient name is required.'); return }
     if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
-    if (!aiResult)    { setError('Waiting for AI analysis to complete.'); return }
+    if (qualityRejection) { setError(`Cannot save: Image was rejected (${qualityRejection.reason || 'Quality Check Failed'}). Please capture or upload a valid animal skin lesion photo.`); return }
+    if (!aiResult) { setError('Waiting for AI analysis to complete.'); return }
 
     setIsSaving(true)
     setError('')
 
     try {
-      const patientData = {
-        name:          name.trim(),
+      // 1. Determine clinical status based on lab test and confidence
+      const comorb = checkComorbidity(aiResult.top3)
+      let assignedStatus = 'Review Results'
+      if (labTestRequired) {
+        assignedStatus = 'Awaiting Lab Test'
+      } else if (comorb.isComorbid || aiResult.confidence < 0.80) {
+        assignedStatus = 'Needs Vet Review'
+      } else {
+        assignedStatus = 'Review Results'
+      }
+
+      // 2. Save patient
+      const patient = await addPatient({
+        name: name.trim(),
         species,
         areaOfConcern: areaOfConcern.trim(),
-        lastVisit:     new Date().toISOString().slice(0, 10),
-        status:        'Active',
-      }
-      let patient
-      let savedOffline = isOffline || !authToken
-
-      if (savedOffline) {
-        patient = await addPatient(patientData)
-      } else {
-        try {
-          const response = await fetch(`${apiBaseUrl}/api/patients`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              Authorization: `Bearer ${authToken}`,
-            },
-            body: JSON.stringify({
-              name: patientData.name,
-              species: patientData.species,
-              area_of_concern: patientData.areaOfConcern,
-              last_visit: patientData.lastVisit,
-              status: patientData.status,
-            }),
-          })
-          const result = await response.json()
-          if (!response.ok) throw new Error(result.detail || `Patient creation failed with HTTP ${response.status}`)
-          patient = await cacheCloudPatient(result)
-        } catch (requestError) {
-          if (requestError instanceof TypeError) {
-            patient = await addPatient(patientData)
-            savedOffline = true
-          } else {
-            throw requestError
-          }
-        }
-      }
-
-      // 2. Check for comorbidity / secondary presentation
-      const comorb = checkComorbidity(aiResult.top3)
+        lastVisit: new Date().toISOString().slice(0, 10),
+        status: assignedStatus,
+      })
 
       // 3. Save consultation linked to the patient
+      const combinedNotes = [
+        areaOfConcern.trim(),
+        otherSymptoms.trim() ? `Symptom Notes: ${otherSymptoms.trim()}` : '',
+        labTestRequired && labTestReason ? `Lab Order: ${labTestReason}` : '',
+      ].filter(Boolean).join(' | ')
+
       const consultation = await addConsultation({
-        patientId:          patient.id,
-        clinicalNotes:      areaOfConcern.trim(),
-        diagnosis:          aiResult.label,
+        patientId: patient.id,
+        clinicalNotes: combinedNotes,
+        diagnosis: aiResult.label,
         secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
-        isComorbid:         comorb.isComorbid,
-        treatmentPlan:      '',
+        isComorbid: comorb.isComorbid,
+        treatmentPlan: '',
       })
 
       // 4. Convert image to base64 for local storage
@@ -241,23 +332,51 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
 
       // 5. Save screening result linked to the consultation
       await addScreeningResult({
-        consultationId:        consultation.id,
-        imageId:               null,
-        imageData:             base64Image,
-        aiLabel:               aiResult.label,
-        aiDisplayLabel:        aiResult.displayLabel,
-        aiConfidence:          aiResult.confidence,
-        aiPercent:             aiResult.percent,
-        aiSecondaryLabel:      comorb.isComorbid ? comorb.secondary : null,
+        consultationId: consultation.id,
+        imageId: null,
+        imageData: base64Image,
+        aiLabel: aiResult.label,
+        aiDisplayLabel: aiResult.displayLabel,
+        aiConfidence: aiResult.confidence,
+        aiPercent: aiResult.percent,
+        aiSecondaryLabel: comorb.isComorbid ? comorb.secondary : null,
         aiSecondaryConfidence: comorb.isComorbid ? comorb.secondaryConf : null,
-        isComorbid:            comorb.isComorbid,
-        aiDescription:         aiResult.description,
-        aiTop3:                JSON.stringify(aiResult.top3),
+        isComorbid: comorb.isComorbid,
+        aiDescription: aiResult.description,
+        aiTop3: JSON.stringify(aiResult.top3),
         species,
-        reviewStatus:          'pending',
+        reviewStatus: assignedStatus === 'Awaiting Lab Test' ? 'awaiting_lab' : 'pending',
       })
 
-      onCapture({ patient, consultation, aiResult, comorbidityInfo: comorb, savedOffline })
+      // 6. Save itemized symptoms into consultationSymptoms store
+      await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
+
+      // 7. Role-aware completion: Assistant gets confirmation screen; Admin/Doctor gets direct capture
+      if (currentUser?.role === 'Clinic Staff') {
+        setIntakeSuccess(true)
+        setSavedSummary({
+          patientId: patient.id,
+          name: patient.name,
+          species: patient.species,
+          status: assignedStatus,
+          diagnosis: aiResult.displayLabel,
+          secondary: comorb.isComorbid ? comorb.secondary : null,
+          labOrdered: labTestRequired,
+        })
+      } else {
+        // Veterinarian / Clinic Admin flow
+        onCapture({
+          patient,
+          consultation,
+          aiResult,
+          previewUrl,
+          comorbidityInfo: comorb,
+          selectedSymptoms,
+          otherSymptoms,
+          labTestRequired,
+          assignedStatus,
+        })
+      }
 
     } catch (saveError) {
       console.error('Failed to save patient:', saveError)
@@ -270,8 +389,8 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
   // Confidence color: green ≥ 80%, yellow ≥ 50%, red < 50%
   const confidenceColor = aiResult
     ? aiResult.confidence >= 0.8 ? '#22c55e'
-    : aiResult.confidence >= 0.5 ? '#f59e0b'
-    : '#ef4444'
+      : aiResult.confidence >= 0.5 ? '#f59e0b'
+        : '#ef4444'
     : '#888'
 
   return (
@@ -286,6 +405,105 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
         onChange={handleFileChange}
         aria-label="Capture or upload a pet photo"
       />
+
+      {/* Assistant Intake Success Confirmation Card */}
+      {intakeSuccess && savedSummary && (
+        <div style={{
+          background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
+          border: '2px solid #86efac',
+          borderRadius: 14,
+          padding: 20,
+          marginBottom: 20,
+          boxShadow: '0 4px 14px rgba(22, 101, 52, 0.08)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <span style={{ fontSize: '2.4rem' }}>✅</span>
+            <div>
+              <h3 style={{ margin: 0, color: '#166534', fontSize: '1.25rem' }}>
+                Patient Intake & AI Screening Admitted!
+              </h3>
+              <p style={{ margin: '4px 0 0', color: '#15803d', fontSize: '0.88rem' }}>
+                Patient record and preliminary scan successfully saved to clinic database.
+              </p>
+            </div>
+          </div>
+
+          <div style={{
+            background: 'white',
+            borderRadius: 10,
+            padding: 14,
+            border: '1px solid #bbf7d0',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 12,
+            marginBottom: 14,
+          }}>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Patient ID</span>
+              <div style={{ fontSize: '1rem', fontWeight: 'bold', color: '#0f172a' }}>{savedSummary.patientId}</div>
+            </div>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Name & Species</span>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a' }}>{savedSummary.name} ({savedSummary.species})</div>
+            </div>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Preliminary AI Scan</span>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1e40af' }}>
+                {savedSummary.diagnosis}
+                {savedSummary.secondary && <span style={{ color: '#6b21a8', display: 'block', fontSize: '0.8rem' }}>+ {savedSummary.secondary}</span>}
+              </div>
+            </div>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Triage Status</span>
+              <div style={{ marginTop: 2 }}>
+                <span className="status-badge" style={{
+                  background: savedSummary.status === 'Awaiting Lab Test' ? '#fef3c7' : '#fef9c3',
+                  color: savedSummary.status === 'Awaiting Lab Test' ? '#92400e' : '#854d0e',
+                  border: '1px solid #fde68a',
+                  fontWeight: 600,
+                  fontSize: '0.8rem',
+                }}>
+                  {savedSummary.status === 'Awaiting Lab Test' ? '🧪 Awaiting Lab Test' : '🟡 Needs Vet Review'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <p style={{ fontSize: '0.85rem', color: '#334155', margin: '0 0 14px', lineHeight: 1.4 }}>
+            📋 <strong>Next Step:</strong> Hand off the patient to the Attending Veterinarian. The doctor will review the Grad-CAM heatmap, confirm symptoms, and finalize the prescription.
+          </p>
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              type="button"
+              className="action-btn blue"
+              style={{ padding: '9px 18px', fontSize: '0.88rem' }}
+              onClick={() => {
+                setName('')
+                setAreaOfConcern('')
+                setSelectedFile(null)
+                setPreviewUrl(null)
+                setAiResult(null)
+                setSelectedSymptoms([])
+                setOtherSymptoms('')
+                setLabTestRequired(false)
+                setIntakeSuccess(false)
+                setSavedSummary(null)
+              }}
+            >
+              ➕ Intake Next Patient
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              style={{ padding: '9px 18px', fontSize: '0.88rem' }}
+              onClick={onViewPending}
+            >
+              📋 View Patient Records
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="new-patient-header">
         <button className="secondary-btn small-back" type="button" onClick={onBack}>← DASHBOARD</button>
@@ -376,20 +594,38 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
             </div>
           )}
 
-          {/* Quality check alert */}
-          {sharpnessWarning && (
+          {/* Quality check rejection alert */}
+          {qualityRejection && (
             <div style={{
               marginTop: 10,
-              padding: '8px 12px',
-              background: '#fffbeb',
-              border: '1px solid #fde68a',
-              borderRadius: 8,
-              color: '#92400e',
+              padding: '12px 14px',
+              background: '#fef2f2',
+              border: '2px solid #ef4444',
+              borderRadius: 10,
+              color: '#991b1b',
               fontSize: '0.82rem',
-              lineHeight: 1.4,
+              lineHeight: 1.45,
               textAlign: 'left',
+              boxShadow: '0 2px 8px rgba(239, 68, 68, 0.12)',
             }}>
-              <strong>⚠️ Quality Alert:</strong> {sharpnessWarning}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'bold', fontSize: '0.88rem', marginBottom: 4 }}>
+                <span>🚫</span>
+                <span>{qualityRejection.title}</span>
+              </div>
+              <p style={{ margin: '0 0 8px 0', color: '#7f1d1d', fontSize: '0.8rem' }}>
+                {qualityRejection.message}
+              </p>
+              <div style={{
+                background: 'white',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid #fca5a5',
+                color: '#991b1b',
+                fontWeight: 600,
+                fontSize: '0.76rem',
+              }}>
+                👉 {qualityRejection.instructions}
+              </div>
             </div>
           )}
 
@@ -458,7 +694,79 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
               </div>
             )}
 
-            {aiResult && !isAnalyzing && (
+            {/* Clinical Image Rejection Card */}
+            {qualityRejection && !isAnalyzing && (
+              <div style={{
+                marginTop: 14,
+                padding: 16,
+                background: 'linear-gradient(135deg, #fef2f2, #fff1f2)',
+                border: '2px solid #ef4444',
+                borderRadius: 12,
+                boxShadow: '0 4px 14px rgba(239, 68, 68, 0.12)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: '2rem' }}>⛔</span>
+                  <div>
+                    <h4 style={{ margin: 0, color: '#991b1b', fontSize: '1.02rem', fontWeight: 700 }}>
+                      {qualityRejection.title}
+                    </h4>
+                    <span style={{
+                      display: 'inline-block',
+                      marginTop: 2,
+                      padding: '2px 8px',
+                      background: '#fee2e2',
+                      border: '1px solid #fca5a5',
+                      borderRadius: 4,
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      color: '#b91c1c',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      GATE: {qualityRejection.reason} {qualityRejection.detected ? `• DETECTED: ${qualityRejection.detected}` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                <p style={{ margin: '0 0 10px 0', color: '#374151', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                  {qualityRejection.message}
+                </p>
+
+                <div style={{
+                  background: 'white',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  border: '1px solid #fecaca',
+                  marginBottom: 14,
+                  fontSize: '0.8rem',
+                  color: '#7f1d1d',
+                  lineHeight: 1.45,
+                }}>
+                  💡 <strong>Action Required:</strong> {qualityRejection.instructions}
+                </div>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    className="action-btn blue"
+                    style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    onClick={handleOpenCamera}
+                  >
+                    <span>📸</span> Retake with Camera
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'white' }}
+                    onClick={handleOpenFilePicker}
+                  >
+                    <span>📁</span> Select Another Image
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {aiResult && !qualityRejection && !isAnalyzing && (
               <div className="ai-result-box" style={{ background: '#0f172a', color: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #334155' }}>
                 <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: 10, color: '#38bdf8' }}>
                   Grad-CAM: {aiResult.displayLabel} ({aiResult.percent} confident)
@@ -483,7 +791,7 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
                         style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
                       />
                       <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>
-                        Heatmap<br/><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = AI focused)</span>
+                        Heatmap<br /><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = AI focused)</span>
                       </span>
                     </div>
 
@@ -567,7 +875,104 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
               </div>
             )}
 
-            <div className="form-actions-row" style={{ flexDirection: 'column', gap: 8 }}>
+            {/* Clinical Symptoms Checklist & Custom Input */}
+            {aiResult && !qualityRejection && !isAnalyzing && (
+              <div style={{ marginTop: 14, padding: 14, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>🩺</span>
+                    <span>Observed Clinical Signs & Symptoms</span>
+                  </span>
+                  <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                    {aiResult.confidence >= 0.60 ? 'Auto-suggested from AI findings' : 'Manual verification required (<60%)'}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.78rem', color: '#475569', margin: '0 0 10px', lineHeight: 1.35 }}>
+                  Select observed physical lesion signs. These will be linked directly into the consultation record:
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6, marginBottom: 10 }}>
+                  {MASTER_SYMPTOMS.map((sym) => {
+                    const isChecked = selectedSymptoms.includes(sym.id)
+                    return (
+                      <label
+                        key={sym.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          fontSize: '0.78rem',
+                          background: isChecked ? '#e0f2fe' : '#ffffff',
+                          border: isChecked ? '1px solid #38bdf8' : '1px solid #cbd5e1',
+                          color: isChecked ? '#0369a1' : '#334155',
+                          cursor: 'pointer',
+                          fontWeight: isChecked ? 600 : 400,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleSymptom(sym.id)}
+                        />
+                        <span>{sym.shortName}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+
+                {/* Others / Custom Symptoms free-text */}
+                <label style={{ display: 'block', marginTop: 8 }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>
+                    Other Clinical Signs / Specific Observations (Free-text):
+                  </span>
+                  <input
+                    type="text"
+                    value={otherSymptoms}
+                    onChange={(e) => setOtherSymptoms(e.target.value)}
+                    placeholder="e.g. Mild fever, localized swelling, foul ear discharge, lethargic..."
+                    style={{ width: '100%', padding: '6px 10px', fontSize: '0.82rem', borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 4, boxSizing: 'border-box' }}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* Confirmatory Diagnostic Lab Testing Section */}
+            {aiResult && !qualityRejection && !isAnalyzing && (
+              <div style={{ marginTop: 12, padding: 12, background: labTestRequired ? '#fffbeb' : '#f8fafc', border: labTestRequired ? '1px solid #fde68a' : '1px solid #e2e8f0', borderRadius: 10 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={labTestRequired}
+                    onChange={(e) => setLabTestRequired(e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div>
+                    <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: labTestRequired ? '#b45309' : '#1e293b' }}>
+                      🧪 Confirmatory Diagnostic Lab Test Required
+                    </span>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
+                      Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <code>🧪 Awaiting Lab Test</code>).
+                    </p>
+                  </div>
+                </label>
+
+                {labTestRequired && (
+                  <div style={{ marginTop: 8, paddingLeft: 22 }}>
+                    <input
+                      type="text"
+                      value={labTestReason}
+                      onChange={(e) => setLabTestReason(e.target.value)}
+                      placeholder="Specify test: e.g. Skin scrape for Demodex mites / Fungal DTM culture"
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #f59e0b', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="form-actions-row" style={{ flexDirection: 'column', gap: 8, marginTop: 14 }}>
               {/* Step 1: Capture or Upload photo */}
               {!previewUrl && (
                 <div style={{ display: 'flex', gap: 10, width: '100%' }}>
@@ -606,16 +1011,37 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
                 </div>
               )}
 
+              {/* Quality rejection block indicator */}
+              {qualityRejection && !isAnalyzing && (
+                <div style={{
+                  padding: '10px 14px',
+                  background: '#fef2f2',
+                  border: '1px dashed #ef4444',
+                  borderRadius: 8,
+                  textAlign: 'center',
+                  color: '#b91c1c',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  marginTop: 4,
+                }}>
+                  ⚠️ Patient record cannot be submitted with a rejected image. Please retake photo above.
+                </div>
+              )}
+
               {/* Step 2: Save after AI result is ready */}
-              {aiResult && !isAnalyzing && (
+              {aiResult && !qualityRejection && !isAnalyzing && (
                 <button
                   className="capture-btn"
                   type="button"
                   onClick={handleSave}
                   disabled={isSaving}
-                  style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
+                  style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', marginTop: 8 }}
                 >
-                  {isSaving ? '⏳ SAVING...' : '✓ SAVE PATIENT RECORD'}
+                  {isSaving
+                    ? '⏳ SAVING PATIENT & SCAN...'
+                    : currentUser?.role === 'Clinic Staff'
+                      ? '✓ SAVE INTAKE & QUEUE FOR VET REVIEW'
+                      : '✓ SAVE PATIENT RECORD'}
                 </button>
               )}
             </div>
@@ -639,7 +1065,7 @@ export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload  = () => resolve(reader.result)
+    reader.onload = () => resolve(reader.result)
     reader.onerror = () => reject(new Error('Failed to read file'))
     reader.readAsDataURL(file)
   })

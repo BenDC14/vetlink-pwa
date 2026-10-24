@@ -217,6 +217,7 @@ function App() {
 
             {showNewPatient ? (
               <NewPatient
+                currentUser={currentUser}
                 onBack={() => setShowNewPatient(false)}
                 authToken={authToken}
                 apiBaseUrl={API_BASE_URL}
@@ -226,7 +227,18 @@ function App() {
             ) : (
               <>
                 {activeView === 'clinic' && <ClinicalAnalysis />}
-                {activeView === 'patients' && <Patients authToken={authToken} apiBaseUrl={API_BASE_URL} isOffline={currentUser?.isOffline} />}
+                {activeView === 'patients' && (
+                  <Patients
+                    authToken={authToken}
+                    apiBaseUrl={API_BASE_URL}
+                    isOffline={currentUser?.isOffline}
+                    currentUser={currentUser}
+                    onProceedToTreatment={(data) => {
+                      setCaseData(data);
+                      setShowTreatment(true);
+                    }}
+                  />
+                )}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} />}
               </>
