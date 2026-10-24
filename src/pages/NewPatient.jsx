@@ -42,17 +42,30 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
   const isCanineOrFeline = species === 'Canine' || species === 'Feline'
   if (!isCanineOrFeline) return null
 
-  const isRingworm = topLabel.toLowerCase().includes('ringworm')
-  const isHealthyWithConcern = topLabel.toLowerCase().includes('healthy') &&
-    (areaOfConcern.toLowerCase().match(/(face|ear|eye|cheek|muzzle|nose|head|rash|red|itch|loss|hair)/) ||
-     (aiResult.top3?.some((t) => !t.display.toLowerCase().includes('healthy') && t.confidence >= 0.04)))
+  const top3 = aiResult.top3 || []
+  const mangeContender = top3.find((t) => (t.label || t.display || '').toLowerCase().includes('mange'))
+  const mangeConfidence = mangeContender ? mangeContender.confidence : 0
 
-  if (isRingworm) {
+  const isRingworm = topLabel.toLowerCase().includes('ringworm')
+  const areaMatchesFace = Boolean(
+    areaOfConcern.toLowerCase().match(/(face|ear|eye|cheek|muzzle|nose|head)/)
+  )
+
+  // Clinical Differential Rule (Option A):
+  // Only trigger if Mange is a genuine differential contender (>= 5%)
+  // or facial lesion with borderline confidence (< 85% with Mange > 0.5%)
+  const hasMangeDifferentialContest =
+    isRingworm && (
+      mangeConfidence >= 0.05 ||
+      (areaMatchesFace && aiResult.confidence < 0.85 && mangeConfidence > 0.005)
+    )
+
+  if (hasMangeDifferentialContest) {
     return {
       type: 'ringworm_vs_mange',
-      title: '🔬 Early-Stage Clinical Differential Advisory',
-      message: 'Focal alopecia and facial erythema share near-identical visual features between early localized Demodectic Mange and Dermatophytosis (Ringworm). A confirmatory deep skin scraping is strongly advised to rule out Demodex mites before administering topical antifungals or corticosteroids.',
-      overrideHint: 'If scraping reveals Demodex mites, use the Clinical Override dropdown in Clinical Review to confirm Mange.',
+      title: '🔬 Clinical Differential Advisory (Mange vs. Ringworm)',
+      message: `Diagnostic ambiguity detected: Preliminary AI scan favors Ringworm (${aiResult.percent || ''}), but Mange is also present in differential contenders (${(mangeConfidence * 100).toFixed(1)}%). Focal alopecia and facial/ear crusts share visual mimics between Demodex mites and Dermatophytosis. A deep skin scraping is advised.`,
+      overrideHint: 'If skin scrape reveals Demodex mites, use the Clinical Override dropdown in Clinical Review to confirm Mange.',
     }
   }
 

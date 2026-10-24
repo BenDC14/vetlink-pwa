@@ -54,6 +54,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [recheckPatient, setRecheckPatient]             = useState(null)
   const [pastConsult, setPastConsult]                   = useState(null)
   const [pastScreening, setPastScreening]               = useState(null)
+  const [pastVisits, setPastVisits]                     = useState([])
   const [recheckProgress, setRecheckProgress]           = useState('improving')
   const [recheckNotes, setRecheckNotes]                 = useState('')
   const [recheckFile, setRecheckFile]                   = useState(null)
@@ -259,15 +260,32 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     setRecheckPreview(null)
     setPastConsult(null)
     setPastScreening(null)
+    setPastVisits([])
 
     try {
       const consults = await getConsultationsByPatient(patient.id)
       if (consults && consults.length > 0) {
+        const loadedVisits = []
+        for (let i = 0; i < consults.length; i++) {
+          const c = consults[i]
+          let scr = null
+          try {
+            const screenings = await getScreeningResultsByConsultation(c.id)
+            if (screenings && screenings.length > 0) {
+              scr = screenings[screenings.length - 1]
+            }
+          } catch (_) {}
+          loadedVisits.push({
+            visitNum: i + 1,
+            consultation: c,
+            screening: scr,
+          })
+        }
+        setPastVisits(loadedVisits)
         const latest = consults[consults.length - 1]
         setPastConsult(latest)
-        const screenings = await getScreeningResultsByConsultation(latest.id)
-        if (screenings && screenings.length > 0) {
-          setPastScreening(screenings[screenings.length - 1])
+        if (loadedVisits.length > 0 && loadedVisits[loadedVisits.length - 1].screening) {
+          setPastScreening(loadedVisits[loadedVisits.length - 1].screening)
         }
       }
     } catch (err) {
@@ -694,35 +712,74 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
             <form className="modal-form" onSubmit={handleSaveRecheck}>
               {recheckError && <div className="alert-banner error" role="alert">{recheckError}</div>}
 
-              {/* Side-by-Side Comparison Grid */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, marginBottom: 14 }}>
-                
-                {/* Baseline (Visit 1) */}
-                <div style={{ border: '1px solid #cbd5e1', borderRadius: 12, padding: 12, background: '#f8fafc' }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '0.82rem', color: '#475569', marginBottom: 8, textTransform: 'uppercase' }}>
-                    1. Baseline (Visit 1)
-                  </div>
-                  {pastScreening?.imageData ? (
-                    <img
-                      src={pastScreening.imageData}
-                      alt="Baseline lesion"
-                      style={{ width: '100%', height: 160, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1' }}
-                    />
-                  ) : (
-                    <div style={{ width: '100%', height: 160, background: '#e2e8f0', borderRadius: 8, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.82rem' }}>
-                      No prior photo saved
+              {/* Chronological Visit Healing Progression */}
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: pastVisits.length > 1 ? 'repeat(auto-fit, minmax(180px, 1fr))' : '1fr 1fr',
+                gap: 14,
+                marginBottom: 14,
+              }}>
+                {/* All Past Visits Sequentially */}
+                {pastVisits.length > 0 ? (
+                  pastVisits.map((v) => (
+                    <div
+                      key={v.visitNum}
+                      style={{
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 12,
+                        padding: 10,
+                        background: '#f8fafc',
+                        display: 'flex',
+                        flexDirection: 'column',
+                      }}
+                    >
+                      <div style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                        {v.visitNum === 1 ? '1. Baseline (Visit 1)' : `${v.visitNum}. Prior Visit (${v.visitNum})`}
+                      </div>
+                      {v.screening?.imageData ? (
+                        <img
+                          src={v.screening.imageData}
+                          alt={`Visit ${v.visitNum} lesion`}
+                          style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1' }}
+                        />
+                      ) : (
+                        <div style={{ width: '100%', height: 140, background: '#e2e8f0', borderRadius: 8, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.78rem' }}>
+                          No photo recorded
+                        </div>
+                      )}
+                      <div style={{ marginTop: 8, fontSize: '0.76rem', color: '#334155', lineHeight: 1.35 }}>
+                        <strong>Diagnosis:</strong> {v.consultation?.diagnosis || 'Cutaneous check'}<br />
+                        <strong>Date:</strong> {v.consultation?.createdAt?.slice(0, 10) || 'Recorded Visit'}
+                      </div>
                     </div>
-                  )}
-                  <div style={{ marginTop: 8, fontSize: '0.82rem', color: '#334155', lineHeight: 1.4 }}>
-                    <strong>Prior Diagnosis:</strong> {pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous check'}<br />
-                    <strong>Date:</strong> {pastConsult?.createdAt?.slice(0, 10) || recheckPatient.lastVisit || 'Initial Visit'}
+                  ))
+                ) : (
+                  <div style={{ border: '1px solid #cbd5e1', borderRadius: 12, padding: 10, background: '#f8fafc' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
+                      1. Baseline (Visit 1)
+                    </div>
+                    {pastScreening?.imageData ? (
+                      <img
+                        src={pastScreening.imageData}
+                        alt="Baseline lesion"
+                        style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1' }}
+                      />
+                    ) : (
+                      <div style={{ width: '100%', height: 140, background: '#e2e8f0', borderRadius: 8, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.78rem' }}>
+                        No prior photo saved
+                      </div>
+                    )}
+                    <div style={{ marginTop: 8, fontSize: '0.76rem', color: '#334155', lineHeight: 1.35 }}>
+                      <strong>Prior Diagnosis:</strong> {pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous check'}<br />
+                      <strong>Date:</strong> {pastConsult?.createdAt?.slice(0, 10) || recheckPatient.lastVisit || 'Initial Visit'}
+                    </div>
                   </div>
-                </div>
+                )}
 
-                {/* Recheck (Visit 2 - Today) */}
-                <div style={{ border: '1px solid #86efac', borderRadius: 12, padding: 12, background: '#f0fdf4' }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '0.82rem', color: '#166534', marginBottom: 8, textTransform: 'uppercase' }}>
-                    2. Today's Recheck Photo
+                {/* Recheck (Today's Photo - Visit N+1) */}
+                <div style={{ border: '1px solid #86efac', borderRadius: 12, padding: 10, background: '#f0fdf4', display: 'flex', flexDirection: 'column' }}>
+                  <div style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#166534', marginBottom: 6, textTransform: 'uppercase' }}>
+                    {pastVisits.length + 1}. Today's Photo (Visit {pastVisits.length + 1})
                   </div>
                   {recheckPreview ? (
                     <div>
