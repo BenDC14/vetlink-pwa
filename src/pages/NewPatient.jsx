@@ -73,7 +73,7 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
 
     const isHealthyWithConcern = topLabel.includes('healthy') &&
       (Boolean(areaText.match(/(face|ear|eye|cheek|muzzle|nose|head|rash|red|itch|loss|hair)/)) ||
-       top3.some((t) => !(t.display || t.label || '').toLowerCase().includes('healthy') && (t.confidence || 0) >= 0.04))
+        top3.some((t) => !(t.display || t.label || '').toLowerCase().includes('healthy') && (t.confidence || 0) >= 0.04))
 
     if (isHealthyWithConcern) {
       return {
@@ -92,31 +92,31 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
 }
 
 export default function NewPatient({ onBack, onViewPending, onCapture, currentUser }) {
-  const [name, setName]                 = useState('')
-  const [species, setSpecies]           = useState('Canine')
+  const [name, setName] = useState('')
+  const [species, setSpecies] = useState('Canine')
   const [areaOfConcern, setAreaOfConcern] = useState('')
-  const [isSaving, setIsSaving]         = useState(false)
-  const [error, setError]               = useState('')
+  const [isSaving, setIsSaving] = useState(false)
+  const [error, setError] = useState('')
 
   // Image & AI state
   const [selectedFile, setSelectedFile] = useState(null)
-  const [previewUrl, setPreviewUrl]     = useState(null)
-  const [isAnalyzing, setIsAnalyzing]   = useState(false)
-  const [aiResult, setAiResult]         = useState(null)
+  const [previewUrl, setPreviewUrl] = useState(null)
+  const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [aiResult, setAiResult] = useState(null)
   const [qualityRejection, setQualityRejection] = useState(null)
-  const [modelReady, setModelReady]     = useState(false)
-  const [modelError, setModelError]     = useState(null)
+  const [modelReady, setModelReady] = useState(false)
+  const [modelError, setModelError] = useState(null)
   const [isCameraOpen, setIsCameraOpen] = useState(false)
 
   // Clinical Symptoms & Lab Test State
   const [selectedSymptoms, setSelectedSymptoms] = useState([])
-  const [otherSymptoms, setOtherSymptoms]       = useState('')
-  const [labTestRequired, setLabTestRequired]   = useState(false)
-  const [labTestReason, setLabTestReason]       = useState('')
+  const [otherSymptoms, setOtherSymptoms] = useState('')
+  const [labTestRequired, setLabTestRequired] = useState(false)
+  const [labTestReason, setLabTestReason] = useState('')
 
   // Role-based Assistant Flow State
-  const [intakeSuccess, setIntakeSuccess]       = useState(false)
-  const [savedSummary, setSavedSummary]         = useState(null)
+  const [intakeSuccess, setIntakeSuccess] = useState(false)
+  const [savedSummary, setSavedSummary] = useState(null)
 
   const fileInputRef = useRef(null)
 
@@ -239,7 +239,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       setIsAnalyzing(true)
       try {
         const imgElement = await loadImageFromFile(selectedFile)
-        const result     = await predict(imgElement, newSpecies)
+        const result = await predict(imgElement, newSpecies)
         if (result.rejected) {
           setQualityRejection({
             title: '🚫 Image Rejected: Non-Animal Subject Detected',
@@ -280,12 +280,12 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     fileInputRef.current?.click()
   }
 
-  // Called when "SAVE & SEND FOR REVIEW" is clicked after AI runs
+  // Save the patient record, then retain its linked local case analysis.
   const handleSave = async () => {
     if (!name.trim()) { setError('Patient name is required.'); return }
     if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
     if (qualityRejection) { setError(`Cannot save: Image was rejected (${qualityRejection.reason || 'Quality Check Failed'}). Please capture or upload a valid animal skin lesion photo.`); return }
-    if (!aiResult)    { setError('Waiting for AI analysis to complete.'); return }
+    if (!aiResult) { setError('Waiting for AI analysis to complete.'); return }
 
     setIsSaving(true)
     setError('')
@@ -304,11 +304,11 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
       // 2. Save patient
       const patient = await addPatient({
-        name:          name.trim(),
+        name: name.trim(),
         species,
         areaOfConcern: areaOfConcern.trim(),
-        lastVisit:     new Date().toISOString().slice(0, 10),
-        status:        assignedStatus,
+        lastVisit: new Date().toISOString().slice(0, 10),
+        status: assignedStatus,
       })
 
       // 3. Save consultation linked to the patient
@@ -319,12 +319,12 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       ].filter(Boolean).join(' | ')
 
       const consultation = await addConsultation({
-        patientId:          patient.id,
-        clinicalNotes:      combinedNotes,
-        diagnosis:          aiResult.label,
+        patientId: patient.id,
+        clinicalNotes: combinedNotes,
+        diagnosis: aiResult.label,
         secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
-        isComorbid:         comorb.isComorbid,
-        treatmentPlan:      '',
+        isComorbid: comorb.isComorbid,
+        treatmentPlan: '',
       })
 
       // 4. Convert image to base64 for local storage
@@ -332,20 +332,20 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
       // 5. Save screening result linked to the consultation
       await addScreeningResult({
-        consultationId:        consultation.id,
-        imageId:               null,
-        imageData:             base64Image,
-        aiLabel:               aiResult.label,
-        aiDisplayLabel:        aiResult.displayLabel,
-        aiConfidence:          aiResult.confidence,
-        aiPercent:             aiResult.percent,
-        aiSecondaryLabel:      comorb.isComorbid ? comorb.secondary : null,
+        consultationId: consultation.id,
+        imageId: null,
+        imageData: base64Image,
+        aiLabel: aiResult.label,
+        aiDisplayLabel: aiResult.displayLabel,
+        aiConfidence: aiResult.confidence,
+        aiPercent: aiResult.percent,
+        aiSecondaryLabel: comorb.isComorbid ? comorb.secondary : null,
         aiSecondaryConfidence: comorb.isComorbid ? comorb.secondaryConf : null,
-        isComorbid:            comorb.isComorbid,
-        aiDescription:         aiResult.description,
-        aiTop3:                JSON.stringify(aiResult.top3),
+        isComorbid: comorb.isComorbid,
+        aiDescription: aiResult.description,
+        aiTop3: JSON.stringify(aiResult.top3),
         species,
-        reviewStatus:          assignedStatus === 'Awaiting Lab Test' ? 'awaiting_lab' : 'pending',
+        reviewStatus: assignedStatus === 'Awaiting Lab Test' ? 'awaiting_lab' : 'pending',
       })
 
       // 6. Save itemized symptoms into consultationSymptoms store
@@ -389,8 +389,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   // Confidence color: green ≥ 80%, yellow ≥ 50%, red < 50%
   const confidenceColor = aiResult
     ? aiResult.confidence >= 0.8 ? '#22c55e'
-    : aiResult.confidence >= 0.5 ? '#f59e0b'
-    : '#ef4444'
+      : aiResult.confidence >= 0.5 ? '#f59e0b'
+        : '#ef4444'
     : '#888'
 
   return (
@@ -547,25 +547,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                 Capture or Upload Patient Photo
               </div>
               <div style={{ fontSize: '0.78rem', color: '#64748b', maxWidth: 220, lineHeight: 1.35 }}>
-                Use your device camera for a live photo or select an existing image file
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 4, width: '100%', maxWidth: 260 }}>
-                <button
-                  type="button"
-                  className="action-btn blue"
-                  style={{ flex: 1, padding: '9px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                  onClick={handleOpenCamera}
-                >
-                  <span>📸</span> Live Camera
-                </button>
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  style={{ flex: 1, padding: '9px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                  onClick={handleOpenFilePicker}
-                >
-                  <span>📁</span> Upload File
-                </button>
+                Use the options on the right to capture a live photo or upload an image file
               </div>
             </div>
           )}
@@ -791,7 +773,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                         style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
                       />
                       <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>
-                        Heatmap<br/><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = AI focused)</span>
+                        Heatmap<br /><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = AI focused)</span>
                       </span>
                     </div>
 
@@ -1050,14 +1032,6 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
       </div>
 
-      <div className="admin-access-card">
-        <p className="eyebrow">Admin approval access</p>
-        <p>After saving, a vet must approve the AI result before treatment is generated.</p>
-        <button className="view-pending-btn" type="button" onClick={onViewPending}>
-          VIEW PENDING APPROVALS
-        </button>
-      </div>
-
       {/* Cross-platform Live Camera Viewfinder Modal */}
       <CameraCaptureModal
         isOpen={isCameraOpen}
@@ -1073,7 +1047,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 function fileToBase64(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader()
-    reader.onload  = () => resolve(reader.result)
+    reader.onload = () => resolve(reader.result)
     reader.onerror = () => reject(new Error('Failed to read file'))
     reader.readAsDataURL(file)
   })

@@ -86,6 +86,31 @@ def auto_initialize_schema():
             conflict_columns = {row["Field"] for row in cursor.fetchall()}
             if "resolution" not in conflict_columns:
                 cursor.execute("ALTER TABLE sync_conflicts ADD COLUMN resolution VARCHAR(16) NULL")
+
+            migrations = {
+                "consultations": {
+                    "secondary_diagnosis": "ALTER TABLE consultations ADD COLUMN secondary_diagnosis TEXT NULL",
+                    "is_comorbid": "ALTER TABLE consultations ADD COLUMN is_comorbid BOOLEAN NOT NULL DEFAULT FALSE",
+                },
+                "screening_results": {
+                    "image_data": "ALTER TABLE screening_results ADD COLUMN image_data LONGTEXT NULL",
+                    "ai_label": "ALTER TABLE screening_results ADD COLUMN ai_label VARCHAR(128) NULL",
+                    "ai_display_label": "ALTER TABLE screening_results ADD COLUMN ai_display_label VARCHAR(128) NULL",
+                    "ai_percent": "ALTER TABLE screening_results ADD COLUMN ai_percent VARCHAR(32) NULL",
+                    "ai_secondary_label": "ALTER TABLE screening_results ADD COLUMN ai_secondary_label VARCHAR(128) NULL",
+                    "ai_secondary_confidence": "ALTER TABLE screening_results ADD COLUMN ai_secondary_confidence DECIMAL(6,5) NULL",
+                    "is_comorbid": "ALTER TABLE screening_results ADD COLUMN is_comorbid BOOLEAN NOT NULL DEFAULT FALSE",
+                    "ai_description": "ALTER TABLE screening_results ADD COLUMN ai_description TEXT NULL",
+                    "ai_top3": "ALTER TABLE screening_results ADD COLUMN ai_top3 LONGTEXT NULL",
+                    "species": "ALTER TABLE screening_results ADD COLUMN species VARCHAR(64) NULL",
+                },
+            }
+            for table_name, table_migrations in migrations.items():
+                cursor.execute(f"SHOW COLUMNS FROM {table_name}")
+                existing_columns = {row["Field"] for row in cursor.fetchall()}
+                for column_name, statement in table_migrations.items():
+                    if column_name not in existing_columns:
+                        cursor.execute(statement)
         return True
     finally:
         conn.close()

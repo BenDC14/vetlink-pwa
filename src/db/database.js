@@ -1,6 +1,7 @@
 import { openDB } from 'idb'
 const DB_NAME = "vetlink_local_db";
 const DB_VERSION = 2;
+const SYNC_STORE_NAMES = ['users', 'patients', 'consultations', 'screeningResults']
 
 const schema = {
   patients: {
@@ -124,6 +125,54 @@ function createSyncQueueItem(entityType, entityId, operation, payload, createdAt
   return { id, entityType, entityId, operation, payload, baseVersion, status: 'pending', createdAt }
 }
 
+function createGlobalRecordId(prefix) {
+  const uniqueId = typeof crypto !== 'undefined' && crypto.randomUUID
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(36).slice(2)}`
+  return `${prefix}-${uniqueId}`
+}
+
+function normalizeCloudRecord(storeName, record) {
+  const normalized = { ...record }
+
+  if (storeName === 'users') {
+    normalized.deviceStatus = record.device_status ?? record.deviceStatus
+  } else if (storeName === 'patients') {
+    normalized.areaOfConcern = record.area_of_concern ?? record.areaOfConcern ?? ''
+    normalized.lastVisit = record.last_visit ?? record.lastVisit ?? ''
+    normalized.ownerId = record.owner_id ?? record.ownerId
+    normalized.createdBy = record.created_by ?? record.createdBy
+  } else if (storeName === 'consultations') {
+    normalized.patientId = record.patient_id ?? record.patientId
+    normalized.handledByUserId = record.handled_by_user_id ?? record.handledByUserId
+    normalized.clinicalNotes = record.clinical_notes ?? record.clinicalNotes
+    normalized.secondaryDiagnosis = record.secondary_diagnosis ?? record.secondaryDiagnosis
+    normalized.isComorbid = record.is_comorbid ?? record.isComorbid ?? false
+    normalized.treatmentPlan = record.treatment_plan ?? record.treatmentPlan
+  } else if (storeName === 'screeningResults') {
+    normalized.consultationId = record.consultation_id ?? record.consultationId
+    normalized.imageId = record.image_id ?? record.imageId
+    normalized.conditionId = record.condition_id ?? record.conditionId
+    normalized.severityLevelId = record.severity_level_id ?? record.severityLevelId
+    normalized.imageData = record.image_data ?? record.imageData
+    normalized.aiLabel = record.ai_label ?? record.aiLabel
+    normalized.aiDisplayLabel = record.ai_display_label ?? record.aiDisplayLabel
+    normalized.aiConfidence = record.confidence_score ?? record.aiConfidence
+    normalized.aiPercent = record.ai_percent ?? record.aiPercent
+    normalized.aiSecondaryLabel = record.ai_secondary_label ?? record.aiSecondaryLabel
+    normalized.aiSecondaryConfidence = record.ai_secondary_confidence ?? record.aiSecondaryConfidence
+    normalized.isComorbid = record.is_comorbid ?? record.isComorbid ?? false
+    normalized.aiDescription = record.ai_description ?? record.aiDescription
+    normalized.aiTop3 = record.ai_top3 ?? record.aiTop3
+    normalized.reviewStatus = record.review_status ?? record.reviewStatus
+  }
+
+  normalized.syncStatus = record.sync_status ?? record.syncStatus ?? 'synced'
+  normalized.createdAt = record.created_at ?? record.createdAt
+  normalized.updatedAt = record.updated_at ?? record.updatedAt
+  return normalized
+}
+
 async function createNextRecordId(tx, storeName, prefix, digits, startAt) {
   const records = await tx.objectStore(storeName).getAll()
   const queue = await tx.objectStore('syncQueue').getAll()
@@ -165,6 +214,26 @@ export async function addPatient(patient) {
 export async function getPatients() {
   const db = await initDatabase()
   return db.getAll('patients')
+}
+
+export async function cacheCloudPatient(patient) {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const record = {
+    ...patient,
+    id: patient.id,
+    areaOfConcern: patient.area_of_concern ?? patient.areaOfConcern ?? '',
+    lastVisit: patient.last_visit ?? patient.lastVisit ?? '',
+    ownerId: patient.owner_id ?? patient.ownerId,
+    createdBy: patient.created_by ?? patient.createdBy,
+    createdAt: patient.created_at ?? patient.createdAt ?? now,
+    updatedAt: patient.updated_at ?? patient.updatedAt ?? now,
+    syncStatus: 'synced',
+  }
+  const tx = db.transaction('patients', 'readwrite')
+  await tx.objectStore('patients').put(record)
+  await tx.done
+  return record
 }
 
 export async function mergeCloudPatients(cloudPatients) {
@@ -408,9 +477,7 @@ export async function resolveSyncConflict(conflictId, resolution, authoritativeR
   const conflict = await db.get('syncConflicts', conflictId)
   if (!conflict) throw new Error('This sync conflict could not be found.')
 
-  const storeName = conflict.entityType === 'users' || conflict.entityType === 'patients'
-    ? conflict.entityType
-    : null
+  const storeName = SYNC_STORE_NAMES.includes(conflict.entityType) ? conflict.entityType : null
   if (!storeName) throw new Error(`Unsupported conflict type: ${conflict.entityType}`)
 
   const selected = resolution === 'local' ? conflict.localData : conflict.cloudData
@@ -433,22 +500,7 @@ export async function resolveSyncConflict(conflictId, resolution, authoritativeR
     if (authoritativeRecord._deleted) {
       await recordStore.delete(conflict.entityId)
     } else {
-      const normalizedRecord = storeName === 'users'
-        ? {
-            ...authoritativeRecord,
-            deviceStatus: authoritativeRecord.device_status ?? authoritativeRecord.deviceStatus,
-            createdAt: authoritativeRecord.created_at ?? authoritativeRecord.createdAt,
-            updatedAt: authoritativeRecord.updated_at ?? authoritativeRecord.updatedAt,
-          }
-        : {
-            ...authoritativeRecord,
-            areaOfConcern: authoritativeRecord.area_of_concern ?? authoritativeRecord.areaOfConcern,
-            lastVisit: authoritativeRecord.last_visit ?? authoritativeRecord.lastVisit,
-            ownerId: authoritativeRecord.owner_id ?? authoritativeRecord.ownerId,
-            createdBy: authoritativeRecord.created_by ?? authoritativeRecord.createdBy,
-            createdAt: authoritativeRecord.created_at ?? authoritativeRecord.createdAt,
-            updatedAt: authoritativeRecord.updated_at ?? authoritativeRecord.updatedAt,
-          }
+      const normalizedRecord = normalizeCloudRecord(storeName, authoritativeRecord)
       await recordStore.put({ ...normalizedRecord, syncStatus: 'synced' })
     }
 
@@ -457,22 +509,7 @@ export async function resolveSyncConflict(conflictId, resolution, authoritativeR
     return conflict
   }
 
-  const normalized = storeName === 'users'
-    ? {
-        ...selected,
-        deviceStatus: selected.device_status ?? selected.deviceStatus,
-        createdAt: selected.created_at ?? selected.createdAt,
-        updatedAt: selected.updated_at ?? selected.updatedAt,
-      }
-    : {
-        ...selected,
-        areaOfConcern: selected.area_of_concern ?? selected.areaOfConcern,
-        lastVisit: selected.last_visit ?? selected.lastVisit,
-        ownerId: selected.owner_id ?? selected.ownerId,
-        createdBy: selected.created_by ?? selected.createdBy,
-        createdAt: selected.created_at ?? selected.createdAt,
-        updatedAt: selected.updated_at ?? selected.updatedAt,
-      }
+  const normalized = normalizeCloudRecord(storeName, selected)
 
   if (resolution === 'local' && selected._deleted) {
     await recordStore.delete(conflict.entityId)
@@ -526,7 +563,7 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     const preparedQueue = await Promise.all(queue.map(async (item) => {
       if (item.operation && item.payload) return item
 
-      const storeName = item.entityType === 'users' ? 'users' : item.entityType === 'patients' ? 'patients' : null
+      const storeName = SYNC_STORE_NAMES.includes(item.entityType) ? item.entityType : null
       const record = storeName ? await db.get(storeName, item.entityId) : null
       return {
         ...item,
@@ -553,22 +590,20 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     const backendConflicts = pushResult.conflicts || []
 
     if (syncedIds.size > 0 || backendConflicts.length > 0) {
-      const tx = db.transaction(['syncQueue', 'syncConflicts', 'users', 'patients'], 'readwrite')
+      const tx = db.transaction(['syncQueue', 'syncConflicts', ...SYNC_STORE_NAMES], 'readwrite')
       const queueStore = tx.objectStore('syncQueue')
       const conflictStore = tx.objectStore('syncConflicts')
-      const userStore = tx.objectStore('users')
-      const patientStore = tx.objectStore('patients')
       const conflictedKeys = new Set()
 
       for (const item of queue) {
         if (syncedIds.has(item.id)) {
           await queueStore.delete(item.id)
 
-          const store = item.entityType === 'users' ? userStore : item.entityType === 'patients' ? patientStore : null
+          const store = SYNC_STORE_NAMES.includes(item.entityType) ? tx.objectStore(item.entityType) : null
           if (store) {
             const record = await store.get(item.entityId)
             const remaining = await queueStore.index('entityId').getAll(item.entityId)
-            if (record && remaining.length === 0) {
+            if (record && !remaining.some((queuedItem) => queuedItem.entityType === item.entityType)) {
               record.syncStatus = 'synced'
               await store.put(record)
             }
@@ -591,7 +626,7 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
         })
         conflictedKeys.add(`${item.entityType}:${item.entityId}`)
 
-        const store = item.entityType === 'users' ? userStore : item.entityType === 'patients' ? patientStore : null
+        const store = SYNC_STORE_NAMES.includes(item.entityType) ? tx.objectStore(item.entityType) : null
         if (store) {
           const localRecord = await store.get(item.entityId)
           if (localRecord) {
@@ -621,10 +656,10 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     ...storedConflicts.map((item) => `${item.entityType}:${item.entityId}`),
   ])
 
-  const reconcileStore = async (storeName, cloudRecords, deletedRecords, mapRecord) => {
+  const reconcileStore = async (storeName, cloudRecords, deletedRecords) => {
     const localRecords = await db.getAll(storeName)
     const cloudById = new Map(cloudRecords.map((record) => {
-      const mapped = mapRecord(record)
+      const mapped = normalizeCloudRecord(storeName, record)
       return [mapped.id, mapped]
     }))
     const tx = db.transaction(storeName, 'readwrite')
@@ -648,29 +683,16 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     await tx.done
   }
 
-  await reconcileStore('users', cloudSnapshot.users || [], cloudSnapshot.deleted || [], (record) => ({
-    ...record,
-    deviceStatus: record.device_status ?? record.deviceStatus,
-    syncStatus: record.sync_status ?? record.syncStatus,
-    createdAt: record.created_at ?? record.createdAt,
-    updatedAt: record.updated_at ?? record.updatedAt,
-  }))
-  await reconcileStore('patients', cloudSnapshot.patients || [], cloudSnapshot.deleted || [], (record) => ({
-    ...record,
-    areaOfConcern: record.area_of_concern ?? record.areaOfConcern,
-    lastVisit: record.last_visit ?? record.lastVisit,
-    ownerId: record.owner_id ?? record.ownerId,
-    createdBy: record.created_by ?? record.createdBy,
-    syncStatus: record.sync_status ?? record.syncStatus,
-    createdAt: record.created_at ?? record.createdAt,
-    updatedAt: record.updated_at ?? record.updatedAt,
-  }))
+  await reconcileStore('users', cloudSnapshot.users || [], cloudSnapshot.deleted || [])
+  await reconcileStore('patients', cloudSnapshot.patients || [], cloudSnapshot.deleted || [])
+  await reconcileStore('consultations', cloudSnapshot.consultations || [], cloudSnapshot.deleted || [])
+  await reconcileStore('screeningResults', cloudSnapshot.screeningResults || [], cloudSnapshot.deleted || [])
 
   const remainingQueue = await db.getAll('syncQueue')
   const failedItems = pushResult.errors || []
   const pendingKeys = new Set(remainingQueue.map((item) => `${item.entityType}:${item.entityId}`))
   const localIds = new Set()
-  for (const storeName of ['users', 'patients']) {
+  for (const storeName of SYNC_STORE_NAMES) {
     const localRecords = await db.getAll(storeName)
     for (const record of localRecords) {
       if (!pendingKeys.has(`${storeName}:${record.id}`) &&
@@ -682,6 +704,8 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
   const cloudIds = new Set([
     ...(cloudSnapshot.users || []).map((record) => `users:${record.id}`),
     ...(cloudSnapshot.patients || []).map((record) => `patients:${record.id}`),
+    ...(cloudSnapshot.consultations || []).map((record) => `consultations:${record.id}`),
+    ...(cloudSnapshot.screeningResults || []).map((record) => `screeningResults:${record.id}`),
   ].filter((key) => !pendingKeys.has(key) && !conflictedEntities.has(key)))
   const hasUnqueuedMismatch = localIds.size !== cloudIds.size || [...localIds].some((id) => !cloudIds.has(id))
   const conflictCount = storedConflicts.length
@@ -707,8 +731,8 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
 export async function addConsultation(consultation) {
   const db  = await initDatabase()
   const now = new Date().toISOString()
-  const tx  = db.transaction(['consultations', 'syncQueue', 'idCounters'], 'readwrite')
-  const id  = await createNextRecordId(tx, 'consultations', 'CONS', 4, 1001)
+  const tx  = db.transaction(['consultations', 'syncQueue'], 'readwrite')
+  const id  = createGlobalRecordId('CONS')
 
   const record = {
     ...consultation,
@@ -742,6 +766,11 @@ export async function updateConsultation(id, updates) {
   const queueStore = tx.objectStore('syncQueue')
   const existing = await consultStore.get(id)
   if (!existing) throw new Error(`Consultation with ID ${id} not found`)
+  const queuedItems = await queueStore.index('entityId').getAll(id)
+  const matchingQueueItems = queuedItems.filter((item) => item.entityType === 'consultations')
+  const originalQueueItem = matchingQueueItems[0]
+  const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
+  const operation = matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
 
   const updatedRecord = {
     ...existing,
@@ -749,13 +778,12 @@ export async function updateConsultation(id, updates) {
     id,
     updatedAt: now,
     syncStatus: 'pending',
-    version: (existing.version || 1) + 1,
+    version: baseVersion + 1,
   }
 
   await consultStore.put(updatedRecord)
-  await queueStore.put(
-    createSyncQueueItem('consultations', updatedRecord.id, 'UPDATE', updatedRecord, now, existing.version || 1)
-  )
+  for (const item of matchingQueueItems) await queueStore.delete(item.id)
+  await queueStore.put(createSyncQueueItem('consultations', updatedRecord.id, operation, updatedRecord, now, baseVersion))
   await tx.done
   return updatedRecord
 }
@@ -767,8 +795,8 @@ export async function updateConsultation(id, updates) {
 export async function addScreeningResult(result) {
   const db  = await initDatabase()
   const now = new Date().toISOString()
-  const tx  = db.transaction(['screeningResults', 'syncQueue', 'idCounters'], 'readwrite')
-  const id  = await createNextRecordId(tx, 'screeningResults', 'SR', 4, 1001)
+  const tx  = db.transaction(['screeningResults', 'syncQueue'], 'readwrite')
+  const id  = createGlobalRecordId('SR')
 
   const record = {
     ...result,
@@ -804,17 +832,29 @@ export async function getPendingScreeningResults() {
 
 export async function updateScreeningResultStatus(id, reviewStatus) {
   const db       = await initDatabase()
-  const existing = await db.get('screeningResults', id)
+  const tx       = db.transaction(['screeningResults', 'syncQueue'], 'readwrite')
+  const resultStore = tx.objectStore('screeningResults')
+  const queueStore = tx.objectStore('syncQueue')
+  const existing = await resultStore.get(id)
   if (!existing) throw new Error(`Screening result ${id} not found`)
 
-  const now    = new Date().toISOString()
-  const updated = { ...existing, reviewStatus, updatedAt: now, syncStatus: 'pending' }
-  const tx     = db.transaction(['screeningResults', 'syncQueue'], 'readwrite')
+  const now = new Date().toISOString()
+  const queuedItems = await queueStore.index('entityId').getAll(id)
+  const matchingQueueItems = queuedItems.filter((item) => item.entityType === 'screeningResults')
+  const originalQueueItem = matchingQueueItems[0]
+  const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
+  const operation = matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
+  const updated = {
+    ...existing,
+    reviewStatus,
+    updatedAt: now,
+    syncStatus: 'pending',
+    version: baseVersion + 1,
+  }
 
-  await tx.objectStore('screeningResults').put(updated)
-  await tx.objectStore('syncQueue').put(
-    createSyncQueueItem('screeningResults', id, 'UPDATE', updated, now, existing.version)
-  )
+  await resultStore.put(updated)
+  for (const item of matchingQueueItems) await queueStore.delete(item.id)
+  await queueStore.put(createSyncQueueItem('screeningResults', id, operation, updated, now, baseVersion))
   await tx.done
   return updated
 }

@@ -69,6 +69,14 @@ class AdminCreateUserRequest(BaseModel):
     temporary_password: str
 
 
+class CreatePatientRequest(BaseModel):
+    name: str
+    species: str = "Canine"
+    area_of_concern: str = ""
+    last_visit: Optional[str] = None
+    status: str = "Active"
+
+
 class SyncConflictResolutionRequest(BaseModel):
     resolution: str
 
@@ -339,6 +347,64 @@ def get_all_patients(authorization: Optional[str] = Header(default=None)):
         conn.close()
 
 
+@app.post("/api/patients", status_code=201)
+def create_patient(request: CreatePatientRequest, authorization: Optional[str] = Header(default=None)):
+    current_user = get_current_user_from_header(authorization)
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Patient name is required")
+
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO id_counters (prefix, last_value) VALUES ('PT', 1000) "
+                "ON DUPLICATE KEY UPDATE last_value = last_value"
+            )
+            cursor.execute("SELECT last_value FROM id_counters WHERE prefix = 'PT' FOR UPDATE")
+            counter_value = cursor.fetchone()["last_value"]
+            cursor.execute("SELECT id FROM patients WHERE id REGEXP '^PT-[0-9]+$'")
+            existing_ids = cursor.fetchall()
+            maximum_id = max(
+                [int(row["id"].split("-")[1]) for row in existing_ids] + [counter_value, 1000],
+            )
+            next_value = maximum_id + 1
+            patient_id = f"PT-{next_value:04d}"
+            cursor.execute("UPDATE id_counters SET last_value = %s WHERE prefix = 'PT'", (next_value,))
+
+            patient_payload = {
+                "id": patient_id,
+                "name": name,
+                "species": request.species,
+                "areaOfConcern": request.area_of_concern.strip(),
+                "lastVisit": request.last_visit or datetime.utcnow().date().isoformat(),
+                "status": request.status,
+                "createdBy": current_user["id"],
+                "version": 1,
+            }
+            upsert_patient(cursor, patient_payload)
+            cursor.execute("SELECT * FROM patients WHERE id = %s", (patient_id,))
+            patient = cursor.fetchone()
+        conn.commit()
+
+        return {
+            **patient,
+            "areaOfConcern": patient.get("area_of_concern"),
+            "lastVisit": patient.get("last_visit").isoformat() if patient.get("last_visit") else None,
+            "ownerId": patient.get("owner_id"),
+            "createdBy": patient.get("created_by"),
+            "syncStatus": patient.get("sync_status"),
+            "createdAt": patient.get("created_at").isoformat() if patient.get("created_at") else None,
+            "updatedAt": patient.get("updated_at").isoformat() if patient.get("updated_at") else None,
+        }
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+
 # -----------------------------------------------------------------------------
 # Main Cloud Sync Handlers
 # -----------------------------------------------------------------------------
@@ -422,6 +488,95 @@ def delete_patient(cursor, entity_id: str):
     cursor.execute("DELETE FROM patients WHERE id = %s;", (entity_id,))
 
 
+def upsert_consultation(cursor, payload: dict):
+    consultation_id = payload.get("id")
+    patient_id = payload.get("patientId") or payload.get("patient_id")
+    handled_by_user_id = payload.get("handledByUserId") or payload.get("handled_by_user_id")
+    version = payload.get("version", 1)
+    cursor.execute(
+        """INSERT INTO consultations
+           (id, patient_id, handled_by_user_id, clinical_notes, diagnosis,
+            secondary_diagnosis, is_comorbid, treatment_plan, sync_status, version, updated_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
+           ON DUPLICATE KEY UPDATE
+             patient_id = VALUES(patient_id), handled_by_user_id = VALUES(handled_by_user_id),
+             clinical_notes = VALUES(clinical_notes), diagnosis = VALUES(diagnosis),
+             secondary_diagnosis = VALUES(secondary_diagnosis), is_comorbid = VALUES(is_comorbid),
+             treatment_plan = VALUES(treatment_plan), sync_status = 'synced',
+             version = VALUES(version), updated_at = VALUES(updated_at)""",
+        (
+            consultation_id,
+            patient_id,
+            handled_by_user_id,
+            payload.get("clinicalNotes") or payload.get("clinical_notes"),
+            payload.get("diagnosis"),
+            payload.get("secondaryDiagnosis") or payload.get("secondary_diagnosis"),
+            bool(payload.get("isComorbid", payload.get("is_comorbid", False))),
+            payload.get("treatmentPlan") or payload.get("treatment_plan"),
+            version,
+            datetime.utcnow(),
+        ),
+    )
+
+
+def upsert_screening_result(cursor, payload: dict):
+    result_id = payload.get("id")
+    top3 = payload.get("aiTop3") or payload.get("ai_top3")
+    if isinstance(top3, (list, dict)):
+        top3 = json.dumps(top3, default=str)
+    version = payload.get("version", 1)
+    cursor.execute(
+        """INSERT INTO screening_results
+           (id, consultation_id, image_id, condition_id, severity_level_id,
+            confidence_score, heatmap_data, image_data, ai_label, ai_display_label,
+            ai_percent, ai_secondary_label, ai_secondary_confidence, is_comorbid,
+            ai_description, ai_top3, species, review_status, sync_status, version, updated_at)
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
+           ON DUPLICATE KEY UPDATE
+             consultation_id = VALUES(consultation_id), image_id = VALUES(image_id),
+             condition_id = VALUES(condition_id), severity_level_id = VALUES(severity_level_id),
+             confidence_score = VALUES(confidence_score), heatmap_data = VALUES(heatmap_data),
+             image_data = VALUES(image_data), ai_label = VALUES(ai_label),
+             ai_display_label = VALUES(ai_display_label), ai_percent = VALUES(ai_percent),
+             ai_secondary_label = VALUES(ai_secondary_label),
+             ai_secondary_confidence = VALUES(ai_secondary_confidence),
+             is_comorbid = VALUES(is_comorbid), ai_description = VALUES(ai_description),
+             ai_top3 = VALUES(ai_top3), species = VALUES(species),
+             review_status = VALUES(review_status), sync_status = 'synced',
+             version = VALUES(version), updated_at = VALUES(updated_at)""",
+        (
+            result_id,
+            payload.get("consultationId") or payload.get("consultation_id"),
+            payload.get("imageId") or payload.get("image_id"),
+            payload.get("conditionId") or payload.get("condition_id"),
+            payload.get("severityLevelId") or payload.get("severity_level_id"),
+            payload.get("aiConfidence", payload.get("confidence_score")),
+            payload.get("heatmapData") or payload.get("heatmap_data"),
+            payload.get("imageData") or payload.get("image_data"),
+            payload.get("aiLabel") or payload.get("ai_label"),
+            payload.get("aiDisplayLabel") or payload.get("ai_display_label"),
+            payload.get("aiPercent") or payload.get("ai_percent"),
+            payload.get("aiSecondaryLabel") or payload.get("ai_secondary_label"),
+            payload.get("aiSecondaryConfidence", payload.get("ai_secondary_confidence")),
+            bool(payload.get("isComorbid", payload.get("is_comorbid", False))),
+            payload.get("aiDescription") or payload.get("ai_description"),
+            top3,
+            payload.get("species"),
+            payload.get("reviewStatus") or payload.get("review_status") or "pending",
+            version,
+            datetime.utcnow(),
+        ),
+    )
+
+
+SYNC_ENTITY_TABLES = {
+    "users": "users",
+    "patients": "patients",
+    "consultations": "consultations",
+    "screeningResults": "screening_results",
+}
+
+
 @app.post("/api/sync")
 def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(default=None)):
     """
@@ -439,15 +594,22 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
 
     try:
         with conn.cursor() as cursor:
-            for item in batch.queue:
+            entity_priority = {"users": 0, "patients": 1, "consultations": 2, "screeningresults": 3}
+            ordered_items = sorted(
+                batch.queue,
+                key=lambda item: (entity_priority.get(item.entityType.lower(), 99), item.createdAt or ""),
+            )
+            for item in ordered_items:
                 try:
                     entity_type = item.entityType.lower()
+                    if entity_type == "screeningresults":
+                        entity_type = "screeningResults"
                     operation = item.operation.upper()
                     payload = item.payload or {}
 
                     if entity_type == "users" and current_user["role"] != "Clinic Admin":
                         raise ValueError("Only a clinic administrator can sync staff-account changes")
-                    if entity_type not in ("users", "patients"):
+                    if entity_type not in SYNC_ENTITY_TABLES:
                         raise ValueError(f"Unsupported entity type: {item.entityType}")
                     if operation not in ("CREATE", "UPDATE", "DELETE"):
                         raise ValueError(f"Unsupported operation: {item.operation}")
@@ -455,13 +617,20 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                     if operation in ("CREATE", "UPDATE"):
                         if payload.get("id") != item.entityId:
                             raise ValueError("Payload ID must match the queued entity ID")
-                        required_fields = ("username", "name") if entity_type == "users" else ("name",)
+                        if entity_type == "users":
+                            required_fields = ("username", "name")
+                        elif entity_type == "patients":
+                            required_fields = ("name",)
+                        elif entity_type == "consultations":
+                            required_fields = ("patientId",) if not payload.get("patient_id") else ()
+                        else:
+                            required_fields = ("consultationId",) if not payload.get("consultation_id") else ()
                         missing_fields = [field for field in required_fields if not payload.get(field)]
                         if missing_fields:
                             raise ValueError(f"Missing required payload fields: {', '.join(missing_fields)}")
 
                     conn.begin()
-                    table_name = "users" if entity_type == "users" else "patients"
+                    table_name = SYNC_ENTITY_TABLES[entity_type]
                     cursor.execute(
                         f"SELECT * FROM {table_name} WHERE id = %s FOR UPDATE",
                         (item.entityId,),
@@ -552,6 +721,20 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                         elif operation == "DELETE":
                             delete_patient(cursor, item.entityId)
 
+                    elif entity_type == "consultations":
+                        if operation in ("CREATE", "UPDATE"):
+                            upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
+                            upsert_consultation(cursor, upsert_payload)
+                        elif operation == "DELETE":
+                            cursor.execute("DELETE FROM consultations WHERE id = %s", (item.entityId,))
+
+                    elif entity_type == "screeningResults":
+                        if operation in ("CREATE", "UPDATE"):
+                            upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
+                            upsert_screening_result(cursor, upsert_payload)
+                        elif operation == "DELETE":
+                            cursor.execute("DELETE FROM screening_results WHERE id = %s", (item.entityId,))
+
                     # Log sync audit trail into MySQL sync_queue table
                     audit_sql = """
                         INSERT INTO sync_queue (id, entity_type, entity_id, operation, status, payload, created_at)
@@ -562,7 +745,7 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                         audit_sql,
                         (
                             item.id,
-                            item.entityType,
+                            entity_type,
                             item.entityId,
                             operation,
                             json.dumps(payload, default=str),
@@ -609,11 +792,19 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 users = cursor.fetchall()
                 cursor.execute("SELECT * FROM patients WHERE updated_at > %s;", (since,))
                 patients = cursor.fetchall()
+                cursor.execute("SELECT * FROM consultations WHERE updated_at > %s;", (since,))
+                consultations = cursor.fetchall()
+                cursor.execute("SELECT * FROM screening_results WHERE updated_at > %s;", (since,))
+                screening_results = cursor.fetchall()
             else:
                 cursor.execute("SELECT * FROM users;")
                 users = cursor.fetchall()
                 cursor.execute("SELECT * FROM patients;")
                 patients = cursor.fetchall()
+                cursor.execute("SELECT * FROM consultations;")
+                consultations = cursor.fetchall()
+                cursor.execute("SELECT * FROM screening_results;")
+                screening_results = cursor.fetchall()
             cursor.execute(
                 "SELECT DISTINCT entity_type, entity_id FROM sync_queue "
                 "WHERE status = 'processed' AND operation = 'DELETE';"
@@ -630,6 +821,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
             return {
                 "users": users,
                 "patients": patients,
+                "consultations": consultations,
+                "screeningResults": screening_results,
                 "deleted": deleted,
                 "conflicts": conflicts,
                 "server_time": datetime.utcnow().isoformat(),
@@ -682,9 +875,9 @@ def resolve_sync_conflict(
                 raise HTTPException(status_code=409, detail="Sync conflict has already been resolved")
 
             entity_type = conflict["entity_type"]
-            if entity_type not in ("users", "patients"):
+            if entity_type not in SYNC_ENTITY_TABLES:
                 raise HTTPException(status_code=400, detail="Unsupported conflict type")
-            table_name = "users" if entity_type == "users" else "patients"
+            table_name = SYNC_ENTITY_TABLES[entity_type]
             cursor.execute(f"SELECT * FROM {table_name} WHERE id = %s FOR UPDATE", (conflict["entity_id"],))
             current_cloud = cursor.fetchone()
 
@@ -693,18 +886,18 @@ def resolve_sync_conflict(
             else:
                 local_record = decode_json_value(conflict["local_data"])
                 if local_record.get("_deleted"):
-                    if entity_type == "users":
-                        delete_user(cursor, conflict["entity_id"])
-                    else:
-                        delete_patient(cursor, conflict["entity_id"])
+                    cursor.execute(f"DELETE FROM {table_name} WHERE id = %s", (conflict["entity_id"],))
                     resolved_record = {"id": conflict["entity_id"], "_deleted": True}
                 else:
                     next_version = int(current_cloud["version"] or 0) + 1 if current_cloud else 1
                     local_record["version"] = next_version
-                    if entity_type == "users":
-                        upsert_user(cursor, local_record)
-                    else:
-                        upsert_patient(cursor, local_record)
+                    upsert_functions = {
+                        "users": upsert_user,
+                        "patients": upsert_patient,
+                        "consultations": upsert_consultation,
+                        "screeningResults": upsert_screening_result,
+                    }
+                    upsert_functions[entity_type](cursor, local_record)
                     cursor.execute(f"SELECT * FROM {table_name} WHERE id = %s", (conflict["entity_id"],))
                     resolved_record = cursor.fetchone()
 
