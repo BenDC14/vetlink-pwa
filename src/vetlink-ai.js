@@ -407,3 +407,44 @@ export function checkImageSharpness(imgElement) {
   }
 }
 
+// -----------------------------------------------------------------------------
+// Veterinary Dermatological Symptoms Master Dictionary & Knowledge Base
+// -----------------------------------------------------------------------------
+export const MASTER_SYMPTOMS = [
+  { id: 'SYM-PRURITUS', name: 'Pruritus (Severe Itching / Scratching / Licking)', shortName: 'Pruritus / Itching' },
+  { id: 'SYM-ERYTHEMA', name: 'Erythema (Skin Redness / Active Inflammation)', shortName: 'Erythema / Redness' },
+  { id: 'SYM-ALOPECIA', name: 'Alopecia (Focal / Generalized Hair Loss)', shortName: 'Alopecia / Hair Loss' },
+  { id: 'SYM-SCALING',  name: 'Scaling & Crusts (Flaking / Dandruff / Scabs)', shortName: 'Scaling & Crusts' },
+  { id: 'SYM-PUSTULES', name: 'Pustules & Papules (Pus-filled Bumps / Pimples)', shortName: 'Pustules & Papules' },
+  { id: 'SYM-EXUDATE',  name: 'Moist Exudate (Oozing / Sticky / Matted Fur)', shortName: 'Moist Exudate / Hotspot' },
+  { id: 'SYM-ODOR',     name: 'Malodorous / Rancid Yeast Odor', shortName: 'Rancid Yeast Odor' },
+  { id: 'SYM-LICHEN',   name: 'Lichenification (Thickened, Darkened Leathery Skin)', shortName: 'Lichenification' },
+]
+
+export const DISEASE_HALLMARK_SYMPTOMS = {
+  'Flea Allergy Dermatitis': ['SYM-PRURITUS', 'SYM-ERYTHEMA', 'SYM-ALOPECIA', 'SYM-SCALING'],
+  'Ringworm':                ['SYM-ALOPECIA', 'SYM-SCALING', 'SYM-PRURITUS'],
+  'Rabbit Ringworm':         ['SYM-ALOPECIA', 'SYM-SCALING'],
+  'Hot Spots':               ['SYM-EXUDATE', 'SYM-ERYTHEMA', 'SYM-PRURITUS', 'SYM-ODOR'],
+  'Hotspots':                ['SYM-EXUDATE', 'SYM-ERYTHEMA', 'SYM-PRURITUS', 'SYM-ODOR'],
+  'Mange':                   ['SYM-ALOPECIA', 'SYM-SCALING', 'SYM-LICHEN', 'SYM-PRURITUS'],
+  'Rabbit Mange':            ['SYM-SCALING', 'SYM-ALOPECIA', 'SYM-PRURITUS'],
+  'Pyoderma':                ['SYM-PUSTULES', 'SYM-ERYTHEMA', 'SYM-SCALING'],
+  'Scaly Face Scaly Leg Mite (Knemidocoptes)': ['SYM-SCALING', 'SYM-LICHEN'],
+  'Avian Fowl Pox':          ['SYM-PUSTULES', 'SYM-SCALING'],
+  'Healthy':                 [],
+  'Rabbit Healthy':          [],
+  'Bird Healthy':            [],
+}
+
+export function getSuggestedSymptomsForDisease(diseaseLabel) {
+  if (!diseaseLabel) return []
+  const norm = diseaseLabel.toLowerCase()
+  for (const [key, symptomIds] of Object.entries(DISEASE_HALLMARK_SYMPTOMS)) {
+    if (norm.includes(key.toLowerCase()) || key.toLowerCase().includes(norm)) {
+      return symptomIds
+    }
+  }
+  return []
+}
+

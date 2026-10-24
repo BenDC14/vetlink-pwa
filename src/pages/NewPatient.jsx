@@ -1,6 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
-import { addPatient, addConsultation, addScreeningResult } from '../db/database'
-import { loadVetLinkModel, predict, loadImageFromFile, checkImageSharpness } from '../vetlink-ai'
+import { addPatient, addConsultation, addScreeningResult, addConsultationSymptoms } from '../db/database'
+import {
+  loadVetLinkModel,
+  predict,
+  loadImageFromFile,
+  checkImageSharpness,
+  MASTER_SYMPTOMS,
+  getSuggestedSymptomsForDisease
+} from '../vetlink-ai'
 import CameraCaptureModal from '../components/CameraCaptureModal'
 
 // Clinical check for co-occurring dermatitis or secondary opportunistic infection
@@ -45,7 +52,7 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
       type: 'ringworm_vs_mange',
       title: '🔬 Early-Stage Clinical Differential Advisory',
       message: 'Focal alopecia and facial erythema share near-identical visual features between early localized Demodectic Mange and Dermatophytosis (Ringworm). A confirmatory deep skin scraping is strongly advised to rule out Demodex mites before administering topical antifungals or corticosteroids.',
-      overrideHint: 'If scraping reveals Demodex mites, use the Clinical Override dropdown in Admin Approval to confirm Mange.',
+      overrideHint: 'If scraping reveals Demodex mites, use the Clinical Override dropdown in Clinical Review to confirm Mange.',
     }
   }
 
@@ -54,14 +61,14 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
       type: 'subclinical_mange_alert',
       title: '🔬 Subclinical / Early-Stage Lesion Advisory',
       message: 'Early-stage localized mange with subtle erythema and early hair thinning often lacks florid crusts, causing visual classification to align with intact skin. If clinical pruritus or focal redness is present, microscopic skin scraping is recommended.',
-      overrideHint: 'Attending veterinarian may override the tentative triage classification in Admin Approval if clinical lesions are confirmed.',
+      overrideHint: 'Attending veterinarian may override the tentative triage classification in Clinical Review if clinical lesions are confirmed.',
     }
   }
 
   return null
 }
 
-export default function NewPatient({ onBack, onViewPending, onCapture }) {
+export default function NewPatient({ onBack, onViewPending, onCapture, currentUser }) {
   const [name, setName]                 = useState('')
   const [species, setSpecies]           = useState('Canine')
   const [areaOfConcern, setAreaOfConcern] = useState('')
@@ -77,6 +84,16 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
   const [modelReady, setModelReady]     = useState(false)
   const [modelError, setModelError]     = useState(null)
   const [isCameraOpen, setIsCameraOpen] = useState(false)
+
+  // Clinical Symptoms & Lab Test State
+  const [selectedSymptoms, setSelectedSymptoms] = useState([])
+  const [otherSymptoms, setOtherSymptoms]       = useState('')
+  const [labTestRequired, setLabTestRequired]   = useState(false)
+  const [labTestReason, setLabTestReason]       = useState('')
+
+  // Role-based Assistant Flow State
+  const [intakeSuccess, setIntakeSuccess]       = useState(false)
+  const [savedSummary, setSavedSummary]         = useState(null)
 
   const fileInputRef = useRef(null)
 
@@ -101,6 +118,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
     setPreviewUrl(url)
     setAiResult(null)
     setError('')
+    setIntakeSuccess(false)
 
     // Run AI automatically after image is selected
     setIsAnalyzing(true)
@@ -113,12 +131,42 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
       }
       const result     = await predict(imgElement, species)
       setAiResult(result)
+
+      // Intelligent Symptom Pre-selection & Lab Test Auto-evaluation
+      if (result.confidence >= 0.60) {
+        const primarySymptoms = getSuggestedSymptomsForDisease(result.displayLabel)
+        const comorb = checkComorbidity(result.top3)
+        const secondarySymptoms = comorb.isComorbid ? getSuggestedSymptomsForDisease(comorb.secondary) : []
+        const merged = Array.from(new Set([...primarySymptoms, ...secondarySymptoms]))
+        setSelectedSymptoms(merged)
+        setLabTestRequired(false)
+        setLabTestReason('')
+      } else {
+        // Low confidence: keep checkboxes blank to avoid cognitive bias
+        setSelectedSymptoms([])
+        setLabTestRequired(true)
+        setLabTestReason('AI confidence below 60% decision boundary. Confirmatory lab test (Skin scrape / fungal DTM) recommended.')
+      }
+
+      // Check subclinical early differential
+      const earlyDiff = checkEarlyStageDifferential(result, species, areaOfConcern)
+      if (earlyDiff) {
+        setLabTestRequired(true)
+        setLabTestReason(earlyDiff.message)
+      }
+
     } catch (err) {
       console.error('AI inference failed:', err)
       setError(`AI could not analyze this image: ${err.message || err}`)
     } finally {
       setIsAnalyzing(false)
     }
+  }
+
+  const toggleSymptom = (symptomId) => {
+    setSelectedSymptoms((prev) =>
+      prev.includes(symptomId) ? prev.filter((id) => id !== symptomId) : [...prev, symptomId]
+    )
   }
 
   // When user picks a file, show preview and immediately run AI
@@ -182,22 +230,36 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
     setError('')
 
     try {
-      // 1. Save patient
+      // 1. Determine clinical status based on lab test and confidence
+      const comorb = checkComorbidity(aiResult.top3)
+      let assignedStatus = 'Review Results'
+      if (labTestRequired) {
+        assignedStatus = 'Awaiting Lab Test'
+      } else if (comorb.isComorbid || aiResult.confidence < 0.80) {
+        assignedStatus = 'Needs Vet Review'
+      } else {
+        assignedStatus = 'Review Results'
+      }
+
+      // 2. Save patient
       const patient = await addPatient({
         name:          name.trim(),
         species,
         areaOfConcern: areaOfConcern.trim(),
         lastVisit:     new Date().toISOString().slice(0, 10),
-        status:        'Active',
+        status:        assignedStatus,
       })
 
-      // 2. Check for comorbidity / secondary presentation
-      const comorb = checkComorbidity(aiResult.top3)
-
       // 3. Save consultation linked to the patient
+      const combinedNotes = [
+        areaOfConcern.trim(),
+        otherSymptoms.trim() ? `Symptom Notes: ${otherSymptoms.trim()}` : '',
+        labTestRequired && labTestReason ? `Lab Order: ${labTestReason}` : '',
+      ].filter(Boolean).join(' | ')
+
       const consultation = await addConsultation({
         patientId:          patient.id,
-        clinicalNotes:      areaOfConcern.trim(),
+        clinicalNotes:      combinedNotes,
         diagnosis:          aiResult.label,
         secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
         isComorbid:         comorb.isComorbid,
@@ -222,17 +284,38 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
         aiDescription:         aiResult.description,
         aiTop3:                JSON.stringify(aiResult.top3),
         species,
-        reviewStatus:          'pending',
+        reviewStatus:          assignedStatus === 'Awaiting Lab Test' ? 'awaiting_lab' : 'pending',
       })
 
-      // 6. Navigate to AdminApproval with the full result
-      onCapture({
-        patient,
-        consultation,
-        aiResult,
-        previewUrl,
-        comorbidityInfo: comorb,
-      })
+      // 6. Save itemized symptoms into consultationSymptoms store
+      await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
+
+      // 7. Role-aware completion: Assistant gets confirmation screen; Admin/Doctor gets direct capture
+      if (currentUser?.role === 'Clinic Staff') {
+        setIntakeSuccess(true)
+        setSavedSummary({
+          patientId: patient.id,
+          name: patient.name,
+          species: patient.species,
+          status: assignedStatus,
+          diagnosis: aiResult.displayLabel,
+          secondary: comorb.isComorbid ? comorb.secondary : null,
+          labOrdered: labTestRequired,
+        })
+      } else {
+        // Veterinarian / Clinic Admin flow
+        onCapture({
+          patient,
+          consultation,
+          aiResult,
+          previewUrl,
+          comorbidityInfo: comorb,
+          selectedSymptoms,
+          otherSymptoms,
+          labTestRequired,
+          assignedStatus,
+        })
+      }
 
     } catch (saveError) {
       console.error('Failed to save patient:', saveError)
@@ -261,6 +344,105 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
         onChange={handleFileChange}
         aria-label="Capture or upload a pet photo"
       />
+
+      {/* Assistant Intake Success Confirmation Card */}
+      {intakeSuccess && savedSummary && (
+        <div style={{
+          background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
+          border: '2px solid #86efac',
+          borderRadius: 14,
+          padding: 20,
+          marginBottom: 20,
+          boxShadow: '0 4px 14px rgba(22, 101, 52, 0.08)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
+            <span style={{ fontSize: '2.4rem' }}>✅</span>
+            <div>
+              <h3 style={{ margin: 0, color: '#166534', fontSize: '1.25rem' }}>
+                Patient Intake & AI Screening Admitted!
+              </h3>
+              <p style={{ margin: '4px 0 0', color: '#15803d', fontSize: '0.88rem' }}>
+                Patient record and preliminary scan successfully saved to clinic database.
+              </p>
+            </div>
+          </div>
+
+          <div style={{
+            background: 'white',
+            borderRadius: 10,
+            padding: 14,
+            border: '1px solid #bbf7d0',
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 12,
+            marginBottom: 14,
+          }}>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Patient ID</span>
+              <div style={{ fontSize: '1rem', fontWeight: 'bold', color: '#0f172a' }}>{savedSummary.patientId}</div>
+            </div>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Name & Species</span>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#0f172a' }}>{savedSummary.name} ({savedSummary.species})</div>
+            </div>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Preliminary AI Scan</span>
+              <div style={{ fontSize: '0.95rem', fontWeight: 600, color: '#1e40af' }}>
+                {savedSummary.diagnosis}
+                {savedSummary.secondary && <span style={{ color: '#6b21a8', display: 'block', fontSize: '0.8rem' }}>+ {savedSummary.secondary}</span>}
+              </div>
+            </div>
+            <div>
+              <span style={{ fontSize: '0.75rem', color: '#64748b', textTransform: 'uppercase', fontWeight: 600 }}>Triage Status</span>
+              <div style={{ marginTop: 2 }}>
+                <span className="status-badge" style={{
+                  background: savedSummary.status === 'Awaiting Lab Test' ? '#fef3c7' : '#fef9c3',
+                  color: savedSummary.status === 'Awaiting Lab Test' ? '#92400e' : '#854d0e',
+                  border: '1px solid #fde68a',
+                  fontWeight: 600,
+                  fontSize: '0.8rem',
+                }}>
+                  {savedSummary.status === 'Awaiting Lab Test' ? '🧪 Awaiting Lab Test' : '🟡 Needs Vet Review'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <p style={{ fontSize: '0.85rem', color: '#334155', margin: '0 0 14px', lineHeight: 1.4 }}>
+            📋 <strong>Next Step:</strong> Hand off the patient to the Attending Veterinarian. The doctor will review the Grad-CAM heatmap, confirm symptoms, and finalize the prescription.
+          </p>
+
+          <div style={{ display: 'flex', gap: 10 }}>
+            <button
+              type="button"
+              className="action-btn blue"
+              style={{ padding: '9px 18px', fontSize: '0.88rem' }}
+              onClick={() => {
+                setName('')
+                setAreaOfConcern('')
+                setSelectedFile(null)
+                setPreviewUrl(null)
+                setAiResult(null)
+                setSelectedSymptoms([])
+                setOtherSymptoms('')
+                setLabTestRequired(false)
+                setIntakeSuccess(false)
+                setSavedSummary(null)
+              }}
+            >
+              ➕ Intake Next Patient
+            </button>
+            <button
+              type="button"
+              className="secondary-btn"
+              style={{ padding: '9px 18px', fontSize: '0.88rem' }}
+              onClick={onViewPending}
+            >
+              📋 View Patient Records
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="new-patient-header">
         <button className="secondary-btn small-back" type="button" onClick={onBack}>← DASHBOARD</button>
@@ -542,7 +724,104 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
               </div>
             )}
 
-            <div className="form-actions-row" style={{ flexDirection: 'column', gap: 8 }}>
+            {/* Clinical Symptoms Checklist & Custom Input */}
+            {aiResult && !isAnalyzing && (
+              <div style={{ marginTop: 14, padding: 14, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span>🩺</span>
+                    <span>Observed Clinical Signs & Symptoms</span>
+                  </span>
+                  <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                    {aiResult.confidence >= 0.60 ? 'Auto-suggested from AI findings' : 'Manual verification required (<60%)'}
+                  </span>
+                </div>
+                <p style={{ fontSize: '0.78rem', color: '#475569', margin: '0 0 10px', lineHeight: 1.35 }}>
+                  Select observed physical lesion signs. These will be linked directly into the consultation record:
+                </p>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6, marginBottom: 10 }}>
+                  {MASTER_SYMPTOMS.map((sym) => {
+                    const isChecked = selectedSymptoms.includes(sym.id)
+                    return (
+                      <label
+                        key={sym.id}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '6px 8px',
+                          borderRadius: 6,
+                          fontSize: '0.78rem',
+                          background: isChecked ? '#e0f2fe' : '#ffffff',
+                          border: isChecked ? '1px solid #38bdf8' : '1px solid #cbd5e1',
+                          color: isChecked ? '#0369a1' : '#334155',
+                          cursor: 'pointer',
+                          fontWeight: isChecked ? 600 : 400,
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => toggleSymptom(sym.id)}
+                        />
+                        <span>{sym.shortName}</span>
+                      </label>
+                    )
+                  })}
+                </div>
+
+                {/* Others / Custom Symptoms free-text */}
+                <label style={{ display: 'block', marginTop: 8 }}>
+                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>
+                    Other Clinical Signs / Specific Observations (Free-text):
+                  </span>
+                  <input
+                    type="text"
+                    value={otherSymptoms}
+                    onChange={(e) => setOtherSymptoms(e.target.value)}
+                    placeholder="e.g. Mild fever, localized swelling, foul ear discharge, lethargic..."
+                    style={{ width: '100%', padding: '6px 10px', fontSize: '0.82rem', borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 4, boxSizing: 'border-box' }}
+                  />
+                </label>
+              </div>
+            )}
+
+            {/* Confirmatory Diagnostic Lab Testing Section */}
+            {aiResult && !isAnalyzing && (
+              <div style={{ marginTop: 12, padding: 12, background: labTestRequired ? '#fffbeb' : '#f8fafc', border: labTestRequired ? '1px solid #fde68a' : '1px solid #e2e8f0', borderRadius: 10 }}>
+                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={labTestRequired}
+                    onChange={(e) => setLabTestRequired(e.target.checked)}
+                    style={{ marginTop: 2 }}
+                  />
+                  <div>
+                    <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: labTestRequired ? '#b45309' : '#1e293b' }}>
+                      🧪 Confirmatory Diagnostic Lab Test Required
+                    </span>
+                    <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
+                      Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <code>🧪 Awaiting Lab Test</code>).
+                    </p>
+                  </div>
+                </label>
+
+                {labTestRequired && (
+                  <div style={{ marginTop: 8, paddingLeft: 22 }}>
+                    <input
+                      type="text"
+                      value={labTestReason}
+                      onChange={(e) => setLabTestReason(e.target.value)}
+                      placeholder="Specify test: e.g. Skin scrape for Demodex mites / Fungal DTM culture"
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #f59e0b', boxSizing: 'border-box' }}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="form-actions-row" style={{ flexDirection: 'column', gap: 8, marginTop: 14 }}>
               {/* Step 1: Capture or Upload photo */}
               {!previewUrl && (
                 <div style={{ display: 'flex', gap: 10, width: '100%' }}>
@@ -588,9 +867,13 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
                   type="button"
                   onClick={handleSave}
                   disabled={isSaving}
-                  style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
+                  style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', marginTop: 8 }}
                 >
-                  {isSaving ? '⏳ SAVING...' : '✓ SAVE & SEND FOR REVIEW'}
+                  {isSaving
+                    ? '⏳ SAVING PATIENT & SCAN...'
+                    : currentUser?.role === 'Clinic Staff'
+                      ? '✓ SAVE INTAKE & QUEUE FOR VET REVIEW'
+                      : '✓ SAVE PATIENT RECORD'}
                 </button>
               )}
             </div>
