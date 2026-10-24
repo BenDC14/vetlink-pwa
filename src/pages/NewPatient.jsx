@@ -547,25 +547,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                 Capture or Upload Patient Photo
               </div>
               <div style={{ fontSize: '0.78rem', color: '#64748b', maxWidth: 220, lineHeight: 1.35 }}>
-                Use your device camera for a live photo or select an existing image file
-              </div>
-              <div style={{ display: 'flex', gap: 8, marginTop: 4, width: '100%', maxWidth: 260 }}>
-                <button
-                  type="button"
-                  className="action-btn blue"
-                  style={{ flex: 1, padding: '9px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                  onClick={handleOpenCamera}
-                >
-                  <span>📸</span> Live Camera
-                </button>
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  style={{ flex: 1, padding: '9px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                  onClick={handleOpenFilePicker}
-                >
-                  <span>📁</span> Upload File
-                </button>
+                Use the options on the right to capture a live photo or upload an image file
               </div>
             </div>
           )}
