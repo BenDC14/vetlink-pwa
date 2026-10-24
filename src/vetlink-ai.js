@@ -374,6 +374,8 @@ export function validateClinicalImageQuality(imgElement) {
     let overexposedPixels = 0
     let underexposedPixels = 0
     let biologicalColorPixels = 0
+    let coldScreenPixels = 0
+    let warmOrganicPixels = 0
 
     const gray = new Float32Array(size * size)
     const n = size * size
@@ -391,9 +393,22 @@ export function validateClinicalImageQuality(imgElement) {
       if (lum > 245) overexposedPixels++
       if (lum < 20) underexposedPixels++
 
-      // Biological / Organic Skin & Fur Gamut
-      // Natural mammalian / avian tissue: skin tones, fur, erythema, scabs
-      // Excludes pure synthetic neons (e.g., pure cyan, electric green, bright blue screens)
+      // Screen / Monitor / Slate UI detection
+      // 1. Cold blue/slate UI pixels (b > r + 10 && b > g - 8)
+      // 2. Dark cyan/slate background pixels (e.g., #0f172a, #1e293b, #334155: r < 75 && b > r + 8)
+      const isColdSlateOrScreen = (b > r + 12 && b > g - 8) || (r < 75 && b > r + 8 && b > 25)
+      if (isColdSlateOrScreen) {
+        coldScreenPixels++
+      }
+
+      // Warm organic animal tissue (erythema, pink skin, tan/brown fur, scabs)
+      // Red is dominant over green and blue (r > g && r > b + 10)
+      const isWarmOrganic = (r > g && r > b + 10) || (r > 120 && g > 70 && b < 100 && r > b + 20)
+      if (isWarmOrganic) {
+        warmOrganicPixels++
+      }
+
+      // Synthetic neons
       const isSyntheticBlue = (b > r + 45 && b > g + 45 && b > 120) // Blue screen / IDE
       const isPureNeonGreen = (g > r + 65 && g > b + 65 && g > 130)
       if (!isSyntheticBlue && !isPureNeonGreen) {
@@ -477,7 +492,20 @@ export function validateClinicalImageQuality(imgElement) {
       }
     }
 
-    // 5. Biological Gamut Check
+    // 5. Digital Screen / Computer Monitor Check
+    const coldRatio = coldScreenPixels / n
+    const warmRatio = warmOrganicPixels / n
+    if (coldRatio > 0.28 || (coldRatio > 0.16 && warmRatio < 0.10)) {
+      return {
+        isValid: false,
+        reason: 'DIGITAL_SCREEN',
+        title: '💻 Image Rejected: Computer Monitor / Digital Screen Detected',
+        message: 'The captured frame appears to be a computer monitor, software interface, or digital display rather than an animal patient. VetLink only analyzes direct photos of animal skin or fur lesions.',
+        instructions: 'Please point your camera directly at the animal patient (dog, cat, bird, or rabbit) with proper focus on the lesion.',
+      }
+    }
+
+    // 6. Biological Gamut Check
     if ((biologicalColorPixels / n) < 0.30) {
       return {
         isValid: false,

@@ -783,32 +783,40 @@ class AIPredictionRequest(BaseModel):
 
 _animal_verifier = None
 
+_animal_verifier = None
+_animal_mask = None
+
 def get_animal_verifier():
-    global _animal_verifier
+    global _animal_verifier, _animal_mask
     if _animal_verifier is not None:
-        return _animal_verifier
+        return _animal_verifier, _animal_mask
     try:
         import tensorflow as tf
+        import numpy as np
         _animal_verifier = tf.keras.applications.MobileNetV3Small(weights="imagenet", include_top=True)
+        # Precompute animal class boolean mask across 1,000 ImageNet categories
+        # Synsets starting with n01 (fish, birds, reptiles) and n02 (mammals: dogs, cats, rabbits)
+        dummy = np.eye(1000, dtype=np.float32)
+        decoded = tf.keras.applications.mobilenet_v3.decode_predictions(dummy, top=1)
+        _animal_mask = np.array([
+            bool(r[0][0].startswith(("n01", "n02")) or r[0][1] in {"wool", "fleece", "feather_boa"})
+            for r in decoded
+        ], dtype=bool)
     except Exception as e:
         print(f"[WARN] Animal verifier unavailable: {e}")
         _animal_verifier = False
-    return _animal_verifier
+        _animal_mask = None
+    return _animal_verifier, _animal_mask
 
-INANIMATE_OBJECT_CLASSES = {
-    # Electronics / Technology / Screens
-    "hard_disc", "cellular_telephone", "laptop", "notebook", "modem", "screen", "monitor", "television",
-    "desktop_computer", "mouse", "keyboard", "ipod", "oscilloscope", "radio", "loudspeaker", "joystick",
-    "remote_control", "printer", "photocopier",
-    # Documents / Paperwork / Text / Stationery
-    "rule", "slide_rule", "web_site", "envelope", "menu", "book_jacket", "packet", "comic_book",
-    "binder", "pencil_box", "pencil_sharpener", "crossword_puzzle", "digital_clock", "wall_clock",
-    "analog_clock", "stopwatch", "rubber_eraser",
-    # Household manufactured / Hardware / Furniture
-    "cup", "coffee_mug", "plate", "strainer", "radiator", "microwave", "refrigerator", "toaster",
-    "traffic_light", "parking_meter", "cash_machine", "vending_machine", "automobile", "car_wheel",
-    "screw", "screwdriver", "hammer", "pliers", "power_drill", "chain_saw", "desk", "dining_table",
-    "folding_chair", "rocking_chair", "wardrobe", "bookcase", "pillow", "running_shoe", "sandal", "boot"
+SCREEN_OR_TECH_CLASSES = {
+    # Screens / Monitors / Computers / UI
+    "screen", "monitor", "television", "web_site", "digital_clock", "analog_clock",
+    "cellular_telephone", "laptop", "notebook", "desktop_computer", "ping-pong_ball",
+    "switch", "envelope", "traffic_light", "joystick", "scoreboard", "projector",
+    "packet", "menu", "binder", "book_jacket", "desk", "dining_table", "radiator",
+    "sliding_door", "window_shade", "remote_control", "keyboard", "mouse", "modem",
+    "hard_disc", "loudspeaker", "oscilloscope", "plate", "cup", "coffee_mug",
+    "spotlight", "dial", "crossword_puzzle", "rule", "slide_rule"
 }
 
 @app.post("/api/ai/predict")
@@ -825,28 +833,38 @@ def predict_disease(req: AIPredictionRequest):
         pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((224, 224))
         img_arr = np.array(pil_img, dtype=np.float32)
 
-        # 0. Animal / Inanimate Object Verification Gate
-        verifier = get_animal_verifier()
-        if verifier:
+        # 0. Animal / Screen / Inanimate Object Verification Gate
+        verifier, animal_mask = get_animal_verifier()
+        if verifier and animal_mask is not None:
             try:
                 import tensorflow as tf
                 arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
                 v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
+                
+                # Calculate total probability mass of animal classes (Real animal lesions: 52% - 92%)
+                p_animal = float(np.sum(v_preds[0, animal_mask]))
+                
                 top_dec = tf.keras.applications.mobilenet_v3.decode_predictions(v_preds, top=5)[0]
                 top_id, top_name, top_score = top_dec[0]
+                is_top_artifact = not top_id.startswith(("n01", "n02"))
+                is_screen_or_tech = (
+                    top_name in SCREEN_OR_TECH_CLASSES or 
+                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.03 for t in top_dec)
+                )
 
-                # Check if top prediction is an inanimate object / artifact / document
-                is_known_inanimate = top_name in INANIMATE_OBJECT_CLASSES
-                is_artifact_synset = not top_id.startswith(("n01", "n02"))
-                no_animal_in_top3 = not any(t[0].startswith(("n01", "n02")) for t in top_dec[:3])
-
-                if (is_known_inanimate or is_artifact_synset) and top_score >= 0.04 and no_animal_in_top3:
+                # Rejection Gate Rules:
+                # 1. Screen / computer monitor / digital display detected and animal sum < 50%
+                # 2. Or top prediction is an inanimate manufactured object and animal sum < 40%
+                # 3. Or overall animal probability mass is below clinical cutoff (< 25%)
+                if (is_screen_or_tech and p_animal < 0.50) or (is_top_artifact and p_animal < 0.40) or (p_animal < 0.25):
                     clean_name = top_name.replace("_", " ").title()
+                    detected_label = f"Computer Screen / {clean_name}" if is_screen_or_tech else clean_name
                     return {
                         "rejected": True,
                         "reason": "NON_ANIMAL",
-                        "detected": clean_name,
-                        "message": f"Non-animal subject detected ({clean_name}). VetLink only evaluates animal dermatological lesions (Canine, Feline, Avian, Rabbit). Please capture an animal patient's skin lesion."
+                        "detected": detected_label,
+                        "p_animal": round(p_animal, 3),
+                        "message": f"Non-animal subject detected ({detected_label}, animal match: {round(p_animal * 100, 1)}%). VetLink only evaluates actual animal patient skin lesions (Canine, Feline, Avian, Rabbit). Please photograph the animal's skin condition directly."
                     }
             except Exception as v_err:
                 print(f"[WARN] Animal verifier check error: {v_err}")
