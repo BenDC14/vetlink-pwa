@@ -37,48 +37,58 @@ export function checkComorbidity(top3) {
 
 // Clinical check for early-stage dermatological overlap (e.g. early Demodex vs Ringworm on canine face)
 export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '') {
-  if (!aiResult) return null
-  const topLabel = aiResult.displayLabel || aiResult.label || ''
-  const isCanineOrFeline = species === 'Canine' || species === 'Feline'
-  if (!isCanineOrFeline) return null
+  try {
+    if (!aiResult) return null
+    const topLabel = (aiResult.displayLabel || aiResult.label || '').toLowerCase()
+    const isCanineOrFeline = species === 'Canine' || species === 'Feline'
+    if (!isCanineOrFeline) return null
 
-  const top3 = aiResult.top3 || []
-  const mangeContender = top3.find((t) => (t.label || t.display || '').toLowerCase().includes('mange'))
-  const mangeConfidence = mangeContender ? mangeContender.confidence : 0
+    const top3 = aiResult.top3 || []
+    const mangeContender = top3.find((t) => (t.label || t.display || '').toLowerCase().includes('mange'))
+    const mangeConfidence = mangeContender ? (mangeContender.confidence || 0) : 0
 
-  const isRingworm = topLabel.toLowerCase().includes('ringworm')
-  const areaMatchesFace = Boolean(
-    areaOfConcern.toLowerCase().match(/(face|ear|eye|cheek|muzzle|nose|head)/)
-  )
-
-  // Clinical Differential Rule (Option A):
-  // Only trigger if Mange is a genuine differential contender (>= 5%)
-  // or facial lesion with borderline confidence (< 85% with Mange > 0.5%)
-  const hasMangeDifferentialContest =
-    isRingworm && (
-      mangeConfidence >= 0.05 ||
-      (areaMatchesFace && aiResult.confidence < 0.85 && mangeConfidence > 0.005)
+    const isRingworm = topLabel.includes('ringworm')
+    const areaText = (areaOfConcern || '').toLowerCase()
+    const areaMatchesFace = Boolean(
+      areaText.match(/(face|ear|eye|cheek|muzzle|nose|head)/)
     )
 
-  if (hasMangeDifferentialContest) {
-    return {
-      type: 'ringworm_vs_mange',
-      title: '🔬 Clinical Differential Advisory (Mange vs. Ringworm)',
-      message: `Diagnostic ambiguity detected: Preliminary AI scan favors Ringworm (${aiResult.percent || ''}), but Mange is also present in differential contenders (${(mangeConfidence * 100).toFixed(1)}%). Focal alopecia and facial/ear crusts share visual mimics between Demodex mites and Dermatophytosis. A deep skin scraping is advised.`,
-      overrideHint: 'If skin scrape reveals Demodex mites, use the Clinical Override dropdown in Clinical Review to confirm Mange.',
-    }
-  }
+    // Clinical Differential Rule (Option A):
+    // Only trigger if Mange is a genuine differential contender (>= 5%)
+    // or facial lesion with borderline confidence (< 85% with Mange > 0.5%)
+    const hasMangeDifferentialContest =
+      isRingworm && (
+        mangeConfidence >= 0.05 ||
+        (areaMatchesFace && (aiResult.confidence || 0) < 0.85 && mangeConfidence > 0.005)
+      )
 
-  if (isHealthyWithConcern) {
-    return {
-      type: 'subclinical_mange_alert',
-      title: '🔬 Subclinical / Early-Stage Lesion Advisory',
-      message: 'Early-stage localized mange with subtle erythema and early hair thinning often lacks florid crusts, causing visual classification to align with intact skin. If clinical pruritus or focal redness is present, microscopic skin scraping is recommended.',
-      overrideHint: 'Attending veterinarian may override the tentative triage classification in Clinical Review if clinical lesions are confirmed.',
+    if (hasMangeDifferentialContest) {
+      return {
+        type: 'ringworm_vs_mange',
+        title: '🔬 Clinical Differential Advisory (Mange vs. Ringworm)',
+        message: `Diagnostic ambiguity detected: Preliminary AI scan favors Ringworm (${aiResult.percent || ''}), but Mange is also present in differential contenders (${(mangeConfidence * 100).toFixed(1)}%). Focal alopecia and facial/ear crusts share visual mimics between Demodex mites and Dermatophytosis. A deep skin scraping is advised.`,
+        overrideHint: 'If skin scrape reveals Demodex mites, use the Clinical Override dropdown in Clinical Review to confirm Mange.',
+      }
     }
-  }
 
-  return null
+    const isHealthyWithConcern = topLabel.includes('healthy') &&
+      (Boolean(areaText.match(/(face|ear|eye|cheek|muzzle|nose|head|rash|red|itch|loss|hair)/)) ||
+       top3.some((t) => !(t.display || t.label || '').toLowerCase().includes('healthy') && (t.confidence || 0) >= 0.04))
+
+    if (isHealthyWithConcern) {
+      return {
+        type: 'subclinical_mange_alert',
+        title: '🔬 Subclinical / Early-Stage Lesion Advisory',
+        message: 'Early-stage localized mange with subtle erythema and early hair thinning often lacks florid crusts, causing visual classification to align with intact skin. If clinical pruritus or focal redness is present, microscopic skin scraping is recommended.',
+        overrideHint: 'Attending veterinarian may override the tentative triage classification in Clinical Review if clinical lesions are confirmed.',
+      }
+    }
+
+    return null
+  } catch (err) {
+    console.warn('[VetLink CDSS] checkEarlyStageDifferential error:', err)
+    return null
+  }
 }
 
 export default function NewPatient({ onBack, onViewPending, onCapture, currentUser }) {
