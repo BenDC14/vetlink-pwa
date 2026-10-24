@@ -781,15 +781,41 @@ class AIPredictionRequest(BaseModel):
     image: str
     species: Optional[str] = "Canine"
 
+_animal_verifier = None
+
+def get_animal_verifier():
+    global _animal_verifier
+    if _animal_verifier is not None:
+        return _animal_verifier
+    try:
+        import tensorflow as tf
+        _animal_verifier = tf.keras.applications.MobileNetV3Small(weights="imagenet", include_top=True)
+    except Exception as e:
+        print(f"[WARN] Animal verifier unavailable: {e}")
+        _animal_verifier = False
+    return _animal_verifier
+
+INANIMATE_OBJECT_CLASSES = {
+    # Electronics / Technology / Screens
+    "hard_disc", "cellular_telephone", "laptop", "notebook", "modem", "screen", "monitor", "television",
+    "desktop_computer", "mouse", "keyboard", "ipod", "oscilloscope", "radio", "loudspeaker", "joystick",
+    "remote_control", "printer", "photocopier",
+    # Documents / Paperwork / Text / Stationery
+    "rule", "slide_rule", "web_site", "envelope", "menu", "book_jacket", "packet", "comic_book",
+    "binder", "pencil_box", "pencil_sharpener", "crossword_puzzle", "digital_clock", "wall_clock",
+    "analog_clock", "stopwatch", "rubber_eraser",
+    # Household manufactured / Hardware / Furniture
+    "cup", "coffee_mug", "plate", "strainer", "radiator", "microwave", "refrigerator", "toaster",
+    "traffic_light", "parking_meter", "cash_machine", "vending_machine", "automobile", "car_wheel",
+    "screw", "screwdriver", "hammer", "pliers", "power_drill", "chain_saw", "desk", "dining_table",
+    "folding_chair", "rocking_chair", "wardrobe", "bookcase", "pillow", "running_shoe", "sandal", "boot"
+}
+
 @app.post("/api/ai/predict")
 def predict_disease(req: AIPredictionRequest):
     try:
         import numpy as np
         from PIL import Image
-
-        interpreter, labels = get_ai_model()
-        inp_idx = interpreter.get_input_details()[0]["index"]
-        out_idx = interpreter.get_output_details()[0]["index"]
 
         img_b64 = req.image
         if "," in img_b64:
@@ -798,6 +824,36 @@ def predict_disease(req: AIPredictionRequest):
         raw_bytes = base64.b64decode(img_b64)
         pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((224, 224))
         img_arr = np.array(pil_img, dtype=np.float32)
+
+        # 0. Animal / Inanimate Object Verification Gate
+        verifier = get_animal_verifier()
+        if verifier:
+            try:
+                import tensorflow as tf
+                arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
+                v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
+                top_dec = tf.keras.applications.mobilenet_v3.decode_predictions(v_preds, top=5)[0]
+                top_id, top_name, top_score = top_dec[0]
+
+                # Check if top prediction is an inanimate object / artifact / document
+                is_known_inanimate = top_name in INANIMATE_OBJECT_CLASSES
+                is_artifact_synset = not top_id.startswith(("n01", "n02"))
+                no_animal_in_top3 = not any(t[0].startswith(("n01", "n02")) for t in top_dec[:3])
+
+                if (is_known_inanimate or is_artifact_synset) and top_score >= 0.04 and no_animal_in_top3:
+                    clean_name = top_name.replace("_", " ").title()
+                    return {
+                        "rejected": True,
+                        "reason": "NON_ANIMAL",
+                        "detected": clean_name,
+                        "message": f"Non-animal subject detected ({clean_name}). VetLink only evaluates animal dermatological lesions (Canine, Feline, Avian, Rabbit). Please capture an animal patient's skin lesion."
+                    }
+            except Exception as v_err:
+                print(f"[WARN] Animal verifier check error: {v_err}")
+
+        interpreter, labels = get_ai_model()
+        inp_idx = interpreter.get_input_details()[0]["index"]
+        out_idx = interpreter.get_output_details()[0]["index"]
 
         inp_tensor = np.expand_dims(img_arr, axis=0)
         interpreter.set_tensor(inp_idx, inp_tensor)

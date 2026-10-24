@@ -4,7 +4,7 @@ import {
   loadVetLinkModel,
   predict,
   loadImageFromFile,
-  checkImageSharpness,
+  validateClinicalImageQuality,
   MASTER_SYMPTOMS,
   getSuggestedSymptomsForDisease
 } from '../vetlink-ai'
@@ -103,7 +103,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [previewUrl, setPreviewUrl]     = useState(null)
   const [isAnalyzing, setIsAnalyzing]   = useState(false)
   const [aiResult, setAiResult]         = useState(null)
-  const [sharpnessWarning, setSharpnessWarning] = useState(null)
+  const [qualityRejection, setQualityRejection] = useState(null)
   const [modelReady, setModelReady]     = useState(false)
   const [modelError, setModelError]     = useState(null)
   const [isCameraOpen, setIsCameraOpen] = useState(false)
@@ -140,19 +140,45 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     setSelectedFile(file)
     setPreviewUrl(url)
     setAiResult(null)
+    setQualityRejection(null)
     setError('')
     setIntakeSuccess(false)
 
     // Run AI automatically after image is selected
     setIsAnalyzing(true)
-    setSharpnessWarning(null)
     try {
       const imgElement = await loadImageFromFile(file)
-      const sharpness  = checkImageSharpness(imgElement)
-      if (!sharpness.isSharp) {
-        setSharpnessWarning(sharpness.message)
+
+      // Step 1: Client-Side Clinical Image Quality & Anti-Blur Gate
+      const quality = validateClinicalImageQuality(imgElement)
+      if (!quality.isValid) {
+        setQualityRejection({
+          title: quality.title || 'Image Rejected: Quality Gate Failed',
+          reason: quality.reason || 'LOW_QUALITY',
+          message: quality.message,
+          instructions: quality.instructions || 'Please retake or upload a clearer close-up photo of the animal lesion.',
+          score: quality.score,
+        })
+        setIsAnalyzing(false)
+        return // HARD STOP - Reject before calling neural network!
       }
-      const result     = await predict(imgElement, species)
+
+      // Step 2: Animal Verification & Disease Classification (Backend TFLite / WASM)
+      const result = await predict(imgElement, species)
+
+      // Step 2b: Server-Side Inanimate / Non-Animal Gate Check
+      if (result.rejected) {
+        setQualityRejection({
+          title: '🚫 Image Rejected: Non-Animal Subject Detected',
+          reason: result.reason || 'NON_ANIMAL',
+          detected: result.detected,
+          message: result.message || 'VetLink is trained exclusively on domestic animal dermatological lesions (Canine, Feline, Avian, Rabbit). Non-animal subjects are rejected to prevent diagnostic errors and model overload.',
+          instructions: 'Please take or upload a photo showing an actual animal patient with a visible skin or fur condition.',
+        })
+        setIsAnalyzing(false)
+        return // HARD STOP - Do not accept non-animal images!
+      }
+
       setAiResult(result)
 
       // Intelligent Symptom Pre-selection & Lab Test Auto-evaluation
@@ -206,15 +232,26 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     processImageFile(file)
   }
 
-  // When species changes, re-run AI if an image is already loaded
+  // When species changes, re-run AI if an image is already loaded and valid
   const handleSpeciesChange = async (newSpecies) => {
     setSpecies(newSpecies)
-    if (selectedFile) {
+    if (selectedFile && !qualityRejection) {
       setIsAnalyzing(true)
       try {
         const imgElement = await loadImageFromFile(selectedFile)
         const result     = await predict(imgElement, newSpecies)
-        setAiResult(result)
+        if (result.rejected) {
+          setQualityRejection({
+            title: '🚫 Image Rejected: Non-Animal Subject Detected',
+            reason: result.reason || 'NON_ANIMAL',
+            detected: result.detected,
+            message: result.message,
+            instructions: 'Please take or upload a photo showing an animal patient.',
+          })
+          setAiResult(null)
+        } else {
+          setAiResult(result)
+        }
       } catch (err) {
         console.error('Re-inference failed:', err)
       } finally {
@@ -247,6 +284,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const handleSave = async () => {
     if (!name.trim()) { setError('Patient name is required.'); return }
     if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
+    if (qualityRejection) { setError(`Cannot save: Image was rejected (${qualityRejection.reason || 'Quality Check Failed'}). Please capture or upload a valid animal skin lesion photo.`); return }
     if (!aiResult)    { setError('Waiting for AI analysis to complete.'); return }
 
     setIsSaving(true)
@@ -556,20 +594,38 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             </div>
           )}
 
-          {/* Quality check alert */}
-          {sharpnessWarning && (
+          {/* Quality check rejection alert */}
+          {qualityRejection && (
             <div style={{
               marginTop: 10,
-              padding: '8px 12px',
-              background: '#fffbeb',
-              border: '1px solid #fde68a',
-              borderRadius: 8,
-              color: '#92400e',
+              padding: '12px 14px',
+              background: '#fef2f2',
+              border: '2px solid #ef4444',
+              borderRadius: 10,
+              color: '#991b1b',
               fontSize: '0.82rem',
-              lineHeight: 1.4,
+              lineHeight: 1.45,
               textAlign: 'left',
+              boxShadow: '0 2px 8px rgba(239, 68, 68, 0.12)',
             }}>
-              <strong>⚠️ Quality Alert:</strong> {sharpnessWarning}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'bold', fontSize: '0.88rem', marginBottom: 4 }}>
+                <span>🚫</span>
+                <span>{qualityRejection.title}</span>
+              </div>
+              <p style={{ margin: '0 0 8px 0', color: '#7f1d1d', fontSize: '0.8rem' }}>
+                {qualityRejection.message}
+              </p>
+              <div style={{
+                background: 'white',
+                padding: '6px 10px',
+                borderRadius: 6,
+                border: '1px solid #fca5a5',
+                color: '#991b1b',
+                fontWeight: 600,
+                fontSize: '0.76rem',
+              }}>
+                👉 {qualityRejection.instructions}
+              </div>
             </div>
           )}
 
@@ -638,7 +694,79 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
               </div>
             )}
 
-            {aiResult && !isAnalyzing && (
+            {/* Clinical Image Rejection Card */}
+            {qualityRejection && !isAnalyzing && (
+              <div style={{
+                marginTop: 14,
+                padding: 16,
+                background: 'linear-gradient(135deg, #fef2f2, #fff1f2)',
+                border: '2px solid #ef4444',
+                borderRadius: 12,
+                boxShadow: '0 4px 14px rgba(239, 68, 68, 0.12)',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                  <span style={{ fontSize: '2rem' }}>⛔</span>
+                  <div>
+                    <h4 style={{ margin: 0, color: '#991b1b', fontSize: '1.02rem', fontWeight: 700 }}>
+                      {qualityRejection.title}
+                    </h4>
+                    <span style={{
+                      display: 'inline-block',
+                      marginTop: 2,
+                      padding: '2px 8px',
+                      background: '#fee2e2',
+                      border: '1px solid #fca5a5',
+                      borderRadius: 4,
+                      fontSize: '0.72rem',
+                      fontWeight: 700,
+                      color: '#b91c1c',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px',
+                    }}>
+                      GATE: {qualityRejection.reason} {qualityRejection.detected ? `• DETECTED: ${qualityRejection.detected}` : ''}
+                    </span>
+                  </div>
+                </div>
+
+                <p style={{ margin: '0 0 10px 0', color: '#374151', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                  {qualityRejection.message}
+                </p>
+
+                <div style={{
+                  background: 'white',
+                  borderRadius: 8,
+                  padding: '10px 12px',
+                  border: '1px solid #fecaca',
+                  marginBottom: 14,
+                  fontSize: '0.8rem',
+                  color: '#7f1d1d',
+                  lineHeight: 1.45,
+                }}>
+                  💡 <strong>Action Required:</strong> {qualityRejection.instructions}
+                </div>
+
+                <div style={{ display: 'flex', gap: 10 }}>
+                  <button
+                    type="button"
+                    className="action-btn blue"
+                    style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                    onClick={handleOpenCamera}
+                  >
+                    <span>📸</span> Retake with Camera
+                  </button>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'white' }}
+                    onClick={handleOpenFilePicker}
+                  >
+                    <span>📁</span> Select Another Image
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {aiResult && !qualityRejection && !isAnalyzing && (
               <div className="ai-result-box" style={{ background: '#0f172a', color: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #334155' }}>
                 <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: 10, color: '#38bdf8' }}>
                   Grad-CAM: {aiResult.displayLabel} ({aiResult.percent} confident)
@@ -748,7 +876,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             )}
 
             {/* Clinical Symptoms Checklist & Custom Input */}
-            {aiResult && !isAnalyzing && (
+            {aiResult && !qualityRejection && !isAnalyzing && (
               <div style={{ marginTop: 14, padding: 14, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
                   <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#1e293b', display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -811,7 +939,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             )}
 
             {/* Confirmatory Diagnostic Lab Testing Section */}
-            {aiResult && !isAnalyzing && (
+            {aiResult && !qualityRejection && !isAnalyzing && (
               <div style={{ marginTop: 12, padding: 12, background: labTestRequired ? '#fffbeb' : '#f8fafc', border: labTestRequired ? '1px solid #fde68a' : '1px solid #e2e8f0', borderRadius: 10 }}>
                 <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
                   <input
@@ -883,8 +1011,25 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                 </div>
               )}
 
+              {/* Quality rejection block indicator */}
+              {qualityRejection && !isAnalyzing && (
+                <div style={{
+                  padding: '10px 14px',
+                  background: '#fef2f2',
+                  border: '1px dashed #ef4444',
+                  borderRadius: 8,
+                  textAlign: 'center',
+                  color: '#b91c1c',
+                  fontSize: '0.82rem',
+                  fontWeight: 600,
+                  marginTop: 4,
+                }}>
+                  ⚠️ Patient record cannot be submitted with a rejected image. Please retake photo above.
+                </div>
+              )}
+
               {/* Step 2: Save after AI result is ready */}
-              {aiResult && !isAnalyzing && (
+              {aiResult && !qualityRejection && !isAnalyzing && (
                 <button
                   className="capture-btn"
                   type="button"
