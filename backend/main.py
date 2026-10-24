@@ -819,6 +819,16 @@ SCREEN_OR_TECH_CLASSES = {
     "spotlight", "dial", "crossword_puzzle", "rule", "slide_rule"
 }
 
+# Organic texture mimics in veterinary dermatology:
+# Severe crusting, lichenification, and nodular mange / ringworm / calcinosis cutis
+# often share low-level visual textures with fruits, fungi, barks, or sponges in ImageNet.
+DERM_TEXTURE_MIMICS = {
+    "custard_apple", "jackfruit", "breadfruit", "bolete", "sponge", "cauliflower",
+    "coral_fungus", "honeycomb", "sea_anemone", "agaric", "mushroom", "earthstar",
+    "wool", "fleece", "feather_boa", "head_cabbage", "acorn_squash", "butternut_squash",
+    "conch", "snail", "slug"
+}
+
 @app.post("/api/ai/predict")
 def predict_disease(req: AIPredictionRequest):
     try:
@@ -841,22 +851,37 @@ def predict_disease(req: AIPredictionRequest):
                 arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
                 v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
                 
-                # Calculate total probability mass of animal classes (Real animal lesions: 52% - 92%)
+                # Calculate total probability mass of animal classes (Real animal lesions: 24% - 92%)
                 p_animal = float(np.sum(v_preds[0, animal_mask]))
                 
                 top_dec = tf.keras.applications.mobilenet_v3.decode_predictions(v_preds, top=5)[0]
                 top_id, top_name, top_score = top_dec[0]
                 is_top_artifact = not top_id.startswith(("n01", "n02"))
+                is_derm_mimic = (
+                    top_name in DERM_TEXTURE_MIMICS or 
+                    any(t[1] in DERM_TEXTURE_MIMICS for t in top_dec[:2])
+                )
                 is_screen_or_tech = (
                     top_name in SCREEN_OR_TECH_CLASSES or 
-                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.03 for t in top_dec)
+                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.05 for t in top_dec)
                 )
 
-                # Rejection Gate Rules:
-                # 1. Screen / computer monitor / digital display detected and animal sum < 50%
-                # 2. Or top prediction is an inanimate manufactured object and animal sum < 40%
-                # 3. Or overall animal probability mass is below clinical cutoff (< 25%)
-                if (is_screen_or_tech and p_animal < 0.50) or (is_top_artifact and p_animal < 0.40) or (p_animal < 0.25):
+                # Calibrated Clinical Rejection Gate:
+                # 1. Screen / computer monitor / digital display detected and animal sum < 25% (monitor photo had 13.3%)
+                # 2. Or dermatological texture mimic (e.g. custard apple / jackfruit on crusted mange) rejected ONLY if near-zero animal signal (< 12%)
+                # 3. Or generic inanimate manufactured artifact and animal sum < 20%
+                # 4. Or overall animal probability mass is below true non-animal cutoff (< 16%)
+                should_reject = False
+                if is_screen_or_tech and p_animal < 0.25:
+                    should_reject = True
+                elif is_derm_mimic:
+                    should_reject = (p_animal < 0.12)
+                elif is_top_artifact and p_animal < 0.20:
+                    should_reject = True
+                elif p_animal < 0.16:
+                    should_reject = True
+
+                if should_reject:
                     clean_name = top_name.replace("_", " ").title()
                     detected_label = f"Computer Screen / {clean_name}" if is_screen_or_tech else clean_name
                     return {
