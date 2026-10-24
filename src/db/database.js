@@ -713,10 +713,12 @@ export async function addConsultation(consultation) {
   const record = {
     ...consultation,
     id,
-    createdAt:   now,
-    updatedAt:   now,
-    syncStatus:  'pending',
-    version:     1,
+    secondaryDiagnosis: consultation.secondaryDiagnosis || null,
+    isComorbid:         Boolean(consultation.isComorbid),
+    createdAt:          now,
+    updatedAt:          now,
+    syncStatus:         'pending',
+    version:            1,
   }
 
   await tx.objectStore('consultations').put(record)
@@ -732,6 +734,32 @@ export async function getConsultationsByPatient(patientId) {
   return db.getAllFromIndex('consultations', 'patientId', patientId)
 }
 
+export async function updateConsultation(id, updates) {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const tx = db.transaction(['consultations', 'syncQueue'], 'readwrite')
+  const consultStore = tx.objectStore('consultations')
+  const queueStore = tx.objectStore('syncQueue')
+  const existing = await consultStore.get(id)
+  if (!existing) throw new Error(`Consultation with ID ${id} not found`)
+
+  const updatedRecord = {
+    ...existing,
+    ...updates,
+    id,
+    updatedAt: now,
+    syncStatus: 'pending',
+    version: (existing.version || 1) + 1,
+  }
+
+  await consultStore.put(updatedRecord)
+  await queueStore.put(
+    createSyncQueueItem('consultations', updatedRecord.id, 'UPDATE', updatedRecord, now, existing.version || 1)
+  )
+  await tx.done
+  return updatedRecord
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Screening Result Functions (AI output)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -745,11 +773,14 @@ export async function addScreeningResult(result) {
   const record = {
     ...result,
     id,
-    createdAt:    now,
-    updatedAt:    now,
-    syncStatus:   'pending',
-    reviewStatus: result.reviewStatus || 'pending',
-    version:      1,
+    aiSecondaryLabel:      result.aiSecondaryLabel || null,
+    aiSecondaryConfidence: result.aiSecondaryConfidence || null,
+    isComorbid:            Boolean(result.isComorbid),
+    createdAt:             now,
+    updatedAt:             now,
+    syncStatus:            'pending',
+    reviewStatus:          result.reviewStatus || 'pending',
+    version:               1,
   }
 
   await tx.objectStore('screeningResults').put(record)

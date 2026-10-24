@@ -213,6 +213,7 @@ export async function predict(imageElement, species = 'Canine') {
             description:  CLASS_DESCRIPTIONS[data.label] || '',
             top3:         data.top3 || [],
             gradcam,
+            engine:       'backend',
           }
         }
       } catch (err) {
@@ -277,6 +278,10 @@ export async function predict(imageElement, species = 'Canine') {
     // Generate Grad-CAM 3-panel visualization (Original, Heatmap, Overlay)
     const gradcam = await generateGradCAM(imageElement)
 
+    const maxP = Math.max(...probabilities)
+    const minP = Math.min(...probabilities)
+    const isUniform = (maxP - minP) < 0.05
+
     return {
       label:        topLabel,
       displayLabel: CLASS_DISPLAY[topLabel] || topLabel,
@@ -285,6 +290,8 @@ export async function predict(imageElement, species = 'Canine') {
       description:  CLASS_DESCRIPTIONS[topLabel] || '',
       top3,
       gradcam,
+      engine:       'wasm',
+      isUniform,
     }
   } finally {
     inputTensor.dispose()
@@ -329,3 +336,74 @@ export function loadImageFromFile(file) {
     reader.readAsDataURL(file)
   })
 }
+
+/**
+ * Evaluates image sharpness using the industry-standard Laplacian Operator Variance (∇²).
+ * Replicates OpenCV's cv2.Laplacian(img, cv2.CV_64F).var() in client-side JavaScript.
+ * - Sharp / In-Focus photos exhibit strong high-frequency edge peaks (variance >= 45).
+ * - Blurry / Out-of-focus photos smear out edges, dropping variance near zero (< 45).
+ *
+ * @param {HTMLImageElement|HTMLCanvasElement} imgElement
+ * @returns {{ isSharp: boolean, score: number, message: string }}
+ */
+export function checkImageSharpness(imgElement) {
+  try {
+    const canvas = document.createElement('canvas')
+    const size = 224
+    canvas.width = size
+    canvas.height = size
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(imgElement, 0, 0, size, size)
+    const imgData = ctx.getImageData(0, 0, size, size)
+    const d = imgData.data
+
+    // 1. Grayscale luminance buffer
+    const gray = new Float32Array(size * size)
+    for (let i = 0, p = 0; i < d.length; i += 4, p++) {
+      gray[p] = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2]
+    }
+
+    // 2. 3x3 Discrete Laplacian Kernel:
+    //    [ 0,  1,  0 ]
+    //    [ 1, -4,  1 ]
+    //    [ 0,  1,  0 ]
+    let sum = 0
+    let sumSq = 0
+    let count = 0
+
+    for (let y = 1; y < size - 1; y++) {
+      const rowIdx = y * size
+      for (let x = 1; x < size - 1; x++) {
+        const center = gray[rowIdx + x]
+        const up     = gray[(y - 1) * size + x]
+        const down   = gray[(y + 1) * size + x]
+        const left   = gray[rowIdx + (x - 1)]
+        const right  = gray[rowIdx + (x + 1)]
+
+        const lap = up + down + left + right - 4.0 * center
+        sum += lap
+        sumSq += lap * lap
+        count++
+      }
+    }
+
+    // 3. Variance = E[X²] - (E[X])²
+    const mean = sum / (count || 1)
+    const variance = Math.round(((sumSq / (count || 1)) - mean * mean) * 10) / 10
+
+    // Threshold: Focused clinical skin/fur textures score ≥ 45. Blurry or out-of-focus shots score < 45.
+    const isSharp = variance >= 45
+
+    return {
+      isSharp,
+      score: variance,
+      message: isSharp
+        ? 'Image sharpness is optimal for clinical AI inference.'
+        : `Image appears blurry or out of focus (Laplacian sharpness: ${variance}, recommended ≥ 45). Blurry images smear fine crust and pustule textures, which can cause the AI to mistakenly classify skin lesions as "Healthy". Please hold steady and refocus closely on the lesion.`,
+    }
+  } catch (err) {
+    console.warn('[VetLink AI] Sharpness check error:', err)
+    return { isSharp: true, score: 100, message: 'Sharpness check bypassed.' }
+  }
+}
+
