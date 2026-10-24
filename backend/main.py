@@ -781,15 +781,59 @@ class AIPredictionRequest(BaseModel):
     image: str
     species: Optional[str] = "Canine"
 
+_animal_verifier = None
+
+_animal_verifier = None
+_animal_mask = None
+
+def get_animal_verifier():
+    global _animal_verifier, _animal_mask
+    if _animal_verifier is not None:
+        return _animal_verifier, _animal_mask
+    try:
+        import tensorflow as tf
+        import numpy as np
+        _animal_verifier = tf.keras.applications.MobileNetV3Small(weights="imagenet", include_top=True)
+        # Precompute animal class boolean mask across 1,000 ImageNet categories
+        # Synsets starting with n01 (fish, birds, reptiles) and n02 (mammals: dogs, cats, rabbits)
+        dummy = np.eye(1000, dtype=np.float32)
+        decoded = tf.keras.applications.mobilenet_v3.decode_predictions(dummy, top=1)
+        _animal_mask = np.array([
+            bool(r[0][0].startswith(("n01", "n02")) or r[0][1] in {"wool", "fleece", "feather_boa"})
+            for r in decoded
+        ], dtype=bool)
+    except Exception as e:
+        print(f"[WARN] Animal verifier unavailable: {e}")
+        _animal_verifier = False
+        _animal_mask = None
+    return _animal_verifier, _animal_mask
+
+SCREEN_OR_TECH_CLASSES = {
+    # Screens / Monitors / Computers / UI
+    "screen", "monitor", "television", "web_site", "digital_clock", "analog_clock",
+    "cellular_telephone", "laptop", "notebook", "desktop_computer", "ping-pong_ball",
+    "switch", "envelope", "traffic_light", "joystick", "scoreboard", "projector",
+    "packet", "menu", "binder", "book_jacket", "desk", "dining_table", "radiator",
+    "sliding_door", "window_shade", "remote_control", "keyboard", "mouse", "modem",
+    "hard_disc", "loudspeaker", "oscilloscope", "plate", "cup", "coffee_mug",
+    "spotlight", "dial", "crossword_puzzle", "rule", "slide_rule"
+}
+
+# Organic texture mimics in veterinary dermatology:
+# Severe crusting, lichenification, and nodular mange / ringworm / calcinosis cutis
+# often share low-level visual textures with fruits, fungi, barks, or sponges in ImageNet.
+DERM_TEXTURE_MIMICS = {
+    "custard_apple", "jackfruit", "breadfruit", "bolete", "sponge", "cauliflower",
+    "coral_fungus", "honeycomb", "sea_anemone", "agaric", "mushroom", "earthstar",
+    "wool", "fleece", "feather_boa", "head_cabbage", "acorn_squash", "butternut_squash",
+    "conch", "snail", "slug"
+}
+
 @app.post("/api/ai/predict")
 def predict_disease(req: AIPredictionRequest):
     try:
         import numpy as np
         from PIL import Image
-
-        interpreter, labels = get_ai_model()
-        inp_idx = interpreter.get_input_details()[0]["index"]
-        out_idx = interpreter.get_output_details()[0]["index"]
 
         img_b64 = req.image
         if "," in img_b64:
@@ -798,6 +842,61 @@ def predict_disease(req: AIPredictionRequest):
         raw_bytes = base64.b64decode(img_b64)
         pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((224, 224))
         img_arr = np.array(pil_img, dtype=np.float32)
+
+        # 0. Animal / Screen / Inanimate Object Verification Gate
+        verifier, animal_mask = get_animal_verifier()
+        if verifier and animal_mask is not None:
+            try:
+                import tensorflow as tf
+                arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
+                v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
+                
+                # Calculate total probability mass of animal classes (Real animal lesions: 24% - 92%)
+                p_animal = float(np.sum(v_preds[0, animal_mask]))
+                
+                top_dec = tf.keras.applications.mobilenet_v3.decode_predictions(v_preds, top=5)[0]
+                top_id, top_name, top_score = top_dec[0]
+                is_top_artifact = not top_id.startswith(("n01", "n02"))
+                is_derm_mimic = (
+                    top_name in DERM_TEXTURE_MIMICS or 
+                    any(t[1] in DERM_TEXTURE_MIMICS for t in top_dec[:2])
+                )
+                is_screen_or_tech = (
+                    top_name in SCREEN_OR_TECH_CLASSES or 
+                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.05 for t in top_dec)
+                )
+
+                # Calibrated Clinical Rejection Gate:
+                # 1. Screen / computer monitor / digital display detected and animal sum < 25% (monitor photo had 13.3%)
+                # 2. Or dermatological texture mimic (e.g. custard apple / jackfruit on crusted mange) rejected ONLY if near-zero animal signal (< 12%)
+                # 3. Or generic inanimate manufactured artifact and animal sum < 20%
+                # 4. Or overall animal probability mass is below true non-animal cutoff (< 16%)
+                should_reject = False
+                if is_screen_or_tech and p_animal < 0.25:
+                    should_reject = True
+                elif is_derm_mimic:
+                    should_reject = (p_animal < 0.12)
+                elif is_top_artifact and p_animal < 0.20:
+                    should_reject = True
+                elif p_animal < 0.16:
+                    should_reject = True
+
+                if should_reject:
+                    clean_name = top_name.replace("_", " ").title()
+                    detected_label = f"Computer Screen / {clean_name}" if is_screen_or_tech else clean_name
+                    return {
+                        "rejected": True,
+                        "reason": "NON_ANIMAL",
+                        "detected": detected_label,
+                        "p_animal": round(p_animal, 3),
+                        "message": f"Non-animal subject detected ({detected_label}, animal match: {round(p_animal * 100, 1)}%). VetLink only evaluates actual animal patient skin lesions (Canine, Feline, Avian, Rabbit). Please photograph the animal's skin condition directly."
+                    }
+            except Exception as v_err:
+                print(f"[WARN] Animal verifier check error: {v_err}")
+
+        interpreter, labels = get_ai_model()
+        inp_idx = interpreter.get_input_details()[0]["index"]
+        out_idx = interpreter.get_output_details()[0]["index"]
 
         inp_tensor = np.expand_dims(img_arr, axis=0)
         interpreter.set_tensor(inp_idx, inp_tensor)

@@ -818,3 +818,59 @@ export async function updateScreeningResultStatus(id, reviewStatus) {
   await tx.done
   return updated
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Consultation Symptoms & Reference Functions (Resolves Schema Audit Finding)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function addConsultationSymptoms(consultationId, symptomIds = [], customNotes = '') {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const tx = db.transaction(['consultationSymptoms'], 'readwrite')
+  const csStore = tx.objectStore('consultationSymptoms')
+
+  const savedRecords = []
+
+  for (let i = 0; i < symptomIds.length; i++) {
+    const symptomId = symptomIds[i]
+    const recId = `CS-${consultationId}-${i + 1}-${Date.now().toString(36)}`
+    const record = {
+      id: recId,
+      consultationId,
+      symptomId,
+      severity: 'moderate',
+      createdAt: now,
+      updatedAt: now,
+      syncStatus: 'local',
+      version: 1,
+    }
+    await csStore.put(record)
+    savedRecords.push(record)
+  }
+
+  // If custom notes are provided as "Other Symptoms", store as custom symptom record
+  if (customNotes && customNotes.trim()) {
+    const customRecId = `CS-${consultationId}-custom-${Date.now().toString(36)}`
+    const customRecord = {
+      id: customRecId,
+      consultationId,
+      symptomId: 'SYM-CUSTOM',
+      severity: 'clinician-noted',
+      customDescription: customNotes.trim(),
+      createdAt: now,
+      updatedAt: now,
+      syncStatus: 'local',
+      version: 1,
+    }
+    await csStore.put(customRecord)
+    savedRecords.push(customRecord)
+  }
+
+  await tx.done
+  return savedRecords
+}
+
+export async function getConsultationSymptoms(consultationId) {
+  const db = await initDatabase()
+  return db.getAllFromIndex('consultationSymptoms', 'consultationId', consultationId)
+}

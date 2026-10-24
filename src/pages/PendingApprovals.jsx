@@ -1,4 +1,22 @@
 import { useCallback, useEffect, useState } from 'react'
+import { getPatients } from '../db/database'
+
+function renderBadge(status) {
+  const norm = (status || 'Active').toLowerCase()
+  if (norm.includes('awaiting lab') || norm.includes('lab test')) {
+    return <span className="status-badge" style={{ background: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', fontWeight: 600 }}>🧪 Awaiting Lab Test</span>
+  }
+  if (norm.includes('needs vet') || (norm.includes('review') && norm.includes('needs'))) {
+    return <span className="status-badge" style={{ background: '#fef9c3', color: '#854d0e', border: '1px solid #fef08a', fontWeight: 600 }}>🟡 Needs Vet Review</span>
+  }
+  if (norm.includes('review results') || norm.includes('review')) {
+    return <span className="status-badge" style={{ background: '#dcfce7', color: '#166534', border: '1px solid #86efac', fontWeight: 600 }}>🟢 Review Results</span>
+  }
+  if (norm.includes('completed') || norm.includes('discharged')) {
+    return <span className="status-badge" style={{ background: '#dbeafe', color: '#1e40af', border: '1px solid #bfdbfe', fontWeight: 600 }}>✅ Completed</span>
+  }
+  return <span className="status-badge">{status || 'Active'}</span>
+}
 
 export default function PendingApprovals({ authToken, apiBaseUrl = 'http://localhost:8000' }) {
   const [patients, setPatients] = useState([])
@@ -10,16 +28,29 @@ export default function PendingApprovals({ authToken, apiBaseUrl = 'http://local
     if (showRefreshState) setIsRefreshing(true)
 
     try {
-      const response = await fetch(`${apiBaseUrl}/api/patients`, {
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-      const result = await response.json()
-      if (!response.ok) throw new Error(result.detail || `Unable to load patients (HTTP ${response.status})`)
-
-      setPatients(result.patients || [])
+      if (authToken) {
+        const response = await fetch(`${apiBaseUrl}/api/patients`, {
+          headers: { Authorization: `Bearer ${authToken}` },
+        })
+        const result = await response.json()
+        if (response.ok && result.patients) {
+          setPatients(result.patients)
+          setError('')
+          return
+        }
+      }
+      // Offline fallback: load local IndexedDB patients
+      const localPatients = await getPatients()
+      setPatients(localPatients || [])
       setError('')
-    } catch (loadError) {
-      setError(loadError.message || 'Unable to load patient records from the database.')
+    } catch {
+      try {
+        const localPatients = await getPatients()
+        setPatients(localPatients || [])
+        setError('')
+      } catch (localErr) {
+        setError(localErr.message || 'Unable to load patient records from local or cloud database.')
+      }
     } finally {
       setIsLoading(false)
       setIsRefreshing(false)
@@ -75,7 +106,7 @@ export default function PendingApprovals({ authToken, apiBaseUrl = 'http://local
                       <h4>{patient.name || 'Unnamed patient'}</h4>
                       <p>{patient.id}</p>
                     </div>
-                    <span className="status-badge">{patient.status || 'Active'}</span>
+                    {renderBadge(patient.status)}
                   </header>
                   <dl className="pending-record-details">
                     <div>

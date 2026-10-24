@@ -250,14 +250,34 @@ function App() {
               />
             ) : showNewPatient ? (
               <NewPatient
+                currentUser={currentUser}
                 onBack={() => setShowNewPatient(false)}
-                onViewPending={() => { setShowNewPatient(false); setActiveView('pending'); }}
-                onCapture={(data) => { setCaseData(data); setShowAdminApproval(true); setShowNewPatient(false); }}
+                onViewPending={() => { setShowNewPatient(false); setActiveView('patients'); }}
+                onCapture={(data) => {
+                  setCaseData(data);
+                  setShowNewPatient(false);
+                  if (currentUser?.role === 'Clinic Admin') {
+                    setShowTreatment(true);
+                  } else {
+                    setActiveView('patients');
+                  }
+                }}
               />
             ) : (
               <>
                 {activeView === 'clinic' && <ClinicalAnalysis />}
-                {activeView === 'patients' && <Patients authToken={authToken} apiBaseUrl={API_BASE_URL} isOffline={currentUser?.isOffline} />}
+                {activeView === 'patients' && (
+                  <Patients
+                    authToken={authToken}
+                    apiBaseUrl={API_BASE_URL}
+                    isOffline={currentUser?.isOffline}
+                    currentUser={currentUser}
+                    onProceedToTreatment={(data) => {
+                      setCaseData(data);
+                      setShowTreatment(true);
+                    }}
+                  />
+                )}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'pending' && <PendingApprovals authToken={authToken} apiBaseUrl={API_BASE_URL} />}
