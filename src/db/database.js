@@ -167,6 +167,26 @@ export async function getPatients() {
   return db.getAll('patients')
 }
 
+export async function cacheCloudPatient(patient) {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const record = {
+    ...patient,
+    id: patient.id,
+    areaOfConcern: patient.area_of_concern ?? patient.areaOfConcern ?? '',
+    lastVisit: patient.last_visit ?? patient.lastVisit ?? '',
+    ownerId: patient.owner_id ?? patient.ownerId,
+    createdBy: patient.created_by ?? patient.createdBy,
+    createdAt: patient.created_at ?? patient.createdAt ?? now,
+    updatedAt: patient.updated_at ?? patient.updatedAt ?? now,
+    syncStatus: 'synced',
+  }
+  const tx = db.transaction('patients', 'readwrite')
+  await tx.objectStore('patients').put(record)
+  await tx.done
+  return record
+}
+
 export async function mergeCloudPatients(cloudPatients) {
   const db = await initDatabase()
   const tx = db.transaction(['patients', 'syncQueue', 'syncConflicts'], 'readwrite')

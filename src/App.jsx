@@ -6,10 +6,7 @@ import ClinicalAnalysis from './pages/ClinicalAnalysis'
 import Patients from './pages/Patients'
 import Staff from './pages/Staff'
 import Sync from './pages/Sync'
-import PendingApprovals from './pages/PendingApprovals'
 import NewPatient from './pages/NewPatient'
-import AdminApproval from './pages/AdminApproval'
-import Treatment from './pages/Treatment'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -28,9 +25,6 @@ function App() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [activeView, setActiveView] = useState('clinic')
   const [showNewPatient, setShowNewPatient] = useState(false)
-  const [showAdminApproval, setShowAdminApproval] = useState(false)
-  const [showTreatment, setShowTreatment] = useState(false)
-  const [caseData, setCaseData] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('vetlink_auth_token') || '')
@@ -164,8 +158,6 @@ function App() {
       setLoggedIn(false)
       setActiveView('clinic')
       setShowNewPatient(false)
-      setShowAdminApproval(false)
-      setShowTreatment(false)
     }
   }
 
@@ -203,9 +195,6 @@ function App() {
               <button className={"nav-item " + (activeView === 'sync' ? 'active' : '')} onClick={() => { setActiveView('sync'); setShowNewPatient(false); }}>
                 <span>Sync</span>
               </button>
-              <button className={"nav-item nav-warning " + (activeView === 'pending' ? 'active' : '')} onClick={() => { setActiveView('pending'); setShowNewPatient(false); }}>
-                <span>Pending Approval</span>
-              </button>
             </nav>
             <div className="sidebar-actions">
               <button className="action-btn blue" onClick={() => setShowNewPatient(true)}>New Patient</button>
@@ -216,43 +205,23 @@ function App() {
           <section className="dashboard-panel">
             <header className="dashboard-header">
               <div>
-                <h2>{showTreatment ? 'Treatment' : showAdminApproval ? 'Admin Approval' : showNewPatient ? 'New Patient' : {
+                <h2>{showNewPatient ? 'New Patient' : {
                   clinic: 'Clinic Analysis',
                   patients: 'Patient Records',
                   staff: 'Manage Staff',
                   sync: 'Sync',
-                  pending: 'Pending Approval',
                 }[activeView]}</h2>
               </div>
               <button className="secondary-btn" onClick={handleLogout}>Log out</button>
             </header>
 
-            {showTreatment ? (
-              <Treatment caseData={caseData} onBack={() => { setShowTreatment(false); setShowAdminApproval(false); setShowNewPatient(false); setCaseData(null); }} />
-            ) : showAdminApproval ? (
-              <AdminApproval
-                caseData={caseData}
-                onBack={() => { setShowAdminApproval(false); setShowNewPatient(false); setCaseData(null); }}
-                onApprove={(approvedPayload) => {
-                  if (approvedPayload) {
-                    setCaseData((prev) => ({
-                      ...prev,
-                      ...approvedPayload,
-                      approvedDiagnosis: approvedPayload.approvedDiagnosis || prev?.aiResult?.displayLabel,
-                      approvedSecondary: approvedPayload.approvedSecondary || null,
-                      isComorbid: Boolean(approvedPayload.isComorbid),
-                      isOverridden: Boolean(approvedPayload.isOverridden),
-                    }))
-                  }
-                  setShowTreatment(true);
-                  setShowAdminApproval(false);
-                }}
-              />
-            ) : showNewPatient ? (
+            {showNewPatient ? (
               <NewPatient
                 onBack={() => setShowNewPatient(false)}
-                onViewPending={() => { setShowNewPatient(false); setActiveView('pending'); }}
-                onCapture={(data) => { setCaseData(data); setShowAdminApproval(true); setShowNewPatient(false); }}
+                authToken={authToken}
+                apiBaseUrl={API_BASE_URL}
+                isOffline={currentUser?.isOffline}
+                onCapture={() => { setShowNewPatient(false); setActiveView('patients'); }}
               />
             ) : (
               <>
@@ -260,7 +229,6 @@ function App() {
                 {activeView === 'patients' && <Patients authToken={authToken} apiBaseUrl={API_BASE_URL} isOffline={currentUser?.isOffline} />}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} />}
-                {activeView === 'pending' && <PendingApprovals authToken={authToken} apiBaseUrl={API_BASE_URL} />}
               </>
             )}
           </section>

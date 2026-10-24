@@ -69,6 +69,14 @@ class AdminCreateUserRequest(BaseModel):
     temporary_password: str
 
 
+class CreatePatientRequest(BaseModel):
+    name: str
+    species: str = "Canine"
+    area_of_concern: str = ""
+    last_visit: Optional[str] = None
+    status: str = "Active"
+
+
 class SyncConflictResolutionRequest(BaseModel):
     resolution: str
 
@@ -335,6 +343,64 @@ def get_all_patients(authorization: Optional[str] = Header(default=None)):
             cursor.execute("SELECT * FROM patients ORDER BY updated_at DESC;")
             rows = cursor.fetchall()
             return {"patients": rows, "count": len(rows)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/patients", status_code=201)
+def create_patient(request: CreatePatientRequest, authorization: Optional[str] = Header(default=None)):
+    current_user = get_current_user_from_header(authorization)
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Patient name is required")
+
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "INSERT INTO id_counters (prefix, last_value) VALUES ('PT', 1000) "
+                "ON DUPLICATE KEY UPDATE last_value = last_value"
+            )
+            cursor.execute("SELECT last_value FROM id_counters WHERE prefix = 'PT' FOR UPDATE")
+            counter_value = cursor.fetchone()["last_value"]
+            cursor.execute("SELECT id FROM patients WHERE id REGEXP '^PT-[0-9]+$'")
+            existing_ids = cursor.fetchall()
+            maximum_id = max(
+                [int(row["id"].split("-")[1]) for row in existing_ids] + [counter_value, 1000],
+            )
+            next_value = maximum_id + 1
+            patient_id = f"PT-{next_value:04d}"
+            cursor.execute("UPDATE id_counters SET last_value = %s WHERE prefix = 'PT'", (next_value,))
+
+            patient_payload = {
+                "id": patient_id,
+                "name": name,
+                "species": request.species,
+                "areaOfConcern": request.area_of_concern.strip(),
+                "lastVisit": request.last_visit or datetime.utcnow().date().isoformat(),
+                "status": request.status,
+                "createdBy": current_user["id"],
+                "version": 1,
+            }
+            upsert_patient(cursor, patient_payload)
+            cursor.execute("SELECT * FROM patients WHERE id = %s", (patient_id,))
+            patient = cursor.fetchone()
+        conn.commit()
+
+        return {
+            **patient,
+            "areaOfConcern": patient.get("area_of_concern"),
+            "lastVisit": patient.get("last_visit").isoformat() if patient.get("last_visit") else None,
+            "ownerId": patient.get("owner_id"),
+            "createdBy": patient.get("created_by"),
+            "syncStatus": patient.get("sync_status"),
+            "createdAt": patient.get("created_at").isoformat() if patient.get("created_at") else None,
+            "updatedAt": patient.get("updated_at").isoformat() if patient.get("updated_at") else None,
+        }
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 

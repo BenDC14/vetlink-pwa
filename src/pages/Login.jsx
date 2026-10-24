@@ -60,7 +60,7 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
               <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Enter your password" autoComplete="current-password" required />
             </label>
             <button className="primary-btn" type="submit" disabled={isSubmitting}>
-              {isSubmitting ? 'Signing in...' : 'Sign in'} <span aria-hidden="true">-&gt;</span>
+              {isSubmitting ? 'Signing in...' : 'Sign in'}
             </button>
           </>
         ) : (

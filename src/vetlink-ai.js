@@ -34,7 +34,7 @@ export const CLASS_DISPLAY = {
   'Scaly Face Scaly Leg Mite (Knemidocoptes)': 'Scaly Face / Leg Mite',
 }
 
-// Brief clinical description per class (shown in AdminApproval)
+// Brief clinical description per class (shown with the new-patient analysis)
 export const CLASS_DESCRIPTIONS = {
   'Avian Fowl Pox':        'Viral infection causing wart-like lesions on skin and beak.',
   'Bird_Healthy':           'No disease detected. Skin and feathers appear healthy.',

@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { addPatient, addConsultation, addScreeningResult } from '../db/database'
+import { addPatient, cacheCloudPatient, addConsultation, addScreeningResult } from '../db/database'
 import { loadVetLinkModel, predict, loadImageFromFile, checkImageSharpness } from '../vetlink-ai'
 import CameraCaptureModal from '../components/CameraCaptureModal'
 
@@ -45,7 +45,7 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
       type: 'ringworm_vs_mange',
       title: '🔬 Early-Stage Clinical Differential Advisory',
       message: 'Focal alopecia and facial erythema share near-identical visual features between early localized Demodectic Mange and Dermatophytosis (Ringworm). A confirmatory deep skin scraping is strongly advised to rule out Demodex mites before administering topical antifungals or corticosteroids.',
-      overrideHint: 'If scraping reveals Demodex mites, use the Clinical Override dropdown in Admin Approval to confirm Mange.',
+      overrideHint: 'If scraping reveals Demodex mites, confirm the diagnosis with a veterinarian before treatment.',
     }
   }
 
@@ -54,14 +54,14 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
       type: 'subclinical_mange_alert',
       title: '🔬 Subclinical / Early-Stage Lesion Advisory',
       message: 'Early-stage localized mange with subtle erythema and early hair thinning often lacks florid crusts, causing visual classification to align with intact skin. If clinical pruritus or focal redness is present, microscopic skin scraping is recommended.',
-      overrideHint: 'Attending veterinarian may override the tentative triage classification in Admin Approval if clinical lesions are confirmed.',
+      overrideHint: 'Have a veterinarian review this advisory alongside the physical exam and any diagnostic tests.',
     }
   }
 
   return null
 }
 
-export default function NewPatient({ onBack, onViewPending, onCapture }) {
+export default function NewPatient({ onBack, onCapture, authToken, apiBaseUrl = 'http://localhost:8000', isOffline = false }) {
   const [name, setName]                 = useState('')
   const [species, setSpecies]           = useState('Canine')
   const [areaOfConcern, setAreaOfConcern] = useState('')
@@ -172,7 +172,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
     fileInputRef.current?.click()
   }
 
-  // Called when "SAVE & SEND FOR REVIEW" is clicked after AI runs
+  // Save the patient record, then retain its linked local case analysis.
   const handleSave = async () => {
     if (!name.trim()) { setError('Patient name is required.'); return }
     if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
@@ -182,14 +182,46 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
     setError('')
 
     try {
-      // 1. Save patient
-      const patient = await addPatient({
+      const patientData = {
         name:          name.trim(),
         species,
         areaOfConcern: areaOfConcern.trim(),
         lastVisit:     new Date().toISOString().slice(0, 10),
         status:        'Active',
-      })
+      }
+      let patient
+      let savedOffline = isOffline || !authToken
+
+      if (savedOffline) {
+        patient = await addPatient(patientData)
+      } else {
+        try {
+          const response = await fetch(`${apiBaseUrl}/api/patients`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({
+              name: patientData.name,
+              species: patientData.species,
+              area_of_concern: patientData.areaOfConcern,
+              last_visit: patientData.lastVisit,
+              status: patientData.status,
+            }),
+          })
+          const result = await response.json()
+          if (!response.ok) throw new Error(result.detail || `Patient creation failed with HTTP ${response.status}`)
+          patient = await cacheCloudPatient(result)
+        } catch (requestError) {
+          if (requestError instanceof TypeError) {
+            patient = await addPatient(patientData)
+            savedOffline = true
+          } else {
+            throw requestError
+          }
+        }
+      }
 
       // 2. Check for comorbidity / secondary presentation
       const comorb = checkComorbidity(aiResult.top3)
@@ -225,14 +257,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
         reviewStatus:          'pending',
       })
 
-      // 6. Navigate to AdminApproval with the full result
-      onCapture({
-        patient,
-        consultation,
-        aiResult,
-        previewUrl,
-        comorbidityInfo: comorb,
-      })
+      onCapture({ patient, consultation, aiResult, comorbidityInfo: comorb, savedOffline })
 
     } catch (saveError) {
       console.error('Failed to save patient:', saveError)
@@ -590,21 +615,13 @@ export default function NewPatient({ onBack, onViewPending, onCapture }) {
                   disabled={isSaving}
                   style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
                 >
-                  {isSaving ? '⏳ SAVING...' : '✓ SAVE & SEND FOR REVIEW'}
+                  {isSaving ? '⏳ SAVING...' : '✓ SAVE PATIENT RECORD'}
                 </button>
               )}
             </div>
           </div>
         </div>
 
-      </div>
-
-      <div className="admin-access-card">
-        <p className="eyebrow">Admin approval access</p>
-        <p>After saving, a vet must approve the AI result before treatment is generated.</p>
-        <button className="view-pending-btn" type="button" onClick={onViewPending}>
-          VIEW PENDING APPROVALS
-        </button>
       </div>
 
       {/* Cross-platform Live Camera Viewfinder Modal */}
