@@ -30,6 +30,59 @@ function App() {
   const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('vetlink_auth_token') || '')
   const [currentUser, setCurrentUser] = useState(null)
   const [isCheckingSession, setIsCheckingSession] = useState(Boolean(sessionStorage.getItem('vetlink_auth_token')))
+  const [deferredPrompt, setDeferredPrompt] = useState(null)
+  const [isInstalled, setIsInstalled] = useState(false)
+
+  useEffect(() => {
+    const isStandalone =
+      window.matchMedia('(display-mode: standalone)').matches ||
+      window.navigator.standalone === true
+
+    if (isStandalone) {
+      setIsInstalled(true)
+    }
+
+    const handleBeforeInstallPrompt = (e) => {
+      e.preventDefault()
+      setDeferredPrompt(e)
+    }
+
+    const handleAppInstalled = () => {
+      setIsInstalled(true)
+      setDeferredPrompt(null)
+    }
+
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+    window.addEventListener('appinstalled', handleAppInstalled)
+
+    return () => {
+      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt)
+      window.removeEventListener('appinstalled', handleAppInstalled)
+    }
+  }, [])
+
+  const handleInstallClick = async () => {
+    if (!deferredPrompt) {
+      alert(
+        'To install VetLink:\n\n' +
+        '• On Chrome / Edge: Click the install icon in the address bar, or select "Install VetLink" from the browser menu (⋮).\n' +
+        '• On iOS Safari: Tap the Share button and select "Add to Home Screen".'
+      )
+      return
+    }
+
+    try {
+      deferredPrompt.prompt()
+      const choiceResult = await deferredPrompt.userChoice
+      if (choiceResult?.outcome === 'accepted') {
+        setIsInstalled(true)
+      }
+    } catch (err) {
+      console.error('Failed to trigger PWA install prompt:', err)
+    } finally {
+      setDeferredPrompt(null)
+    }
+  }
 
   useEffect(() => {
     if (!authToken) return
@@ -198,7 +251,19 @@ function App() {
             </nav>
             <div className="sidebar-actions">
               <button className="action-btn blue" onClick={() => setShowNewPatient(true)}>New Patient</button>
-              <button className="action-btn secondary">Install PWA</button>
+              {isInstalled ? (
+                <button className="action-btn secondary" disabled title="VetLink is installed on this device">
+                  ✓ App Installed
+                </button>
+              ) : (
+                <button
+                  className="action-btn secondary"
+                  onClick={handleInstallClick}
+                  title="Install VetLink on your device"
+                >
+                  Install PWA
+                </button>
+              )}
             </div>
           </aside>
 
