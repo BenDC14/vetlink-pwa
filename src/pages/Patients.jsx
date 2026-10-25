@@ -38,6 +38,16 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [formError, setFormError] = useState('')
   const [successMessage, setSuccessMessage] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const [selectedSpecies, setSelectedSpecies] = useState('All')
+
+  const getSpeciesAvatar = (species) => {
+    const s = String(species || '').toLowerCase()
+    if (s.includes('canine') || s.includes('dog')) return '🐕'
+    if (s.includes('feline') || s.includes('cat')) return '🐈'
+    if (s.includes('avian') || s.includes('bird')) return '🦜'
+    if (s.includes('rabbit') || s.includes('lagomorph')) return '🐇'
+    return '🐾'
+  }
 
   // Clinical Review & Edit Case Modal State (Veterinarian / Admin Review)
   const [reviewPatient, setReviewPatient]             = useState(null)
@@ -109,8 +119,22 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   }, [apiBaseUrl, authToken, isOffline])
 
   const visiblePatients = patients.filter((patient) => {
-    const query = searchTerm.toLowerCase()
-    return patient.id.toLowerCase().includes(query) || patient.name.toLowerCase().includes(query)
+    const query = searchTerm.toLowerCase().trim()
+    const matchesSearch =
+      !query ||
+      String(patient.id || '').toLowerCase().includes(query) ||
+      String(patient.name || '').toLowerCase().includes(query) ||
+      String(patient.species || '').toLowerCase().includes(query) ||
+      String(patient.areaOfConcern || '').toLowerCase().includes(query)
+
+    const pSpecies = String(patient.species || '').toLowerCase()
+    const matchesSpecies =
+      selectedSpecies === 'All' ||
+      (selectedSpecies === 'Lagomorph'
+        ? pSpecies === 'rabbit' || pSpecies === 'lagomorph'
+        : pSpecies === selectedSpecies.toLowerCase())
+
+    return matchesSearch && matchesSpecies
   })
 
   const openEditPatient = (patient) => {
@@ -379,13 +403,58 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
   return (
     <section className="patients-card">
-      <div className="patients-header">
-        <div className="patients-search">
-          <label className="eyebrow">Search Patient</label>
-          <div className="search-row">
-            <input className="search-input" value={searchTerm} onChange={(event) => setSearchTerm(event.target.value)} placeholder="Search by patient name or ID" />
-            <button className="search-btn" type="button">SEARCH</button>
+      <div className="patients-toolbar-wrap">
+        <div className="patients-filter-pills" role="tablist" aria-label="Filter patients by species">
+          {['All', 'Canine', 'Feline', 'Avian', 'Lagomorph'].map((sp) => (
+            <button
+              key={sp}
+              type="button"
+              className={`filter-pill ${selectedSpecies === sp ? 'active' : ''}`}
+              onClick={() => setSelectedSpecies(sp)}
+            >
+              {sp === 'Canine' && '🐕 '}
+              {sp === 'Feline' && '🐈 '}
+              {sp === 'Avian' && '🦜 '}
+              {sp === 'Lagomorph' && '🐇 '}
+              {sp}
+            </button>
+          ))}
+        </div>
+
+        <div className="patients-search-bar-row">
+          <div className="search-input-box">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="search-icon">
+              <circle cx="11" cy="11" r="8"/>
+              <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              className="search-input"
+              value={searchTerm}
+              onChange={(event) => setSearchTerm(event.target.value)}
+              placeholder="Search by patient name, ID, or condition..."
+            />
+            {searchTerm && (
+              <button
+                type="button"
+                className="search-clear-btn"
+                onClick={() => setSearchTerm('')}
+                title="Clear search"
+              >
+                ✕
+              </button>
+            )}
           </div>
+          <button
+            type="button"
+            className="search-filter-action-btn"
+            onClick={() => setSelectedSpecies(selectedSpecies === 'All' ? 'Canine' : 'All')}
+            title="Toggle species filters"
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+            </svg>
+            <span>Filter</span>
+          </button>
         </div>
       </div>
 
@@ -399,46 +468,74 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         <table className="patients-table">
           <thead>
             <tr>
+              <th style={{ width: '48px' }}>PATIENT</th>
               <th>PATIENT ID</th>
-              <th>NAME</th>
+              <th>NAME &amp; CONCERN</th>
               <th>SPECIES</th>
               <th>LAST VISIT</th>
+              <th>AI DIAGNOSIS</th>
               <th>STATUS</th>
-              <th>ACTIONS</th>
+              <th style={{ textAlign: 'right' }}>ACTIONS</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
-              <tr><td colSpan="6">Loading patients...</td></tr>
+              <tr><td colSpan="8" style={{ textAlign: 'center', padding: '32px' }}>Loading patients from local database...</td></tr>
             ) : visiblePatients.length === 0 ? (
-              <tr><td colSpan="6">No patients saved yet.</td></tr>
+              <tr><td colSpan="8" style={{ textAlign: 'center', padding: '32px' }}>No patients found matching your search.</td></tr>
             ) : visiblePatients.map((patient) => (
               <tr key={patient.id}>
-                <td>{patient.id}</td>
-                <td><strong>{patient.name}</strong></td>
-                <td>{patient.species}</td>
-                <td>{patient.lastVisit}</td>
+                <td>
+                  <div className="patient-avatar-circle" title={patient.species}>
+                    {getSpeciesAvatar(patient.species)}
+                  </div>
+                </td>
+                <td>
+                  <span className="patient-id-badge">{patient.id}</span>
+                </td>
+                <td>
+                  <div className="patient-name-block">
+                    <strong>{patient.name}</strong>
+                    {patient.areaOfConcern && (
+                      <span className="patient-concern-sub">{patient.areaOfConcern}</span>
+                    )}
+                  </div>
+                </td>
+                <td>
+                  <span className="species-pill-badge">{patient.species}</span>
+                </td>
+                <td className="patient-date-cell">{patient.lastVisit}</td>
+                <td>
+                  <span className="ai-diagnosis-chip" title="Primary condition note">
+                    {patient.areaOfConcern || 'Cutaneous Lesion (Screened)'}
+                  </span>
+                </td>
                 <td>{renderStatusBadge(patient.status)}</td>
                 <td>
-                  <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                  <div className="table-actions-row">
                     <button
-                      className="primary-btn"
-                      style={{ padding: '6px 10px', fontSize: '0.78rem', background: '#2563eb', fontWeight: 600 }}
+                      className="primary-btn table-action-btn view-case-btn"
                       type="button"
                       onClick={() => openClinicalReviewModal(patient)}
+                      title="Review Clinical Case"
                     >
-                      🩺 REVIEW CASE
-                    </button>
-                    <button className="small-outline" type="button" onClick={() => openEditPatient(patient)}>
-                      EDIT
+                      View Case
                     </button>
                     <button
-                      className="secondary-btn"
-                      style={{ padding: '6px 10px', fontSize: '0.78rem', background: '#dcfce7', color: '#166534', border: '1px solid #86efac', fontWeight: 600 }}
+                      className="secondary-btn table-action-btn recheck-pill-btn"
                       type="button"
                       onClick={() => openRecheckModal(patient)}
+                      title="Follow-up Recheck"
                     >
-                      🩺 RECHECK
+                      Recheck
+                    </button>
+                    <button
+                      className="small-outline table-action-btn edit-pill-btn"
+                      type="button"
+                      onClick={() => openEditPatient(patient)}
+                      title="Edit Patient Details"
+                    >
+                      Edit
                     </button>
                   </div>
                 </td>

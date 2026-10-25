@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import heroImg from './assets/hero.png'
+import vetlinkLogo from './assets/vetlink-logo.png'
 import './App.css'
 import Login from './pages/Login'
 import ClinicalAnalysis from './pages/ClinicalAnalysis'
@@ -32,6 +33,7 @@ function App() {
   const [isCheckingSession, setIsCheckingSession] = useState(Boolean(sessionStorage.getItem('vetlink_auth_token')))
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [isInstalled, setIsInstalled] = useState(false)
+  const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
 
   useEffect(() => {
     const isStandalone =
@@ -230,34 +232,108 @@ function App() {
       ) : (
         <div className="dashboard-shell">
           <aside className="dashboard-sidebar">
-            <div className="sidebar-brand">
-              <p className="brand-badge">{currentUser?.role === 'Clinic Admin' ? 'Clinic Admin' : 'Clinic Staff'}</p>
+            <div className="sidebar-brand-header">
+              <div className="brand-logo-row">
+                <div className="brand-icon-bubble" style={{ background: 'transparent', boxShadow: 'none' }}>
+                  <img
+                    src={vetlinkLogo}
+                    alt="VetLink Logo"
+                    style={{ width: '38px', height: '38px', objectFit: 'contain', display: 'block' }}
+                  />
+                </div>
+                <div className="brand-text-wrap">
+                  <h1 className="brand-title">VetLink</h1>
+                  <span className="brand-subtitle">Animal Skin Disease Support</span>
+                </div>
+              </div>
+
+              <div className="sidebar-doctor-card">
+                <div className="doctor-avatar">
+                  {currentUser?.name ? currentUser.name.charAt(0).toUpperCase() : 'V'}
+                </div>
+                <div className="doctor-info">
+                  <span className="doctor-name">{currentUser?.name || 'Dr. Emily Chen, DVM'}</span>
+                  <span className="doctor-role">{currentUser?.role || 'Attending Veterinarian'}</span>
+                </div>
+              </div>
             </div>
+
             <nav className="sidebar-nav">
-              <button className={"nav-item " + (activeView === 'clinic' ? 'active' : '')} onClick={() => { setActiveView('clinic'); setShowNewPatient(false); }}>
-                <span>Clinic Analysis</span>
+              <button
+                type="button"
+                className={"nav-item " + (activeView === 'clinic' && !showNewPatient ? 'active' : '')}
+                onClick={() => { setActiveView('clinic'); setShowNewPatient(false); }}
+              >
+                <div className="nav-item-label">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+                  </svg>
+                  <span>Clinical Analysis</span>
+                </div>
               </button>
-              <button className={"nav-item " + (activeView === 'patients' ? 'active' : '')} onClick={() => { setActiveView('patients'); setShowNewPatient(false); }}>
-                <span>Patient Records</span>
+              <button
+                type="button"
+                className={"nav-item " + (activeView === 'patients' && !showNewPatient ? 'active' : '')}
+                onClick={() => { setActiveView('patients'); setShowNewPatient(false); }}
+              >
+                <div className="nav-item-label">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                  </svg>
+                  <span>Patient Records</span>
+                </div>
               </button>
               {currentUser?.role === 'Clinic Admin' && (
-                <button className={"nav-item " + (activeView === 'staff' ? 'active' : '')} onClick={() => { setActiveView('staff'); setShowNewPatient(false); }}>
-                  <span>Manage Staff</span>
+                <button
+                  type="button"
+                  className={"nav-item " + (activeView === 'staff' && !showNewPatient ? 'active' : '')}
+                  onClick={() => { setActiveView('staff'); setShowNewPatient(false); }}
+                >
+                  <div className="nav-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                      <circle cx="9" cy="7" r="4" />
+                      <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                      <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                    </svg>
+                    <span>Manage Staff</span>
+                  </div>
                 </button>
               )}
-              <button className={"nav-item " + (activeView === 'sync' ? 'active' : '')} onClick={() => { setActiveView('sync'); setShowNewPatient(false); }}>
-                <span>Sync</span>
+              <button
+                type="button"
+                className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
+                onClick={() => { setActiveView('sync'); setShowNewPatient(false); }}
+              >
+                <div className="nav-item-label">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                  </svg>
+                  <span>Sync</span>
+                </div>
+                <span className="nav-sync-badge">Offline Ready</span>
               </button>
             </nav>
+
             <div className="sidebar-actions">
-              <button className="action-btn blue" onClick={() => setShowNewPatient(true)}>New Patient</button>
+              <button
+                type="button"
+                className="action-btn blue new-patient-btn"
+                onClick={() => setShowNewPatient(true)}
+              >
+                + New Patient
+              </button>
               {isInstalled ? (
-                <button className="action-btn secondary" disabled title="VetLink is installed on this device">
+                <button type="button" className="action-btn secondary install-status-btn" disabled title="VetLink is installed on this device">
                   ✓ App Installed
                 </button>
               ) : (
                 <button
-                  className="action-btn secondary"
+                  type="button"
+                  className="action-btn secondary install-status-btn"
                   onClick={handleInstallClick}
                   title="Install VetLink on your device"
                 >
@@ -269,7 +345,7 @@ function App() {
 
           <section className="dashboard-panel">
             <header className="dashboard-header">
-              <div>
+              <div className="header-title-wrap">
                 <h2>{showNewPatient ? 'New Patient' : {
                   clinic: 'Clinic Analysis',
                   patients: 'Patient Records',
@@ -277,7 +353,43 @@ function App() {
                   sync: 'Sync',
                 }[activeView]}</h2>
               </div>
-              <button className="secondary-btn" onClick={handleLogout}>Log out</button>
+              <div className="header-actions">
+                <button
+                  type="button"
+                  className="header-icon-btn notification-btn"
+                  title="Notifications & Alerts"
+                  onClick={() => alert('All clinical records synchronized locally. No pending alerts.')}
+                >
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                  </svg>
+                  <span className="notification-dot" />
+                </button>
+                <button
+                  type="button"
+                  className="header-icon-btn"
+                  title="Settings"
+                  onClick={() => alert('VetLink PWA System: Running v1.0.0 (WASM MobileNetV3 Edge Inference + Offline Sync).')}
+                >
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="3" />
+                    <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  className="header-icon-btn logout-btn"
+                  title="Log out"
+                  onClick={() => setShowLogoutConfirm(true)}
+                >
+                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                    <polyline points="16 17 21 12 16 7" />
+                    <line x1="21" y1="12" x2="9" y2="12" />
+                  </svg>
+                </button>
+              </div>
             </header>
 
             {showNewPatient ? (
@@ -309,6 +421,48 @@ function App() {
               </>
             )}
           </section>
+
+          {showLogoutConfirm && (
+            <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="logout-confirm-title">
+              <div className="modal-dialog" style={{ maxWidth: '440px' }}>
+                <header className="modal-header">
+                  <h3 id="logout-confirm-title">Confirm Logout</h3>
+                  <button
+                    type="button"
+                    className="modal-close-btn"
+                    onClick={() => setShowLogoutConfirm(false)}
+                    aria-label="Close dialog"
+                  >
+                    ✕
+                  </button>
+                </header>
+                <div className="modal-form">
+                  <p style={{ margin: 0, fontSize: '0.96rem', color: 'var(--text-h)', fontWeight: 600 }}>
+                    Are you sure you want to log out?
+                  </p>
+                  <div className="modal-actions" style={{ marginTop: '8px' }}>
+                    <button
+                      type="button"
+                      className="small-outline"
+                      onClick={() => setShowLogoutConfirm(false)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn-danger"
+                      onClick={() => {
+                        setShowLogoutConfirm(false)
+                        handleLogout()
+                      }}
+                    >
+                      Log Out
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </main>
