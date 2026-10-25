@@ -547,7 +547,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                 Capture or Upload Patient Photo
               </div>
               <div style={{ fontSize: '0.78rem', color: '#64748b', maxWidth: 220, lineHeight: 1.35 }}>
-                Use the options on the right to capture a live photo or upload an image file
+
               </div>
             </div>
           )}

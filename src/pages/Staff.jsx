@@ -280,7 +280,7 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
               <th>STAFF ID</th>
               <th>NAME &amp; EMAIL</th>
               <th>ROLE</th>
-              <th>DEVICE STATUS</th>
+              <th>STATUS</th>
               <th>SYNC</th>
               <th>ACTIONS</th>
             </tr>
@@ -441,7 +441,7 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
               </label>
 
               <label>
-                <span>Device Status</span>
+                <span>Status</span>
                 <select
                   value={formData.deviceStatus}
                   onChange={(e) => setFormData({ ...formData, deviceStatus: e.target.value })}
