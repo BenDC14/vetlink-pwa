@@ -50,6 +50,11 @@
   }
 }
 
+:root[data-theme="dark"] {
+  --bg: #101716;
+  background: var(--bg);
+}
+
 body {
   margin: 0;
 }

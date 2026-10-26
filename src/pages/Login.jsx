@@ -34,18 +34,17 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
 
   return (
     <section className="login-card">
-      <div className="brand-row">
+      <div className="brand-row" style={{ display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
         <div className="brand-mark" aria-label="VetLink">V</div>
         <div>
-          <p className="brand-name">VetLink</p>
+          <p className="brand-name" >VetLink</p>
           <p className="brand-caption">Clinical workspace</p>
         </div>
 
       </div>
 
       <div className="hero-copy">
-        <p className="eyebrow">{requiresPasswordChange ? 'Set a new password' : 'Welcome back'}</p>
-        <p>{requiresPasswordChange ? 'Your temporary password must be replaced before continuing.' : 'Sign in to continue managing your clinic and patient care.'}</p>
+        <p className="eyebrow" style={{ textAlign: 'center' }}>{requiresPasswordChange ? 'Set a new password' : 'Welcome back'}</p>
       </div>
 
       <form className="login-form" onSubmit={handleSubmit}>

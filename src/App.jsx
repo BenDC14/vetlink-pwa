@@ -8,6 +8,7 @@ import Patients from './pages/Patients'
 import Staff from './pages/Staff'
 import Sync from './pages/Sync'
 import NewPatient from './pages/NewPatient'
+import Settings from './pages/Settings'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -34,6 +35,7 @@ function App() {
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [isInstalled, setIsInstalled] = useState(false)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const [showSettings, setShowSettings] = useState(false)
 
   useEffect(() => {
     const isStandalone =
@@ -213,8 +215,82 @@ function App() {
       setLoggedIn(false)
       setActiveView('clinic')
       setShowNewPatient(false)
+      setShowSettings(false)
     }
   }
+
+  // --- Global Theme Engine (applies to body, sidebar, header, and all views) ---
+  useEffect(() => {
+    const applyGlobalTheme = () => {
+      const savedTheme = localStorage.getItem('vetlink_theme') || 'system'
+      const root = document.documentElement
+      if (savedTheme === 'dark') {
+        root.setAttribute('data-theme', 'dark')
+      } else if (savedTheme === 'light') {
+        root.setAttribute('data-theme', 'light')
+      } else {
+        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches
+        if (prefersDark) {
+          root.setAttribute('data-theme', 'dark')
+        } else {
+          root.removeAttribute('data-theme')
+        }
+      }
+    }
+
+    applyGlobalTheme()
+
+    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)')
+    const handleSystemThemeChange = () => {
+      const saved = localStorage.getItem('vetlink_theme') || 'system'
+      if (saved === 'system') applyGlobalTheme()
+    }
+
+    mediaQuery.addEventListener('change', handleSystemThemeChange)
+    window.addEventListener('vetlink-theme-change', applyGlobalTheme)
+
+    return () => {
+      mediaQuery.removeEventListener('change', handleSystemThemeChange)
+      window.removeEventListener('vetlink-theme-change', applyGlobalTheme)
+    }
+  }, [])
+
+  // --- Shared Tablet Exam Room Inactivity Auto-Lock ---
+  useEffect(() => {
+    if (!loggedIn) return
+
+    let timeoutId = null
+
+    const checkAndResetTimer = () => {
+      if (timeoutId) clearTimeout(timeoutId)
+
+      const storedMinutes = parseInt(localStorage.getItem('vetlink_inactivity_timeout') || '0', 10)
+      if (storedMinutes > 0) {
+        timeoutId = setTimeout(() => {
+          alert(`VetLink Auto-Lock: Session locked after ${storedMinutes} minutes of inactivity on this shared device.`)
+          handleLogout()
+        }, storedMinutes * 60 * 1000)
+      }
+    }
+
+    checkAndResetTimer()
+
+    const userActivityEvents = ['mousedown', 'keydown', 'scroll', 'touchstart']
+    const handleActivity = () => checkAndResetTimer()
+
+    userActivityEvents.forEach((evt) =>
+      window.addEventListener(evt, handleActivity, { passive: true })
+    )
+    window.addEventListener('vetlink-timeout-change', checkAndResetTimer)
+
+    return () => {
+      if (timeoutId) clearTimeout(timeoutId)
+      userActivityEvents.forEach((evt) =>
+        window.removeEventListener(evt, handleActivity)
+      )
+      window.removeEventListener('vetlink-timeout-change', checkAndResetTimer)
+    }
+  }, [loggedIn])
 
   return (
     <main className={`app-shell ${!loggedIn ? 'auth-shell' : ''}`}>
@@ -262,7 +338,7 @@ function App() {
               <button
                 type="button"
                 className={"nav-item " + (activeView === 'clinic' && !showNewPatient ? 'active' : '')}
-                onClick={() => { setActiveView('clinic'); setShowNewPatient(false); }}
+                onClick={() => { setActiveView('clinic'); setShowNewPatient(false); setShowSettings(false); }}
               >
                 <div className="nav-item-label">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -274,7 +350,7 @@ function App() {
               <button
                 type="button"
                 className={"nav-item " + (activeView === 'patients' && !showNewPatient ? 'active' : '')}
-                onClick={() => { setActiveView('patients'); setShowNewPatient(false); }}
+                onClick={() => { setActiveView('patients'); setShowNewPatient(false); setShowSettings(false); }}
               >
                 <div className="nav-item-label">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -290,7 +366,7 @@ function App() {
                 <button
                   type="button"
                   className={"nav-item " + (activeView === 'staff' && !showNewPatient ? 'active' : '')}
-                  onClick={() => { setActiveView('staff'); setShowNewPatient(false); }}
+                  onClick={() => { setActiveView('staff'); setShowNewPatient(false); setShowSettings(false); }}
                 >
                   <div className="nav-item-label">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -306,7 +382,7 @@ function App() {
               <button
                 type="button"
                 className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
-                onClick={() => { setActiveView('sync'); setShowNewPatient(false); }}
+                onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
               >
                 <div className="nav-item-label">
                   <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -346,7 +422,7 @@ function App() {
           <section className="dashboard-panel">
             <header className="dashboard-header">
               <div className="header-title-wrap">
-                <h2>{showNewPatient ? 'New Patient' : {
+                <h2>{showSettings ? 'Settings' : showNewPatient ? 'New Patient' : {
                   clinic: 'Clinic Analysis',
                   patients: 'Patient Records',
                   staff: 'Manage Staff',
@@ -370,7 +446,7 @@ function App() {
                   type="button"
                   className="header-icon-btn"
                   title="Settings"
-                  onClick={() => alert('VetLink PWA System: Running v1.0.0 (WASM MobileNetV3 Edge Inference + Offline Sync).')}
+                  onClick={() => { setShowSettings(true); setShowNewPatient(false); }}
                 >
                   <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                     <circle cx="12" cy="12" r="3" />
@@ -392,7 +468,12 @@ function App() {
               </div>
             </header>
 
-            {showNewPatient ? (
+            {showSettings ? (
+              <Settings
+                currentUser={currentUser}
+                onBack={() => setShowSettings(false)}
+              />
+            ) : showNewPatient ? (
               <NewPatient
                 currentUser={currentUser}
                 onBack={() => setShowNewPatient(false)}
@@ -410,10 +491,6 @@ function App() {
                     apiBaseUrl={API_BASE_URL}
                     isOffline={currentUser?.isOffline}
                     currentUser={currentUser}
-                    onProceedToTreatment={(data) => {
-                      setCaseData(data);
-                      setShowTreatment(true);
-                    }}
                   />
                 )}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}

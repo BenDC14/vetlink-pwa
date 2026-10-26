@@ -495,7 +495,15 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 </td>
                 <td>
                   <div className="patient-name-block">
-                    <strong>{patient.name}</strong>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                      <strong>{patient.name}</strong>
+                      {patient.syncStatus === 'pending' && (
+                        <span className="sync-pending-pill" title="Offline changes pending sync with cloud">
+                          <span className="sync-pulse-dot" />
+                          Unsynced
+                        </span>
+                      )}
+                    </div>
                     {patient.areaOfConcern && (
                       <span className="patient-concern-sub">{patient.areaOfConcern}</span>
                     )}
