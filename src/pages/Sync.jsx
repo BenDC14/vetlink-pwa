@@ -7,7 +7,8 @@ import {
   saveRemoteSyncConflicts,
 } from '../db/database'
 
-export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }) {
+export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000', currentUser }) {
+  const isAdmin = currentUser?.role === 'Clinic Admin'
   const [queue, setQueue] = useState([])
   const [conflicts, setConflicts] = useState([])
   const [activeTab, setActiveTab] = useState('queue')
@@ -108,7 +109,7 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
   }
 
   const handleResolveConflict = async (resolution) => {
-    if (!selectedConflictId) return
+    if (!isAdmin || !selectedConflictId) return
     setIsResolving(true)
     setFeedback(null)
     try {
@@ -213,34 +214,58 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
       </div>
 
       <div className="sync-content">
-        <div className="sync-tabs" role="tablist" aria-label="Sync details">
-          <button
-            className={`sync-tab ${activeTab === 'queue' ? 'active' : ''}`}
-            id="sync-queue-tab"
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'queue'}
-            aria-controls="sync-queue-panel"
-            onClick={() => setActiveTab('queue')}
-          >
-            Pending Queue <span className="sync-tab-count">{queue.length}</span>
-          </button>
-          <button
-            className={`sync-tab ${activeTab === 'conflicts' ? 'active' : ''}`}
-            id="sync-conflicts-tab"
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'conflicts'}
-            aria-controls="sync-conflicts-panel"
-            onClick={() => setActiveTab('conflicts')}
-          >
-            Conflicts <span className="sync-tab-count">{conflicts.length}</span>
-          </button>
-        </div>
+        {isAdmin && (
+          <div className="sync-tabs" role="tablist" aria-label="Sync details">
+            <button
+              className={`sync-tab ${activeTab === 'queue' ? 'active' : ''}`}
+              id="sync-queue-tab"
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'queue'}
+              aria-controls="sync-queue-panel"
+              onClick={() => setActiveTab('queue')}
+            >
+              Pending Queue <span className="sync-tab-count">{queue.length}</span>
+            </button>
+            <button
+              className={`sync-tab ${activeTab === 'conflicts' ? 'active' : ''}`}
+              id="sync-conflicts-tab"
+              type="button"
+              role="tab"
+              aria-selected={activeTab === 'conflicts'}
+              aria-controls="sync-conflicts-panel"
+              onClick={() => setActiveTab('conflicts')}
+            >
+              Conflicts <span className="sync-tab-count">{conflicts.length}</span>
+            </button>
+          </div>
+        )}
 
-        {activeTab === 'queue' ? (
+        {!isAdmin && conflicts.length > 0 && (
+          <div
+            className="alert-banner"
+            style={{
+              marginBottom: 16,
+              background: 'rgba(245, 158, 11, 0.12)',
+              border: '1px solid rgba(245, 158, 11, 0.35)',
+              color: 'var(--text-h)',
+              fontSize: '0.88rem',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              padding: '12px 16px',
+              borderRadius: 10
+            }}
+          >
+            <span>
+              ℹ <strong>{conflicts.length} sync conflict{conflicts.length > 1 ? 's' : ''} detected.</strong> Multi-device data conflicts require administrative review by a Clinic Admin.
+            </span>
+          </div>
+        )}
+
+        {(!isAdmin || activeTab === 'queue') ? (
           <section id="sync-queue-panel" role="tabpanel" aria-labelledby="sync-queue-tab">
-        <h4 style={{ marginBottom: 10, color: '#000' }}>Pending Sync Queue</h4>
+        <h4 style={{ marginBottom: 10, color: 'var(--text-h)' }}>Pending Sync Queue</h4>
         <div className="patients-table-wrap">
           <table className="patients-table staff-table">
             <thead>
@@ -280,7 +305,7 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
           </table>
         </div>
           </section>
-        ) : (
+        ) : isAdmin ? (
           <section id="sync-conflicts-panel" className="sync-conflicts-panel" role="tabpanel" aria-labelledby="sync-conflicts-tab">
             {conflicts.length === 0 ? (
               <div className="sync-empty-state">
@@ -336,7 +361,7 @@ export default function Sync({ authToken, apiBaseUrl = 'http://localhost:8000' }
               </div>
             )}
           </section>
-        )}
+        ) : null}
       </div>
     </section>
   )

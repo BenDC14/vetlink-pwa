@@ -466,6 +466,7 @@ export default function Settings({ currentUser, onBack }) {
       {/* ── Notifications Card ── */}
       <div className="settings-card">
         <div className="settings-card-header">
+          <div className="settings-header-left">
           <div className="settings-card-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -473,6 +474,7 @@ export default function Settings({ currentUser, onBack }) {
             </svg>
           </div>
           <h3>Notifications</h3>
+          </div>
         </div>
         <div className="settings-card-body">
           <div className="settings-toggle-grid">
@@ -505,6 +507,7 @@ export default function Settings({ currentUser, onBack }) {
       {/* ── Appearance Card ── */}
       <div className="settings-card">
         <div className="settings-card-header">
+          <div className="settings-header-left">
           <div className="settings-card-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="5" />
@@ -519,6 +522,7 @@ export default function Settings({ currentUser, onBack }) {
             </svg>
           </div>
           <h3>Appearance</h3>
+          </div>
         </div>
         <div className="settings-card-body">
           <div className="settings-theme-pills">
@@ -561,6 +565,7 @@ export default function Settings({ currentUser, onBack }) {
       {/* ── Shared Tablet & Security Card ── */}
       <div className="settings-card">
         <div className="settings-card-header">
+          <div className="settings-header-left">
           <div className="settings-card-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
@@ -568,6 +573,7 @@ export default function Settings({ currentUser, onBack }) {
             </svg>
           </div>
           <h3>Shared Tablet &amp; Security</h3>
+          </div>
         </div>
         <div className="settings-card-body">
           <div className="settings-security-box">
@@ -595,6 +601,7 @@ export default function Settings({ currentUser, onBack }) {
       {/* ── Data & Storage Card ── */}
       <div className="settings-card">
         <div className="settings-card-header">
+          <div className="settings-header-left">
           <div className="settings-card-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <ellipse cx="12" cy="5" rx="9" ry="3" />
@@ -603,6 +610,7 @@ export default function Settings({ currentUser, onBack }) {
             </svg>
           </div>
           <h3>Data &amp; Storage</h3>
+          </div>
         </div>
         <div className="settings-card-body">
           <div className="settings-storage-info">
@@ -670,6 +678,7 @@ export default function Settings({ currentUser, onBack }) {
       {/* ── About Card ── */}
       <div className="settings-card">
         <div className="settings-card-header">
+          <div className="settings-header-left">
           <div className="settings-card-icon">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
@@ -678,6 +687,7 @@ export default function Settings({ currentUser, onBack }) {
             </svg>
           </div>
           <h3>About</h3>
+          </div>
         </div>
         <div className="settings-card-body">
           <div className="settings-about-grid">
