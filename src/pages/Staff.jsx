@@ -281,20 +281,19 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
               <th>NAME &amp; EMAIL</th>
               <th>ROLE</th>
               <th>STATUS</th>
-              <th>SYNC</th>
               <th>ACTIONS</th>
             </tr>
           </thead>
           <tbody>
             {isLoading ? (
               <tr>
-                <td colSpan="6" style={{ textAlign: 'center', padding: '24px' }}>
+                <td colSpan="5" style={{ textAlign: 'center', padding: '24px' }}>
                   Loading staff records from database...
                 </td>
               </tr>
             ) : visibleStaff.length === 0 ? (
               <tr>
-                <td colSpan="6" style={{ textAlign: 'center', padding: '24px' }}>
+                <td colSpan="5" style={{ textAlign: 'center', padding: '24px' }}>
                   No staff members found matching your search.
                 </td>
               </tr>
@@ -305,8 +304,14 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
                     <strong>{staff.id}</strong>
                   </td>
                   <td>
-                    <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <strong>{staff.name}</strong>
+                      {staff.syncStatus === 'pending' && (
+                        <span className="sync-pending-pill" title="Offline changes pending sync with cloud">
+                          <span className="sync-pulse-dot" />
+                          Unsynced
+                        </span>
+                      )}
                     </div>
                     {staff.username && (
                       <div style={{ fontSize: '0.82rem', color: 'var(--muted)', marginTop: 2 }}>
@@ -324,15 +329,6 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
                     >
                       {staff.deviceStatus === 'Offline' ? 'Offline' : 'Online'}
                     </button>
-                  </td>
-                  <td>
-                    {staff.syncStatus === 'pending' ? (
-                      <span className="sync-pending-tag">Pending</span>
-                    ) : (
-                      <span className="status-badge" style={{ fontSize: '0.75rem', padding: '4px 8px' }}>
-                        Synced
-                      </span>
-                    )}
                   </td>
                   <td>
                     <button
