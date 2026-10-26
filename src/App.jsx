@@ -422,6 +422,10 @@ function App() {
           <section className="dashboard-panel">
             <header className="dashboard-header">
               <div className="header-title-wrap">
+                <div className="mobile-header-brand">
+                  <img src={vetlinkLogo} alt="VetLink" className="mobile-header-logo" />
+                  <span className="mobile-header-title">VetLink</span>
+                </div>
                 <h2>{showSettings ? 'Settings' : showNewPatient ? 'New Patient' : {
                   clinic: 'Clinic Analysis',
                   patients: 'Patient Records',
@@ -494,10 +498,78 @@ function App() {
                   />
                 )}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
-                {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} />}
+                {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} currentUser={currentUser} />}
               </>
             )}
           </section>
+
+          {/* Mobile Bottom Navigation Bar (PWA standard for screens <= 768px) */}
+          <nav className="mobile-bottom-nav" aria-label="Mobile Navigation">
+            <button
+              type="button"
+              className={"mobile-nav-item " + (activeView === 'clinic' && !showNewPatient && !showSettings ? 'active' : '')}
+              onClick={() => { setActiveView('clinic'); setShowNewPatient(false); setShowSettings(false); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 12h-4l-3 9L9 3l-3 9H2" />
+              </svg>
+              <span>Clinic</span>
+            </button>
+
+            <button
+              type="button"
+              className={"mobile-nav-item " + (activeView === 'patients' && !showNewPatient && !showSettings ? 'active' : '')}
+              onClick={() => { setActiveView('patients'); setShowNewPatient(false); setShowSettings(false); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+              <span>Patients</span>
+            </button>
+
+            <button
+              type="button"
+              className={"mobile-nav-item mobile-intake-fab " + (showNewPatient ? 'active' : '')}
+              onClick={() => { setShowNewPatient(true); setShowSettings(false); }}
+              title="Add New Patient Intake"
+            >
+              <div className="fab-circle">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <line x1="12" y1="5" x2="12" y2="19" />
+                  <line x1="5" y1="12" x2="19" y2="12" />
+                </svg>
+              </div>
+              <span>Intake</span>
+            </button>
+
+            {currentUser?.role === 'Clinic Admin' && (
+              <button
+                type="button"
+                className={"mobile-nav-item " + (activeView === 'staff' && !showNewPatient && !showSettings ? 'active' : '')}
+                onClick={() => { setActiveView('staff'); setShowNewPatient(false); setShowSettings(false); }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                </svg>
+                <span>Staff</span>
+              </button>
+            )}
+
+            <button
+              type="button"
+              className={"mobile-nav-item " + (activeView === 'sync' && !showNewPatient && !showSettings ? 'active' : '')}
+              onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+              </svg>
+              <span>Sync</span>
+            </button>
+          </nav>
 
           {showLogoutConfirm && (
             <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="logout-confirm-title">
