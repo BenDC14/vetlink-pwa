@@ -28,6 +28,7 @@ function App() {
   const [loggedIn, setLoggedIn] = useState(false)
   const [activeView, setActiveView] = useState('clinic')
   const [showNewPatient, setShowNewPatient] = useState(false)
+  const [treatmentCaseData, setTreatmentCaseData] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('vetlink_auth_token') || '')
@@ -384,7 +385,7 @@ function App() {
                 <button
                   type="button"
                   className={"nav-item " + (activeView === 'treatment' && !showNewPatient && !showSettings ? 'active' : '')}
-                  onClick={() => { setActiveView('treatment'); setShowNewPatient(false); setShowSettings(false); }}
+                  onClick={() => { setTreatmentCaseData(null); setActiveView('treatment'); setShowNewPatient(false); setShowSettings(false); }}
                 >
                   <div className="nav-item-label">
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -443,9 +444,10 @@ function App() {
                   <span className="mobile-header-title">VetLink</span>
                 </div>
                 <h2>{showSettings ? 'Settings' : showNewPatient ? 'New Patient' : {
-                  clinic: 'Clinic Analysis',
+                  clinic: 'Clinical Analysis',
                   patients: 'Patient Records',
                   staff: 'Manage Staff',
+                  treatment: 'Treatment Protocols',
                   sync: 'Sync',
                 }[activeView]}</h2>
               </div>
@@ -500,7 +502,11 @@ function App() {
                 authToken={authToken}
                 apiBaseUrl={API_BASE_URL}
                 isOffline={currentUser?.isOffline}
-                onCapture={() => { setShowNewPatient(false); setActiveView('patients'); }}
+                onCapture={(payload) => {
+                  setShowNewPatient(false)
+                  setTreatmentCaseData(payload)
+                  setActiveView('treatment')
+                }}
               />
             ) : (
               <>
@@ -517,13 +523,21 @@ function App() {
                     apiBaseUrl={API_BASE_URL}
                     isOffline={currentUser?.isOffline}
                     currentUser={currentUser}
+                    onProceedToTreatment={(caseData) => {
+                      setTreatmentCaseData(caseData)
+                      setActiveView('treatment')
+                    }}
                   />
                 )}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
                 {activeView === 'treatment' && (
                   <Treatment
                     currentUser={currentUser}
-                    onBack={() => setActiveView('clinic')}
+                    caseData={treatmentCaseData}
+                    onBack={() => {
+                      setTreatmentCaseData(null)
+                      setActiveView('patients')
+                    }}
                   />
                 )}
                 {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} currentUser={currentUser} />}

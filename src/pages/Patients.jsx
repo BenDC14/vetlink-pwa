@@ -56,6 +56,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [reviewSymptoms, setReviewSymptoms]           = useState([])
   const [clinicalStatus, setClinicalStatus]           = useState('Review Results')
   const [overrideDiag, setOverrideDiag]               = useState('')
+  const [customDiag, setCustomDiag]                   = useState('')
   const [labNotes, setLabNotes]                       = useState('')
   const [isSavingReview, setIsSavingReview]           = useState(false)
   const [reviewError, setReviewError]                 = useState('')
@@ -179,6 +180,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     setReviewPatient(patient)
     setClinicalStatus(patient.status || 'Review Results')
     setOverrideDiag('')
+    setCustomDiag('')
     setLabNotes('')
     setReviewError('')
     setReviewConsult(null)
@@ -217,8 +219,9 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
       // 2. Update consultation if diagnosis overridden or lab notes added
       if (reviewConsult) {
         const updates = {}
-        if (overrideDiag && overrideDiag.trim()) {
-          updates.diagnosis = overrideDiag.trim()
+        const finalDiag = overrideDiag === 'OTHER' ? customDiag.trim() : overrideDiag.trim()
+        if (finalDiag) {
+          updates.diagnosis = finalDiag
         }
         if (labNotes && labNotes.trim()) {
           const currentNotes = reviewConsult.clinicalNotes || ''
@@ -338,6 +341,13 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     if (!recheckPatient) return
     setIsSavingRecheck(true)
     setRecheckError('')
+
+    // Strict Clinical Validation: Follow-up lesion image is strictly mandatory
+    if (!recheckFile) {
+      setRecheckError('⚠️ Required: Please capture or upload a follow-up lesion image for recheck evaluation.')
+      setIsSavingRecheck(false)
+      return
+    }
 
     try {
       const today = new Date().toISOString().slice(0, 10)
@@ -749,7 +759,24 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   {CLINICAL_DIAGNOSES.map((d) => (
                     <option key={d} value={d}>{d}</option>
                   ))}
+                  <option value="OTHER">➕ Other / Custom Dermatological Condition...</option>
                 </select>
+
+                {overrideDiag === 'OTHER' && (
+                  <div style={{ marginTop: 8 }}>
+                    <span style={{ fontSize: '0.78rem', fontWeight: 700, color: '#701a75' }}>
+                      Enter Confirmed Custom Diagnosis:
+                    </span>
+                    <input
+                      type="text"
+                      required
+                      value={customDiag}
+                      onChange={(e) => setCustomDiag(e.target.value)}
+                      placeholder="e.g. Canine Papillomavirus / Pemphigus / Deep Abscess"
+                      style={{ width: '100%', padding: '7px 10px', fontSize: '0.85rem', borderRadius: 6, border: '2px solid #a855f7', marginTop: 4, boxSizing: 'border-box' }}
+                    />
+                  </div>
+                )}
 
                 <label style={{ display: 'block', marginTop: 8 }}>
                   <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#701a75' }}>
@@ -775,18 +802,25 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                     <button
                       type="button"
                       className="secondary-btn"
-                      style={{ padding: '8px 14px', fontSize: '0.85rem', background: '#f8fafc', border: '1px solid #cbd5e1' }}
+                      style={{ padding: '8px 14px', fontSize: '0.85rem', background: '#f8fafc', border: '1px solid #cbd5e1', fontWeight: 700 }}
                       onClick={() => {
-                        const activeDiag = overrideDiag || reviewConsult?.diagnosis || 'Skin Lesion'
+                        const finalDiag = overrideDiag === 'OTHER'
+                          ? (customDiag.trim() || 'Custom Dermatological Condition')
+                          : (overrideDiag || reviewConsult?.diagnosis || 'Skin Lesion')
                         onProceedToTreatment({
                           patient: reviewPatient,
                           consultation: reviewConsult,
                           aiResult: {
-                            displayLabel: activeDiag,
+                            displayLabel: finalDiag,
                             percent: reviewScreening?.aiPercent || 'Clinical Evaluation',
                             top3: reviewScreening?.aiTop3 ? JSON.parse(reviewScreening.aiTop3) : [],
                           },
                           previewUrl: reviewScreening?.imageData,
+                          diagnosis: finalDiag,
+                          secondaryDiagnosis: reviewConsult?.secondaryDiagnosis || null,
+                          isComorbid: Boolean(reviewConsult?.isComorbid || reviewConsult?.secondaryDiagnosis),
+                          assignedStatus: clinicalStatus,
+                          labTestRequired: clinicalStatus === 'Awaiting Lab Test' || reviewConsult?.reviewStatus === 'awaiting_lab',
                         })
                         setReviewPatient(null)
                       }}
@@ -1004,46 +1038,64 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
               {/* Clinical Progress Selector */}
               <div style={{ marginBottom: 14 }}>
-                <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#1e293b', display: 'block', marginBottom: 6 }}>
-                  Veterinarian Healing Stage Evaluation:
-                </span>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#1e293b' }}>
+                    Veterinarian Healing Stage Evaluation:
+                  </span>
+                  {currentUser?.role === 'Clinic Staff' && (
+                    <span style={{ fontSize: '0.72rem', background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
+                      🔒 Restricted to Veterinarian
+                    </span>
+                  )}
+                </div>
+
+                {currentUser?.role === 'Clinic Staff' && (
+                  <div style={{ padding: '6px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, color: '#92400e', fontSize: '0.78rem', marginBottom: 8 }}>
+                    Staff Notice: Healing stage certification is legally restricted to the attending veterinarian. Clinic staff may record follow-up lesion photos and physical vitals.
+                  </div>
+                )}
+
                 <div style={{ display: 'grid', gap: 6, fontSize: '0.85rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'resolved' ? '#dcfce7' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'resolved' ? '#dcfce7' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
                     <input
                       type="radio"
                       name="progress"
                       value="resolved"
                       checked={recheckProgress === 'resolved'}
+                      disabled={currentUser?.role === 'Clinic Staff'}
                       onChange={(e) => setRecheckProgress(e.target.value)}
                     />
                     <span>🟢 <strong>Resolved / Fully Healed</strong> — Lesion cleared, fur regrown, no active erythema</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'improving' ? '#fef9c3' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'improving' ? '#fef9c3' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
                     <input
                       type="radio"
                       name="progress"
                       value="improving"
                       checked={recheckProgress === 'improving'}
+                      disabled={currentUser?.role === 'Clinic Staff'}
                       onChange={(e) => setRecheckProgress(e.target.value)}
                     />
                     <span>🟡 <strong>Responding / Improving</strong> — Lesion reduced by ~50–80%, healthy scabbing present</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'unchanged' ? '#fee2e2' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'unchanged' ? '#fee2e2' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
                     <input
                       type="radio"
                       name="progress"
                       value="unchanged"
                       checked={recheckProgress === 'unchanged'}
+                      disabled={currentUser?.role === 'Clinic Staff'}
                       onChange={(e) => setRecheckProgress(e.target.value)}
                     />
                     <span>🔴 <strong>Refractory / Unchanged</strong> — No clinical response; alternative medication indicated</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'new_complication' ? '#f3e8ff' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'new_complication' ? '#f3e8ff' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
                     <input
                       type="radio"
                       name="progress"
                       value="new_complication"
                       checked={recheckProgress === 'new_complication'}
+                      disabled={currentUser?.role === 'Clinic Staff'}
                       onChange={(e) => setRecheckProgress(e.target.value)}
                     />
                     <span>🟣 <strong>Suspected New Complication</strong> — Secondary infection or new separate lesion detected</span>

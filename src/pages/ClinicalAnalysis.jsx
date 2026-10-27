@@ -90,13 +90,21 @@ export default function ClinicalAnalysis({ onNewPatient, onViewPatients, current
         const dateKey = targetDate.toISOString().split('T')[0]
         const dayLabel = days[targetDate.getDay()]
 
-        let count = 0
-        consultations.forEach((c) => {
-          if ((c.updatedAt || c.createdAt || '').startsWith(dateKey)) count++
-        })
+        // Count unique patient admissions per calendar day (avoids double counting consultations and edits)
+        const dayPatientSet = new Set()
         patients.forEach((p) => {
-          if ((p.lastVisit || p.updatedAt || '').startsWith(dateKey)) count++
+          const created = (p.createdAt || p.lastVisit || '').slice(0, 10)
+          if (created === dateKey) {
+            dayPatientSet.add(p.id)
+          }
         })
+        consultations.forEach((c) => {
+          const created = (c.createdAt || '').slice(0, 10)
+          if (created === dateKey && c.patientId) {
+            dayPatientSet.add(c.patientId)
+          }
+        })
+        const count = dayPatientSet.size
 
         weeklyActivity.push({
           day: dayLabel,

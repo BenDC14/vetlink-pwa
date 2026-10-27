@@ -382,6 +382,9 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
           otherSymptoms,
           labTestRequired,
           assignedStatus,
+          diagnosis: aiResult.displayLabel,
+          secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
+          isComorbid: comorb.isComorbid,
         })
       }
 
@@ -930,31 +933,41 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             {/* Confirmatory Diagnostic Lab Testing Section */}
             {aiResult && !qualityRejection && !isAnalyzing && (
               <div style={{ marginTop: 12, padding: 12, background: labTestRequired ? '#fffbeb' : '#f8fafc', border: labTestRequired ? '1px solid #fde68a' : '1px solid #e2e8f0', borderRadius: 10 }}>
-                <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
-                  <input
-                    type="checkbox"
-                    checked={labTestRequired}
-                    onChange={(e) => setLabTestRequired(e.target.checked)}
-                    style={{ marginTop: 2 }}
-                  />
-                  <div>
-                    <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: labTestRequired ? '#b45309' : '#1e293b' }}>
-                      🧪 Confirmatory Diagnostic Lab Test Required
-                    </span>
-                    <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
-                      Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <code>🧪 Awaiting Lab Test</code>).
-                    </p>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer' }}>
+                    <input
+                      type="checkbox"
+                      checked={labTestRequired}
+                      disabled={currentUser?.role === 'Clinic Staff'}
+                      onChange={(e) => setLabTestRequired(e.target.checked)}
+                      style={{ marginTop: 2 }}
+                    />
+                    <div>
+                      <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: labTestRequired ? '#b45309' : '#1e293b' }}>
+                        🧪 Confirmatory Diagnostic Lab Test Required
+                      </span>
+                      <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
+                        Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <code>🧪 Awaiting Lab Test</code>).
+                      </p>
+                    </div>
+                  </label>
+                </div>
+
+                {currentUser?.role === 'Clinic Staff' && labTestRequired && (
+                  <div style={{ marginTop: 6, padding: '6px 10px', background: '#fef3c7', borderRadius: 6, color: '#92400e', fontSize: '0.76rem', fontWeight: 600 }}>
+                    🔒 Mandated by AI Triage Protocol: Low confidence or secondary comorbidity detected. Awaiting Attending Veterinarian authorization.
                   </div>
-                </label>
+                )}
 
                 {labTestRequired && (
                   <div style={{ marginTop: 8, paddingLeft: 22 }}>
                     <input
                       type="text"
                       value={labTestReason}
+                      disabled={currentUser?.role === 'Clinic Staff'}
                       onChange={(e) => setLabTestReason(e.target.value)}
                       placeholder="Specify test: e.g. Skin scrape for Demodex mites / Fungal DTM culture"
-                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #f59e0b', boxSizing: 'border-box' }}
+                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #f59e0b', boxSizing: 'border-box', background: currentUser?.role === 'Clinic Staff' ? '#fef3c7' : '#ffffff' }}
                     />
                   </div>
                 )}
