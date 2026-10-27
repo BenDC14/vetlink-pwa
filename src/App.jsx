@@ -499,6 +499,7 @@ function App() {
               <NewPatient
                 currentUser={currentUser}
                 onBack={() => setShowNewPatient(false)}
+                onViewPending={() => { setActiveView('patients'); setShowNewPatient(false); }}
                 authToken={authToken}
                 apiBaseUrl={API_BASE_URL}
                 isOffline={currentUser?.isOffline}

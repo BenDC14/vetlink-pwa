@@ -91,9 +91,14 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
   }
 }
 
-export default function NewPatient({ onBack, onViewPending, onCapture, currentUser }) {
+export default function NewPatient({ onBack, onViewPending, onCapture, currentUser, authToken, apiBaseUrl, isOffline }) {
   const [name, setName] = useState('')
   const [species, setSpecies] = useState('Canine')
+  const [breed, setBreed] = useState('')
+  const [weight, setWeight] = useState('')
+  const [age, setAge] = useState('')
+  const [ownerName, setOwnerName] = useState('')
+  const [ownerPhone, setOwnerPhone] = useState('')
   const [areaOfConcern, setAreaOfConcern] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [error, setError] = useState('')
@@ -309,10 +314,15 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         assignedStatus = 'Review Results'
       }
 
-      // 2. Save patient
+      // 2. Save patient with full demographics & owner contact
       const patient = await addPatient({
         name: name.trim(),
         species,
+        breed: breed.trim(),
+        weight: weight ? String(weight).trim() : '',
+        age: age.trim(),
+        ownerName: ownerName.trim(),
+        ownerPhone: ownerPhone.trim(),
         areaOfConcern: areaOfConcern.trim(),
         lastVisit: new Date().toISOString().slice(0, 10),
         status: assignedStatus,
@@ -365,6 +375,9 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
           patientId: patient.id,
           name: patient.name,
           species: patient.species,
+          breed: patient.breed,
+          weight: patient.weight,
+          ownerName: patient.ownerName,
           status: assignedStatus,
           diagnosis: aiResult.displayLabel,
           secondary: comorb.isComorbid ? comorb.secondary : null,
@@ -644,35 +657,96 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             <p className="id-auto-note">Patient ID will be assigned automatically.</p>
 
             <label>
-              <span>PATIENT NAME</span>
+              <span>PATIENT NAME *</span>
               <input
                 value={name}
                 onChange={(e) => setName(e.target.value)}
-                placeholder="Buddy"
+                placeholder="e.g. Buddy / Max"
                 disabled={isSaving}
+                required
               />
             </label>
 
-            <label>
-              <span>SPECIES</span>
-              <select
-                value={species}
-                onChange={(e) => handleSpeciesChange(e.target.value)}
-                disabled={isSaving}
-              >
-                <option>Canine</option>
-                <option>Feline</option>
-                <option>Avian</option>
-                <option>Rabbit</option>
-              </select>
-            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label>
+                <span>SPECIES *</span>
+                <select
+                  value={species}
+                  onChange={(e) => handleSpeciesChange(e.target.value)}
+                  disabled={isSaving}
+                >
+                  <option>Canine</option>
+                  <option>Feline</option>
+                  <option>Avian</option>
+                  <option>Rabbit</option>
+                </select>
+              </label>
+
+              <label>
+                <span>BREED (OPTIONAL)</span>
+                <input
+                  value={breed}
+                  onChange={(e) => setBreed(e.target.value)}
+                  placeholder="e.g. Shih Tzu, Aspin, Persian"
+                  disabled={isSaving}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label>
+                <span>WEIGHT IN KG (OPTIONAL)</span>
+                <input
+                  type="number"
+                  step="0.1"
+                  min="0"
+                  value={weight}
+                  onChange={(e) => setWeight(e.target.value)}
+                  placeholder="e.g. 5.5"
+                  disabled={isSaving}
+                />
+              </label>
+
+              <label>
+                <span>AGE (OPTIONAL)</span>
+                <input
+                  value={age}
+                  onChange={(e) => setAge(e.target.value)}
+                  placeholder="e.g. 2 yrs / 6 mos"
+                  disabled={isSaving}
+                />
+              </label>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+              <label>
+                <span>OWNER NAME (OPTIONAL)</span>
+                <input
+                  value={ownerName}
+                  onChange={(e) => setOwnerName(e.target.value)}
+                  placeholder="e.g. Maria Santos"
+                  disabled={isSaving}
+                />
+              </label>
+
+              <label>
+                <span>OWNER CONTACT / PHONE (OPTIONAL)</span>
+                <input
+                  type="tel"
+                  value={ownerPhone}
+                  onChange={(e) => setOwnerPhone(e.target.value)}
+                  placeholder="e.g. 0917-123-4567"
+                  disabled={isSaving}
+                />
+              </label>
+            </div>
 
             <label>
               <span>AREA OF CONCERN</span>
               <input
                 value={areaOfConcern}
                 onChange={(e) => setAreaOfConcern(e.target.value)}
-                placeholder="Back leg rash"
+                placeholder="e.g. Back leg rash / ear crusts"
                 disabled={isSaving}
               />
             </label>

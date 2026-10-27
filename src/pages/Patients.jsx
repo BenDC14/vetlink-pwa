@@ -13,18 +13,17 @@ import {
 import CameraCaptureModal from '../components/CameraCaptureModal'
 
 const CLINICAL_DIAGNOSES = [
-  'Flea Allergy Dermatitis',
+  'Mange',
   'Ringworm',
-  'Hot Spots',
-  'Mange (Demodectic / Sarcoptic)',
   'Pyoderma',
-  'Malassezia Dermatitis',
-  'Atopic Dermatitis',
-  'Healthy (No lesion detected)',
-  'Rabbit Ringworm',
-  'Rabbit Mange',
+  'Hot Spots',
+  'Healthy',
   'Avian Fowl Pox',
-  'Scaly Face Scaly Leg Mite (Knemidocoptes)'
+  'Scaly Face Scaly Leg Mite',
+  'Healthy (Bird)',
+  'Rabbit Mange',
+  'Rabbit Ringworm',
+  'Healthy (Rabbit)'
 ]
 
 export default function Patients({ authToken, apiBaseUrl = 'http://localhost:8000', isOffline = false, currentUser, onProceedToTreatment }) {
@@ -144,6 +143,11 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     setFormData({
       name: patient.name || '',
       species: patient.species || 'Canine',
+      breed: patient.breed || '',
+      weight: patient.weight || '',
+      age: patient.age || '',
+      ownerName: patient.ownerName || '',
+      ownerPhone: patient.ownerPhone || '',
       areaOfConcern: patient.areaOfConcern || '',
       lastVisit: patient.lastVisit || '',
       status: patient.status || 'Active',
@@ -163,7 +167,12 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
       await updatePatient(editingPatient.id, {
         ...formData,
         name: formData.name.trim(),
-        areaOfConcern: formData.areaOfConcern.trim(),
+        breed: (formData.breed || '').trim(),
+        weight: (formData.weight || '').trim(),
+        age: (formData.age || '').trim(),
+        ownerName: (formData.ownerName || '').trim(),
+        ownerPhone: (formData.ownerPhone || '').trim(),
+        areaOfConcern: (formData.areaOfConcern || '').trim(),
       })
       await refreshPatients()
       setEditingPatient(null)
@@ -507,6 +516,11 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   <div className="patient-name-block">
                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
                       <strong>{patient.name}</strong>
+                      {patient.breed && (
+                        <span style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 500 }}>
+                          ({patient.breed})
+                        </span>
+                      )}
                       {patient.syncStatus === 'pending' && (
                         <span className="sync-pending-pill" title="Offline changes pending sync with cloud">
                           <span className="sync-pulse-dot" />
@@ -514,6 +528,16 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                         </span>
                       )}
                     </div>
+                    {patient.ownerName && (
+                      <span style={{ fontSize: '0.78rem', color: '#0284c7', display: 'block', marginTop: '2px' }}>
+                        👤 {patient.ownerName} {patient.ownerPhone ? `• 📞 ${patient.ownerPhone}` : ''}
+                      </span>
+                    )}
+                    {(patient.weight || patient.age) && (
+                      <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block' }}>
+                        {patient.weight ? `⚖️ ${patient.weight} kg` : ''} {patient.weight && patient.age ? '• ' : ''}{patient.age ? `🎂 ${patient.age}` : ''}
+                      </span>
+                    )}
                     {patient.areaOfConcern && (
                       <span className="patient-concern-sub">{patient.areaOfConcern}</span>
                     )}
@@ -580,29 +604,84 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 <span>Name</span>
                 <input value={formData.name} onChange={(event) => setFormData({ ...formData, name: event.target.value })} required />
               </label>
-              <label>
-                <span>Species</span>
-                <select value={formData.species} onChange={(event) => setFormData({ ...formData, species: event.target.value })}>
-                  <option>Canine</option>
-                  <option>Feline</option>
-                  <option>Other</option>
-                </select>
-              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <label>
+                  <span>Species</span>
+                  <select value={formData.species} onChange={(event) => setFormData({ ...formData, species: event.target.value })}>
+                    <option>Canine</option>
+                    <option>Feline</option>
+                    <option>Avian</option>
+                    <option>Lagomorph</option>
+                    <option>Other</option>
+                  </select>
+                </label>
+                <label>
+                  <span>Breed</span>
+                  <input
+                    placeholder="e.g. Aspin, Persian, etc."
+                    value={formData.breed || ''}
+                    onChange={(event) => setFormData({ ...formData, breed: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <label>
+                  <span>Weight (kg)</span>
+                  <input
+                    type="number"
+                    step="0.1"
+                    placeholder="e.g. 5.4"
+                    value={formData.weight || ''}
+                    onChange={(event) => setFormData({ ...formData, weight: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>Age</span>
+                  <input
+                    placeholder="e.g. 2 yrs, 6 mos"
+                    value={formData.age || ''}
+                    onChange={(event) => setFormData({ ...formData, age: event.target.value })}
+                  />
+                </label>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <label>
+                  <span>Owner Name</span>
+                  <input
+                    placeholder="e.g. Juan Dela Cruz"
+                    value={formData.ownerName || ''}
+                    onChange={(event) => setFormData({ ...formData, ownerName: event.target.value })}
+                  />
+                </label>
+                <label>
+                  <span>Owner Phone / Contact</span>
+                  <input
+                    placeholder="e.g. 0917-123-4567"
+                    value={formData.ownerPhone || ''}
+                    onChange={(event) => setFormData({ ...formData, ownerPhone: event.target.value })}
+                  />
+                </label>
+              </div>
               <label>
                 <span>Area of Concern</span>
                 <input value={formData.areaOfConcern} onChange={(event) => setFormData({ ...formData, areaOfConcern: event.target.value })} />
               </label>
-              <label>
-                <span>Last Visit</span>
-                <input type="date" value={formData.lastVisit} onChange={(event) => setFormData({ ...formData, lastVisit: event.target.value })} />
-              </label>
-              <label>
-                <span>Status</span>
-                <select value={formData.status} onChange={(event) => setFormData({ ...formData, status: event.target.value })}>
-                  <option>Active</option>
-                  <option>Inactive</option>
-                </select>
-              </label>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <label>
+                  <span>Last Visit</span>
+                  <input type="date" value={formData.lastVisit} onChange={(event) => setFormData({ ...formData, lastVisit: event.target.value })} />
+                </label>
+                <label>
+                  <span>Status</span>
+                  <select value={formData.status} onChange={(event) => setFormData({ ...formData, status: event.target.value })}>
+                    <option>Active</option>
+                    <option>Inactive</option>
+                    <option>Needs Vet Review</option>
+                    <option>Awaiting Lab Test</option>
+                    <option>Discharged</option>
+                  </select>
+                </label>
+              </div>
               <div className="modal-actions">
                 <button className="small-outline" type="button" onClick={() => setEditingPatient(null)} disabled={isSaving}>Cancel</button>
                 <button className="action-btn blue" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Changes'}</button>
@@ -646,6 +725,19 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 <div style={{ fontSize: '0.84rem', color: '#1e293b', display: 'flex', flexDirection: 'column', gap: 4 }}>
                   <div><strong>Patient ID:</strong> {reviewPatient.id}</div>
                   <div><strong>Name:</strong> {reviewPatient.name} ({reviewPatient.species})</div>
+                  {reviewPatient.breed && <div><strong>Breed:</strong> {reviewPatient.breed}</div>}
+                  {(reviewPatient.weight || reviewPatient.age) && (
+                    <div>
+                      {reviewPatient.weight ? <span><strong>Weight:</strong> {reviewPatient.weight} kg </span> : null}
+                      {reviewPatient.age ? <span><strong>Age:</strong> {reviewPatient.age}</span> : null}
+                    </div>
+                  )}
+                  {reviewPatient.ownerName && (
+                    <div>
+                      <strong>Owner:</strong> {reviewPatient.ownerName}
+                      {reviewPatient.ownerPhone ? ` (📞 ${reviewPatient.ownerPhone})` : ''}
+                    </div>
+                  )}
                   <div><strong>Intake Date:</strong> {reviewPatient.lastVisit || 'Today'}</div>
                   <div><strong>Area of Concern:</strong> {reviewPatient.areaOfConcern || 'Skin lesion'}</div>
                   <div>
