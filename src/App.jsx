@@ -9,6 +9,7 @@ import Staff from './pages/Staff'
 import Sync from './pages/Sync'
 import NewPatient from './pages/NewPatient'
 import Settings from './pages/Settings'
+import Treatment from './pages/Treatment'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
 
@@ -379,6 +380,21 @@ function App() {
                   </div>
                 </button>
               )}
+              {(currentUser?.role === 'Clinic Admin' || currentUser?.role?.toLowerCase().includes('vet') || !currentUser?.role) && (
+                <button
+                  type="button"
+                  className={"nav-item " + (activeView === 'treatment' && !showNewPatient && !showSettings ? 'active' : '')}
+                  onClick={() => { setActiveView('treatment'); setShowNewPatient(false); setShowSettings(false); }}
+                >
+                  <div className="nav-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M10.5 20.5l10-10a4.95 4.95 0 1 0-7-7l-10 10a4.95 4.95 0 1 0 7 7z" />
+                      <path d="m8.5 8.5 7 7" />
+                    </svg>
+                    <span>Treatment Protocols</span>
+                  </div>
+                </button>
+              )}
               <button
                 type="button"
                 className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
@@ -488,7 +504,13 @@ function App() {
               />
             ) : (
               <>
-                {activeView === 'clinic' && <ClinicalAnalysis />}
+                {activeView === 'clinic' && (
+                  <ClinicalAnalysis
+                    onNewPatient={() => setShowNewPatient(true)}
+                    onViewPatients={() => { setActiveView('patients'); setShowNewPatient(false); }}
+                    currentUser={currentUser}
+                  />
+                )}
                 {activeView === 'patients' && (
                   <Patients
                     authToken={authToken}
@@ -498,6 +520,12 @@ function App() {
                   />
                 )}
                 {activeView === 'staff' && currentUser?.role === 'Clinic Admin' && <Staff authToken={authToken} apiBaseUrl={API_BASE_URL} />}
+                {activeView === 'treatment' && (
+                  <Treatment
+                    currentUser={currentUser}
+                    onBack={() => setActiveView('clinic')}
+                  />
+                )}
                 {activeView === 'sync' && <Sync authToken={authToken} apiBaseUrl={API_BASE_URL} currentUser={currentUser} />}
               </>
             )}

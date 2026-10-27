@@ -133,6 +133,13 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const processImageFile = async (file) => {
     if (!file) return
 
+    // 10 MB maximum file size limit
+    const MAX_FILE_SIZE = 10 * 1024 * 1024
+    if (file.size > MAX_FILE_SIZE) {
+      setError(`Image file is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Please select a photo under 10 MB.`)
+      return
+    }
+
     // Revoke previous preview URL to avoid memory leaks
     if (previewUrl) URL.revokeObjectURL(previewUrl)
 
@@ -1043,12 +1050,39 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   )
 }
 
-// Helper: convert File to base64 string for local storage
-function fileToBase64(file) {
+// Helper: convert File to downscaled base64 string for local storage (max 1024px, JPEG 85%)
+// Keeps clinical dermatological clarity while preventing IndexedDB mobile quota overflow
+function fileToBase64(file, maxDimension = 1024, quality = 0.85) {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader()
-    reader.onload = () => resolve(reader.result)
-    reader.onerror = () => reject(new Error('Failed to read file'))
-    reader.readAsDataURL(file)
+    const img = new Image()
+    const url = URL.createObjectURL(file)
+    img.onload = () => {
+      URL.revokeObjectURL(url)
+      let { width, height } = img
+      if (width > maxDimension || height > maxDimension) {
+        if (width > height) {
+          height = Math.round((height * maxDimension) / width)
+          width = maxDimension
+        } else {
+          width = Math.round((width * maxDimension) / height)
+          height = maxDimension
+        }
+      }
+      const canvas = document.createElement('canvas')
+      canvas.width = width
+      canvas.height = height
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0, width, height)
+      resolve(canvas.toDataURL('image/jpeg', quality))
+    }
+    img.onerror = () => {
+      URL.revokeObjectURL(url)
+      // Fallback to plain FileReader if Image decode fails
+      const reader = new FileReader()
+      reader.onload = () => resolve(reader.result)
+      reader.onerror = () => reject(new Error('Failed to read file'))
+      reader.readAsDataURL(file)
+    }
+    img.src = url
   })
 }

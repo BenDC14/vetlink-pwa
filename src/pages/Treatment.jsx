@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { updateConsultation } from '../db/database'
 
 const TREATMENT_PROTOCOLS = {
@@ -193,11 +193,17 @@ const TREATMENT_PROTOCOLS = {
   },
 }
 
-export default function Treatment({ onBack, caseData }) {
+export default function Treatment({ onBack, caseData, currentUser }) {
+  const isLibraryMode = !caseData?.patient
   const patient            = caseData?.patient
   const consultation       = caseData?.consultation
   const aiResult           = caseData?.aiResult
-  const diagnosis          = caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Ringworm'
+
+  const [selectedDisease, setSelectedDisease] = useState(
+    caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange'
+  )
+
+  const diagnosis          = isLibraryMode ? selectedDisease : (caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange')
   const secondaryDiagnosis  = caseData?.approvedSecondary || caseData?.secondaryDiagnosis || null
   const isComorbid         = Boolean(caseData?.isComorbid || secondaryDiagnosis)
   const isOverridden       = Boolean(caseData?.isOverridden)
@@ -276,6 +282,13 @@ export default function Treatment({ onBack, caseData }) {
   const [saveMessage, setSaveMessage]     = useState('')
   const [saveError, setSaveError]         = useState('')
 
+  useEffect(() => {
+    setPrescription(initialPrescription)
+    setClinicalNotes(initialNotes)
+    setSaveMessage('')
+    setSaveError('')
+  }, [selectedDisease, initialPrescription, initialNotes])
+
   const handleSaveTreatmentPlan = async () => {
     setIsSaving(true)
     setSaveMessage('')
@@ -289,8 +302,10 @@ export default function Treatment({ onBack, caseData }) {
           treatmentPlan: prescription,
           clinicalNotes: clinicalNotes,
         })
+        setSaveMessage('✓ Treatment plan and customized prescription successfully saved to patient medical record!')
+      } else {
+        setSaveMessage('✓ Clinical protocol verified. (Reference mode — ready for clinical execution).')
       }
-      setSaveMessage('✓ Treatment plan and customized prescription successfully saved to patient medical record!')
     } catch (err) {
       console.error('Failed to save treatment plan:', err)
       setSaveError('Could not save treatment plan to database. Please try again.')
@@ -309,13 +324,68 @@ export default function Treatment({ onBack, caseData }) {
     <>
       {/* ── Screen View: Interactive Treatment Plan ────────────────── */}
       <section className="treatment-card no-print">
+        {isLibraryMode && (
+          <div style={{ padding: '16px 20px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '14px', marginBottom: '18px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: '800', color: 'var(--text-h)' }}>
+                  Veterinary Pharmacopeia & Treatment Protocols
+                </h3>
+                <p style={{ margin: '3px 0 0', fontSize: '0.84rem', color: 'var(--muted)' }}>
+                  Evidence-based clinical dermatological guidelines, drug dosages, and home care protocols
+                </p>
+              </div>
+              <span style={{ fontSize: '0.75rem', fontWeight: '700', padding: '4px 10px', borderRadius: '8px', background: 'var(--brand-surface, #e8f5e9)', color: 'var(--brand-strong, #2e7d32)' }}>
+                Clinician Reference Mode
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px' }}>
+              {[
+                { name: 'Mange', label: '🐕 Mange (Demodectic/Sarcoptic)' },
+                { name: 'Ringworm', label: '🐕 Ringworm' },
+                { name: 'Pyoderma', label: '🐕 Pyoderma' },
+                { name: 'Hotspots', label: '🐕 Hot Spots' },
+                { name: 'Flea Allergy Dermatitis', label: '🐕 Flea Allergy' },
+                { name: 'Malassezia Dermatitis', label: '🐕 Malassezia' },
+                { name: 'Avian Fowl Pox', label: '🦜 Avian Fowl Pox' },
+                { name: 'Scaly Face Scaly Leg Mite (Knemidocoptes)', label: '🦜 Scaly Face/Leg Mite' },
+                { name: 'Rabbit Mange', label: '🐇 Rabbit Mange' },
+                { name: 'Rabbit Ringworm', label: '🐇 Rabbit Ringworm' },
+                { name: 'Healthy', label: '✨ Healthy (Wellness)' },
+              ].map((item) => (
+                <button
+                  key={item.name}
+                  type="button"
+                  onClick={() => setSelectedDisease(item.name)}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: '8px',
+                    border: selectedDisease === item.name ? '2px solid var(--accent, #5ca797)' : '1px solid var(--border)',
+                    background: selectedDisease === item.name ? 'var(--accent, #5ca797)' : 'var(--surface)',
+                    color: selectedDisease === item.name ? '#fff' : 'var(--text-body)',
+                    fontWeight: selectedDisease === item.name ? '700' : '500',
+                    fontSize: '0.82rem',
+                    cursor: 'pointer',
+                    transition: 'all 0.2s ease',
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
         <div className="treatment-banner">
           <div className="treatment-banner-icon">✓</div>
           <div>
-            <h2>Validated by Veterinarian</h2>
+            <h2>{isLibraryMode ? `Clinical Guideline: ${diagnosis}` : 'Validated by Veterinarian'}</h2>
             <p>
               {patient ? `Patient: ${patient.name} (${patient.species}) • ` : ''}
-              Treatment recommendation approved and ready for clinical execution.
+              {isLibraryMode
+                ? 'Standard evidence-based clinical therapy recommendation approved for veterinary practice.'
+                : 'Treatment recommendation approved and ready for clinical execution.'}
             </p>
           </div>
         </div>
