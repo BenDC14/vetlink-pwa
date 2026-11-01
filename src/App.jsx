@@ -32,9 +32,9 @@ function App() {
   const [treatmentCaseData, setTreatmentCaseData] = useState(null)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
-  const [authToken, setAuthToken] = useState(() => sessionStorage.getItem('vetlink_auth_token') || '')
+  const [authToken, setAuthToken] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem('vetlink_auth_token') || '' : ''))
   const [currentUser, setCurrentUser] = useState(null)
-  const [isCheckingSession, setIsCheckingSession] = useState(Boolean(sessionStorage.getItem('vetlink_auth_token')))
+  const [isCheckingSession, setIsCheckingSession] = useState(Boolean(typeof localStorage !== 'undefined' && localStorage.getItem('vetlink_auth_token')))
   const [deferredPrompt, setDeferredPrompt] = useState(null)
   const [isInstalled, setIsInstalled] = useState(false)
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
@@ -96,7 +96,10 @@ function App() {
   }
 
   useEffect(() => {
-    if (!authToken) return
+    if (!authToken) {
+      setIsCheckingSession(false)
+      return
+    }
 
     fetch(`${API_BASE_URL}/api/auth/me`, {
       headers: { Authorization: `Bearer ${authToken}` },
@@ -107,12 +110,33 @@ function App() {
       })
       .then((user) => {
         setCurrentUser(user)
+        if (typeof localStorage !== 'undefined') {
+          localStorage.setItem('vetlink_cached_user', JSON.stringify(user))
+        }
         if (!user.must_change_password) setLoggedIn(true)
       })
-      .catch(() => {
-        sessionStorage.removeItem('vetlink_auth_token')
-        setAuthToken('')
-        setCurrentUser(null)
+      .catch((err) => {
+        if (err.message === 'Session expired') {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.removeItem('vetlink_auth_token')
+            localStorage.removeItem('vetlink_cached_user')
+          }
+          setAuthToken('')
+          setCurrentUser(null)
+          setLoggedIn(false)
+        } else {
+          // Offline/Network unreachable: keep logged in with cached user profile
+          const cached = typeof localStorage !== 'undefined' ? localStorage.getItem('vetlink_cached_user') : null
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached)
+              setCurrentUser(parsed)
+              setLoggedIn(true)
+            } catch {
+              // fallback
+            }
+          }
+        }
       })
       .finally(() => setIsCheckingSession(false))
   }, [authToken])
@@ -305,19 +329,19 @@ function App() {
         body: JSON.stringify({ email: loginEmail, password: loginPassword }),
       })
       const result = await response.json()
-      if (!response.ok) throw new Error(result.detail || 'Unable to sign in')
+      if (!response.ok) throw new Error(result.detail || 'Invalid email or password')
 
-      sessionStorage.setItem('vetlink_auth_token', result.access_token)
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('vetlink_auth_token', result.access_token)
+        localStorage.setItem('vetlink_cached_user', JSON.stringify({ ...result.user, must_change_password: result.must_change_password }))
+      }
       setAuthToken(result.access_token)
       setCurrentUser({ ...result.user, must_change_password: result.must_change_password })
       if (!result.must_change_password) setLoggedIn(true)
       return result
     } catch (err) {
-      // If backend server is unreachable (Failed to fetch), allow seamless offline demo login!
       if (err.name === 'TypeError' || err.message?.includes('fetch') || err.message?.includes('NetworkError') || err.message?.includes('Failed to fetch')) {
-        console.warn('Backend server unreachable. Logging in with local offline session.')
-        handleOfflineLogin('Clinic Admin')
-        return { offline: true }
+        throw new Error('Cannot connect to clinic server (Backend unreachable). Make sure the server is online or continue in Offline Demo Mode below.')
       }
       throw err
     }
@@ -347,7 +371,10 @@ function App() {
     } catch {
       // Clear the local session even when the server cannot be reached.
     } finally {
-      sessionStorage.removeItem('vetlink_auth_token')
+      if (typeof localStorage !== 'undefined') {
+        localStorage.removeItem('vetlink_auth_token')
+        localStorage.removeItem('vetlink_cached_user')
+      }
       setAuthToken('')
       setCurrentUser(null)
       setLoggedIn(false)
@@ -442,6 +469,7 @@ function App() {
           setPassword={setPassword}
           onLogin={handleLogin}
           onChangePassword={handleChangePassword}
+          onOfflineDemo={() => handleOfflineLogin('Clinic Admin')}
         />
       ) : (
         <div className="dashboard-shell">
