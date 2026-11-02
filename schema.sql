@@ -42,7 +42,7 @@ CREATE TABLE IF NOT EXISTS auth_sessions (
 
 CREATE TABLE IF NOT EXISTS id_counters (
   prefix VARCHAR(16) PRIMARY KEY,
-  last_value INT NOT NULL
+  `last_value` INT NOT NULL
 ) ENGINE=InnoDB;
 
 -- --------------------------------------------------------

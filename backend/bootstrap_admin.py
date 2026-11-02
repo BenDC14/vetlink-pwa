@@ -26,10 +26,10 @@ def main():
         conn.begin()
         with conn.cursor() as cursor:
             cursor.execute(
-                "INSERT INTO id_counters (prefix, last_value) VALUES ('ST', 0) "
-                "ON DUPLICATE KEY UPDATE last_value = last_value"
+                "INSERT INTO id_counters (prefix, `last_value`) VALUES ('ST', 0) "
+                "ON DUPLICATE KEY UPDATE `last_value` = `last_value`"
             )
-            cursor.execute("SELECT last_value FROM id_counters WHERE prefix = 'ST' FOR UPDATE")
+            cursor.execute("SELECT `last_value` FROM id_counters WHERE prefix = 'ST' FOR UPDATE")
             counter_value = cursor.fetchone()["last_value"]
             cursor.execute("SELECT id FROM users WHERE id REGEXP '^ST-[0-9]+$'")
             existing_ids = cursor.fetchall()
@@ -38,7 +38,7 @@ def main():
             )
             next_value = maximum_id + 1
             user_id = f"ST-{next_value:03d}"
-            cursor.execute("UPDATE id_counters SET last_value = %s WHERE prefix = 'ST'", (next_value,))
+            cursor.execute("UPDATE id_counters SET `last_value` = %s WHERE prefix = 'ST'", (next_value,))
             cursor.execute(
                 """INSERT INTO users
                    (id, username, name, role, password_hash, must_change_password, is_active,

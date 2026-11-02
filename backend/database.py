@@ -69,11 +69,17 @@ def auto_initialize_schema():
     conn = get_connection(include_db=False)
     try:
         with conn.cursor() as cursor:
+            # Ensure target database exists and is active
+            cursor.execute(f"CREATE DATABASE IF NOT EXISTS `{DB_NAME}` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;")
+            cursor.execute(f"USE `{DB_NAME}`;")
             # Read and split SQL commands from schema.sql
             sql_content = schema_path.read_text(encoding="utf-8")
             # Execute multiple statements
             statements = [s.strip() for s in sql_content.split(";") if s.strip()]
             for stmt in statements:
+                normalized = stmt.strip().upper()
+                if normalized.startswith("CREATE DATABASE") or normalized.startswith("USE "):
+                    continue
                 cursor.execute(stmt)
             cursor.execute("SHOW COLUMNS FROM users")
             user_columns = {row["Field"] for row in cursor.fetchall()}
