@@ -8,15 +8,18 @@ from backend.security import hash_password
 def main():
     parser = argparse.ArgumentParser(description="Create the first VetLink clinic administrator.")
     parser.add_argument("--email", required=True, help="Administrator email address")
+    parser.add_argument("--password", required=False, default=None, help="Administrator temporary password")
     args = parser.parse_args()
     email = args.email.strip().lower()
     if "@" not in email:
         parser.error("Provide a valid email address.")
 
-    password = getpass.getpass("Temporary admin password (input hidden): ")
-    confirmation = getpass.getpass("Confirm temporary password: ")
-    if password != confirmation:
-        parser.error("Passwords did not match.")
+    password = args.password
+    if not password:
+        password = getpass.getpass("Temporary admin password (input hidden): ")
+        confirmation = getpass.getpass("Confirm temporary password: ")
+        if password != confirmation:
+            parser.error("Passwords did not match.")
     if len(password) < 10:
         parser.error("Temporary password must be at least 10 characters.")
 
