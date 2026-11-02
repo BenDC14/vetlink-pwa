@@ -13,7 +13,7 @@ DB_PORT = int(os.getenv("DB_PORT", 3306))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "vetlink_db")
-DB_SSL = os.getenv("DB_SSL", "false").lower() in ("true", "1", "yes")
+DB_SSL = os.getenv("DB_SSL", "false").lower() in ("true", "1", "yes", "required")
 
 
 def get_connection(include_db: bool = True):
