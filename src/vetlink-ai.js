@@ -189,7 +189,12 @@ export async function predict(imageElement, species = 'Canine') {
   // 1. PRIMARY PATH: High-speed native TFLite inference via backend
   const b64 = imageToBase64(imageElement)
   if (b64) {
-    const candidateEndpoints = ['/api/ai/predict', 'http://localhost:8000/api/ai/predict']
+    const apiBase = (typeof import.meta !== 'undefined' && import.meta.env?.VITE_API_BASE_URL) || ''
+    const candidateEndpoints = [
+      ...(apiBase ? [`${apiBase.replace(/\/+$/, '')}/api/ai/predict`] : []),
+      '/api/ai/predict',
+      'http://localhost:8000/api/ai/predict',
+    ]
     for (const endpoint of candidateEndpoints) {
       try {
         const res = await fetch(endpoint, {

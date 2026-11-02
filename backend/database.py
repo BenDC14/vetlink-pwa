@@ -13,10 +13,12 @@ DB_PORT = int(os.getenv("DB_PORT", 3306))
 DB_USER = os.getenv("DB_USER", "root")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_NAME = os.getenv("DB_NAME", "vetlink_db")
+DB_SSL = os.getenv("DB_SSL", "false").lower() in ("true", "1", "yes")
 
 
 def get_connection(include_db: bool = True):
     """Establish and return a PyMySQL connection."""
+    ssl_kwargs = {"ssl": {"ssl_mode": "REQUIRED"}} if DB_SSL else {}
     try:
         conn = pymysql.connect(
             host=DB_HOST,
@@ -27,6 +29,7 @@ def get_connection(include_db: bool = True):
             cursorclass=pymysql.cursors.DictCursor,
             charset="utf8mb4",
             autocommit=True,
+            **ssl_kwargs
         )
         return conn
     except pymysql.MySQLError as err:
