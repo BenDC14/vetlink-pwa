@@ -28,7 +28,7 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
     name: '',
     username: '',
     temporaryPassword: '',
-    role: 'Technician',
+    role: 'Clinic Staff',
     deviceStatus: 'Online',
   })
 
@@ -114,7 +114,7 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
       name: '',
       username: '',
       temporaryPassword: '',
-      role: 'Technician',
+      role: 'Clinic Staff',
       deviceStatus: 'Online',
     })
     setIsModalOpen(true)
@@ -128,7 +128,7 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
       name: staff.name,
       username: staff.username || '',
       temporaryPassword: '',
-      role: staff.role || 'Technician',
+      role: staff.role || 'Clinic Staff',
       deviceStatus: staff.deviceStatus || 'Online',
     })
     setIsModalOpen(true)
@@ -270,10 +270,8 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
             aria-label="Filter by role"
           >
             <option value="All">All Roles</option>
-            <option value="Veterinarian">Veterinarian</option>
-            <option value="Technician">Technician</option>
-            <option value="Assistant">Assistant</option>
             <option value="Clinic Admin">Clinic Admin</option>
+            <option value="Clinic Staff">Clinic Staff</option>
           </select>
         </div>
       </div>
@@ -462,9 +460,7 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
                   value={formData.role}
                   onChange={(e) => setFormData({ ...formData, role: e.target.value })}
                 >
-                  <option value="Veterinarian">Veterinarian</option>
-                  <option value="Technician">Technician</option>
-                  <option value="Assistant">Assistant</option>
+                  <option value="Clinic Staff">Clinic Staff</option>
                   <option value="Clinic Admin">Clinic Admin</option>
                 </select>
               </label>

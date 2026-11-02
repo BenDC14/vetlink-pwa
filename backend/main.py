@@ -271,7 +271,7 @@ def admin_create_user(request: AdminCreateUserRequest, authorization: Optional[s
     require_admin(admin)
     name = request.name.strip()
     email = request.email.strip().lower()
-    allowed_roles = {"Veterinarian", "Technician", "Assistant", "Clinic Admin"}
+    allowed_roles = {"Clinic Staff", "Clinic Admin"}
     if not name or "@" not in email:
         raise HTTPException(status_code=400, detail="A name and valid email are required")
     if request.role not in allowed_roles:
@@ -412,7 +412,7 @@ def upsert_user(cursor, payload: dict):
     user_id = payload.get("id")
     username = payload.get("username") or f"{user_id}@clinic.vet"
     name = payload.get("name") or "Unnamed Staff"
-    role = payload.get("role", "Technician")
+    role = payload.get("role", "Clinic Staff")
     device_status = payload.get("deviceStatus") or payload.get("device_status", "Online")
     version = payload.get("version", 1)
     now = datetime.utcnow()

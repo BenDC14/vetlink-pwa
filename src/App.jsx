@@ -310,11 +310,12 @@ function App() {
   }
 
   const handleOfflineLogin = (role = 'Clinic Admin') => {
+    const isAdmin = role === 'Clinic Admin'
     const offlineUser = {
-      id: 'ST-001',
-      name: 'Dr. Sarah Lin (Offline Demo)',
+      id: isAdmin ? 'ST-001' : 'ST-002',
+      name: isAdmin ? 'Clinic Administrator (Demo)' : 'Clinic Staff Member (Demo)',
       role: role,
-      email: email || 'dr.sarah.lin@clinic.vet',
+      email: isAdmin ? 'admin@clinic.vet' : 'staff@clinic.vet',
       isOffline: true,
     }
     setCurrentUser(offlineUser)
@@ -469,7 +470,7 @@ function App() {
           setPassword={setPassword}
           onLogin={handleLogin}
           onChangePassword={handleChangePassword}
-          onOfflineDemo={() => handleOfflineLogin('Clinic Admin')}
+          onOfflineDemo={handleOfflineLogin}
         />
       ) : (
         <div className="dashboard-shell">
@@ -495,7 +496,7 @@ function App() {
                 </div>
                 <div className="doctor-info">
                   <span className="doctor-name">{currentUser?.name || 'Dr. Emily Chen, DVM'}</span>
-                  <span className="doctor-role">{currentUser?.role || 'Attending Veterinarian'}</span>
+                  <span className="doctor-role">{currentUser?.role || 'Clinic Staff'}</span>
                 </div>
               </div>
             </div>
@@ -545,7 +546,7 @@ function App() {
                   </div>
                 </button>
               )}
-              {(currentUser?.role === 'Clinic Admin' || currentUser?.role?.toLowerCase().includes('vet') || !currentUser?.role) && (
+              {(currentUser?.role === 'Clinic Admin' || currentUser?.role === 'Clinic Staff' || !currentUser?.role) && (
                 <button
                   type="button"
                   className={"nav-item " + (activeView === 'treatment' && !showNewPatient && !showSettings ? 'active' : '')}

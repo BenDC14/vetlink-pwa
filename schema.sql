@@ -16,7 +16,7 @@ CREATE TABLE IF NOT EXISTS users (
   id VARCHAR(64) PRIMARY KEY,
   username VARCHAR(128) NOT NULL UNIQUE,
   name VARCHAR(128) NOT NULL,
-  role VARCHAR(64) DEFAULT 'Technician',
+  role VARCHAR(64) DEFAULT 'Clinic Staff',
   password_hash VARCHAR(255) NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
@@ -257,9 +257,8 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (
 -- Initial Seed Data
 -- --------------------------------------------------------
 INSERT IGNORE INTO users (id, username, name, role, device_status, sync_status, version) VALUES
-('ST-001', 'dr.sarah.lin@clinic.vet', 'Dr. Sarah Lin', 'Veterinarian', 'Online', 'synced', 1),
-('ST-002', 'alex.tan@clinic.vet', 'Alex Tan', 'Technician', 'Offline', 'synced', 1),
-('ST-003', 'maria.reyes@clinic.vet', 'Maria Reyes', 'Assistant', 'Online', 'synced', 1);
+('ST-001', 'admin@clinic.vet', 'Clinic Administrator', 'Clinic Admin', 'Online', 'synced', 1),
+('ST-002', 'staff@clinic.vet', 'Clinic Staff Member', 'Clinic Staff', 'Online', 'synced', 1);
 
 INSERT IGNORE INTO skin_conditions (id, name, description, recommended_treatment) VALUES
 ('COND-01', 'Irritant Contact Dermatitis', 'Non-infectious cutaneous reaction due to chemical or physical irritants.', 'Gentle cleansing, avoid suspected irritants, barrier ointment.'),

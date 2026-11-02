@@ -523,7 +523,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   }
 
   const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-  const isVetOrAdmin = currentUser?.role === 'Clinic Admin' || currentUser?.role?.toLowerCase().includes('vet') || !currentUser?.role
+  const isVetOrAdmin = currentUser?.role === 'Clinic Admin' || !currentUser?.role
 
   // Group protocol names for the categorized dropdown
   const categories = {
