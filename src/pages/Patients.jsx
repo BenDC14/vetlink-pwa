@@ -3,6 +3,7 @@ import {
   getPatients,
   mergeCloudPatients,
   updatePatient,
+  deletePatient,
   addConsultation,
   getConsultationsByPatient,
   updateConsultation,
@@ -189,6 +190,20 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
       setFormError(error.message || 'Could not save patient changes.')
     } finally {
       setIsSaving(false)
+    }
+  }
+
+  const handleDeletePatient = async (patient) => {
+    if (!window.confirm(`Are you sure you want to delete patient "${patient.name}" (${patient.id})? This will permanently remove the record and its unsubmitted scans.`)) {
+      return
+    }
+    try {
+      await deletePatient(patient.id)
+      setPatients((prev) => prev.filter((p) => p.id !== patient.id))
+      setSuccessMessage(`Patient ${patient.id} (${patient.name}) was deleted.`)
+    } catch (err) {
+      console.error('Failed to delete patient:', err)
+      alert('Could not delete patient record: ' + (err.message || 'Unknown error'))
     }
   }
 
@@ -622,6 +637,15 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       title="Edit Patient Details"
                     >
                       Edit
+                    </button>
+                    <button
+                      className="small-outline table-action-btn delete-pill-btn"
+                      type="button"
+                      onClick={() => handleDeletePatient(patient)}
+                      title="Delete Patient Record"
+                      style={{ color: '#ef4444', borderColor: '#fca5a5' }}
+                    >
+                      Delete
                     </button>
                   </div>
                 </td>

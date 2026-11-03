@@ -163,6 +163,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [ownerPhone, setOwnerPhone] = useState('')
   const [areaOfConcern, setAreaOfConcern] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const isSavingRef = useRef(false)
   const [error, setError] = useState('')
 
   // Image & AI state
@@ -416,11 +417,13 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
   // Save the patient record, then retain its linked local case analysis.
   const handleSave = async (proceedToTreatment = false) => {
+    if (isSavingRef.current || isSaving) return
     if (!name.trim()) { setError('Patient name is required.'); return }
     if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
     if (qualityRejection) { setError(`Cannot save: Image was rejected (${qualityRejection.reason || 'Quality Check Failed'}). Please capture or upload a valid animal skin lesion photo.`); return }
     if (!aiResult) { setError('Waiting for AI analysis to complete.'); return }
 
+    isSavingRef.current = true
     setIsSaving(true)
     setError('')
 
@@ -558,6 +561,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       console.error('Failed to save patient:', saveError)
       setError('Unable to save. Please try again.')
     } finally {
+      isSavingRef.current = false
       setIsSaving(false)
     }
   }
