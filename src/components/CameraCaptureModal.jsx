@@ -135,26 +135,36 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
     setFacingMode(nextMode)
   }
 
-  // Snap photo from live video frame
+  // Snap photo from live video frame with Square Lesion ROI Cropping
   const handleSnapPhoto = () => {
     const video = videoRef.current
     if (!video) return
 
-    const width = video.videoWidth || 1280
-    const height = video.videoHeight || 720
+    const rawW = video.videoWidth || 1280
+    const rawH = video.videoHeight || 720
 
+    // Compute square ROI matching the viewfinder box (68% of min dimension)
+    const minDim = Math.min(rawW, rawH)
+    const cropSize = Math.round(minDim * 0.75)
+    const startX = Math.round((rawW - cropSize) / 2)
+    const startY = Math.round((rawH - cropSize) / 2)
+
+    // Downscale target to max 1024x1024 for instant upload & inference (0% loss for MobileNetV3)
+    const targetDim = Math.min(cropSize, 1024)
     const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
+    canvas.width = targetDim
+    canvas.height = targetDim
     const ctx = canvas.getContext('2d')
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
 
     // If using user/front camera on laptop or phone, mirror horizontally
     if (facingMode === 'user') {
-      ctx.translate(width, 0)
+      ctx.translate(targetDim, 0)
       ctx.scale(-1, 1)
     }
 
-    ctx.drawImage(video, 0, 0, width, height)
+    ctx.drawImage(video, startX, startY, cropSize, cropSize, 0, 0, targetDim, targetDim)
 
     canvas.toBlob(
       (blob) => {
@@ -170,7 +180,7 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
         stopTracks()
       },
       'image/jpeg',
-      0.95
+      0.88
     )
   }
 
