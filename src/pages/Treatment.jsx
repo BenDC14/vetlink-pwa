@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { updateConsultation } from '../db/database'
 
 export const BASE_TREATMENT_PROTOCOLS = {
@@ -297,6 +297,73 @@ function getSpeciesProtocolKey(diseaseName, speciesName) {
   return diseaseName
 }
 
+// Isolated hidden iframe printer: Prints without triggering @media print on parent window
+// Prevents parent webpage from flashing white or hiding dashboard UI behind the print dialog
+function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Document') {
+  if (!elementHtml) return
+
+  const iframe = document.createElement('iframe')
+  iframe.style.position = 'fixed'
+  iframe.style.right = '0'
+  iframe.style.bottom = '0'
+  iframe.style.width = '0'
+  iframe.style.height = '0'
+  iframe.style.border = '0'
+  iframe.style.visibility = 'hidden'
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>${docTitle}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 14mm 16mm;
+          }
+          * {
+            box-sizing: border-box;
+          }
+          body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+        </style>
+      </head>
+      <body>
+        ${elementHtml}
+      </body>
+    </html>
+  `)
+  doc.close()
+
+  iframe.contentWindow.focus()
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.print()
+    } catch (err) {
+      console.error('Isolated iframe print error:', err)
+    } finally {
+      setTimeout(() => {
+        try {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe)
+          }
+        } catch (e) {}
+      }, 1500)
+    }
+  }, 250)
+}
+
 export default function Treatment({ onBack, caseData, currentUser }) {
   const [protocols, setProtocols] = useState(loadSavedProtocols)
   const isLibraryMode = !caseData?.patient
@@ -535,7 +602,26 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   }
 
   const handlePrint = () => {
-    window.print()
+    if (isAwaitingLab) {
+      handlePrintLabSlip()
+    } else {
+      handlePrintRx()
+    }
+  }
+
+  const rxPrintCardRef = useRef(null)
+  const labSlipPrintCardRef = useRef(null)
+
+  const handlePrintRx = () => {
+    const content = rxPrintCardRef.current ? rxPrintCardRef.current.innerHTML : ''
+    if (!content) return
+    printElementViaIframe(content, `Prescription_${patient?.name || 'Patient'}_${cleanRxId}`)
+  }
+
+  const handlePrintLabSlip = () => {
+    const content = labSlipPrintCardRef.current ? labSlipPrintCardRef.current.innerHTML : ''
+    if (!content) return
+    printElementViaIframe(content, `LabOrder_${patient?.name || 'Patient'}_${cleanRxId}`)
   }
 
   const cleanDiagnosisDisplay = secondaryDiagnosis
@@ -580,26 +666,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
     <>
       <style>{`
         @media print {
-          body * {
-            visibility: hidden !important;
-          }
-          .official-rx-print-document, .official-rx-print-document * {
-            visibility: visible !important;
-          }
-          .official-rx-print-document {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 24px 30px !important;
-            background: white !important;
-            color: #0f172a !important;
-            display: block !important;
-            box-sizing: border-box !important;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-          }
-          .no-print {
+          .no-print, .modal-overlay {
             display: none !important;
           }
         }
@@ -1145,7 +1212,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
             </div>
 
             {/* Authentic White Paper Document Preview */}
-            <div style={{ background: '#ffffff', color: '#0f172a', padding: 28, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a' }}>
+            <div ref={rxPrintCardRef} style={{ background: '#ffffff', color: '#0f172a', padding: 28, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a' }}>
               <div style={{ textAlign: 'center', borderBottom: '2px solid #0f172a', paddingBottom: 12, marginBottom: 16 }}>
                 <h2 style={{ margin: '0 0 4px', fontSize: '1.45rem', color: '#0f172a', letterSpacing: '0.5px' }}>
                   VETLINK ANIMAL CARE CLINIC & HOSPITAL
@@ -1238,10 +1305,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setShowRxPreviewModal(false)
-                  setTimeout(() => window.print(), 250)
-                }}
+                onClick={handlePrintRx}
                 className="action-btn blue"
                 style={{ padding: '8px 20px', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
               >
@@ -1272,7 +1336,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
             </div>
 
             {/* Authentic White Paper Requisition Sheet */}
-            <div style={{ background: '#ffffff', color: '#0f172a', padding: 28, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a' }}>
+            <div ref={labSlipPrintCardRef} style={{ background: '#ffffff', color: '#0f172a', padding: 28, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a' }}>
               <div style={{ textAlign: 'center', borderBottom: '2px solid #0f172a', paddingBottom: 12, marginBottom: 14 }}>
                 <h2 style={{ margin: '0 0 4px', fontSize: '1.45rem', color: '#0f172a', letterSpacing: '0.5px' }}>
                   VETLINK ANIMAL CARE CLINIC & HOSPITAL
@@ -1350,10 +1414,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setShowLabSlipPreviewModal(false)
-                  setTimeout(() => window.print(), 250)
-                }}
+                onClick={handlePrintLabSlip}
                 className="action-btn blue"
                 style={{ padding: '8px 20px', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
               >

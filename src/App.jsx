@@ -516,7 +516,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className={"nav-item " + (activeView === 'patients' && !showNewPatient ? 'active' : '')}
+                className={"nav-item " + ((activeView === 'patients' || (activeView === 'treatment' && treatmentCaseData)) && !showNewPatient ? 'active' : '')}
                 onClick={() => { setActiveView('patients'); setShowNewPatient(false); setShowSettings(false); }}
               >
                 <div className="nav-item-label">
@@ -529,6 +529,26 @@ function App() {
                   <span>Patient Records</span>
                 </div>
               </button>
+              {activeView === 'treatment' && treatmentCaseData && !showNewPatient && (
+                <div style={{
+                  margin: '-4px 10px 10px 24px',
+                  padding: '5px 10px',
+                  background: 'rgba(13, 148, 136, 0.15)',
+                  borderLeft: '3px solid #0d9488',
+                  borderRadius: '0 6px 6px 0',
+                  fontSize: '0.78rem',
+                  color: '#2dd4bf',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#2dd4bf', display: 'inline-block' }}></span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    Consulting: {treatmentCaseData?.patient?.name || treatmentCaseData?.name || 'Patient'}
+                  </span>
+                </div>
+              )}
               {currentUser?.role === 'Clinic Admin' && (
                 <button
                   type="button"
@@ -549,7 +569,7 @@ function App() {
               {(currentUser?.role === 'Clinic Admin' || !currentUser?.role) && (
                 <button
                   type="button"
-                  className={"nav-item " + (activeView === 'treatment' && !showNewPatient && !showSettings ? 'active' : '')}
+                  className={"nav-item " + (activeView === 'treatment' && !treatmentCaseData && !showNewPatient && !showSettings ? 'active' : '')}
                   onClick={() => { setTreatmentCaseData(null); setActiveView('treatment'); setShowNewPatient(false); setShowSettings(false); }}
                 >
                   <div className="nav-item-label">

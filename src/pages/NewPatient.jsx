@@ -415,7 +415,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   }
 
   // Save the patient record, then retain its linked local case analysis.
-  const handleSave = async () => {
+  const handleSave = async (proceedToTreatment = false) => {
     if (!name.trim()) { setError('Patient name is required.'); return }
     if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
     if (qualityRejection) { setError(`Cannot save: Image was rejected (${qualityRejection.reason || 'Quality Check Failed'}). Please capture or upload a valid animal skin lesion photo.`); return }
@@ -490,7 +490,51 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       // 6. Save itemized symptoms into consultationSymptoms store
       await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
 
-      // 7. Success state for all users: Intake confirmed
+      const fullPayload = {
+        patient,
+        consultation,
+        aiResult,
+        previewUrl,
+        comorbidityInfo: comorb,
+        selectedSymptoms,
+        otherSymptoms,
+        labTestRequired,
+        assignedStatus,
+        diagnosis: aiResult.displayLabel,
+        secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
+        isComorbid: comorb.isComorbid,
+      }
+
+      // If requested to proceed directly to treatment (e.g. Clinic Admin / Vet direct action)
+      if (proceedToTreatment && onCapture) {
+        onCapture({
+          ...fullPayload,
+          proceedToTreatment: true,
+        })
+        return
+      }
+
+      // Otherwise, clean up form state and show admitted confirmation card
+      setName('')
+      setSpecies('Canine')
+      setBreed('')
+      setWeight('')
+      setAge('')
+      setOwnerName('')
+      setOwnerPhone('')
+      setAreaOfConcern('')
+      setSelectedSymptoms([])
+      setOtherSymptoms('')
+      setCustomSymptomInput('')
+      setSelectedFile(null)
+      setAiResult(null)
+      setQualityRejection(null)
+      setLabTestRequired(false)
+      setLabTestReason('')
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+
       setIntakeSuccess(true)
       setSavedSummary({
         patientId: patient.id,
@@ -503,21 +547,12 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         diagnosis: aiResult.displayLabel,
         secondary: comorb.isComorbid ? comorb.secondary : null,
         labOrdered: labTestRequired,
-        fullPayload: {
-          patient,
-          consultation,
-          aiResult,
-          previewUrl,
-          comorbidityInfo: comorb,
-          selectedSymptoms,
-          otherSymptoms,
-          labTestRequired,
-          assignedStatus,
-          diagnosis: aiResult.displayLabel,
-          secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
-          isComorbid: comorb.isComorbid,
-        }
+        fullPayload,
       })
+
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
+      }
 
     } catch (saveError) {
       console.error('Failed to save patient:', saveError)
@@ -654,14 +689,17 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         </div>
       )}
 
-      <div className="new-patient-header">
-        <button className="secondary-btn small-back" type="button" onClick={onBack}>← DASHBOARD</button>
-        <span className={`status-chip ${modelReady ? 'green' : modelError ? 'red' : 'gray'}`}>
-          {modelReady ? 'AI READY' : modelError ? 'AI ERROR' : 'LOADING AI...'}
-        </span>
-      </div>
+      {/* Main Form — hidden when intake was successful so only the admitted card shows */}
+      {!intakeSuccess && (
+        <>
+          <div className="new-patient-header">
+            <button className="secondary-btn small-back" type="button" onClick={onBack}>← DASHBOARD</button>
+            <span className={`status-chip ${modelReady ? 'green' : modelError ? 'red' : 'gray'}`}>
+              {modelReady ? 'AI READY' : modelError ? 'AI ERROR' : 'LOADING AI...'}
+            </span>
+          </div>
 
-      <div className="new-patient-topbar">
+          <div className="new-patient-topbar">
         <div>
           <div className="brand-badge">NEW CASE</div>
           <p>Fill in details then capture a photo</p>
@@ -1264,25 +1302,59 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
               {/* Step 2: Save after AI result is ready */}
               {aiResult && !qualityRejection && !isAnalyzing && (
-                <button
-                  className="capture-btn"
-                  type="button"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', marginTop: 8 }}
-                >
-                  {isSaving
-                    ? 'SAVING PATIENT & SCAN...'
-                    : currentUser?.role === 'Clinic Staff'
-                      ? 'SAVE INTAKE & QUEUE FOR VET REVIEW'
-                      : 'SAVE PATIENT RECORD'}
-                </button>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                  {currentUser?.role === 'Clinic Admin' ? (
+                    <>
+                      <button
+                        className="capture-btn"
+                        type="button"
+                        onClick={() => handleSave(true)}
+                        disabled={isSaving}
+                        style={{
+                          background: 'linear-gradient(135deg, #0d9488, #0f766e)',
+                          boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
+                          fontWeight: 700
+                        }}
+                      >
+                        {isSaving ? 'SAVING PATIENT & SCAN...' : 'SAVE & PROCEED TO CONSULTATION / RX'}
+                      </button>
+                      <button
+                        className="secondary-btn"
+                        type="button"
+                        onClick={() => handleSave(false)}
+                        disabled={isSaving}
+                        style={{
+                          padding: '11px 16px',
+                          fontSize: '0.88rem',
+                          fontWeight: 600,
+                          background: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                          color: '#334155'
+                        }}
+                      >
+                        SAVE & INTAKE NEXT PATIENT
+                      </button>
+                    </>
+                  ) : (
+                    <button
+                      className="capture-btn"
+                      type="button"
+                      onClick={() => handleSave(false)}
+                      disabled={isSaving}
+                      style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
+                    >
+                      {isSaving ? 'SAVING INTAKE & SCAN...' : 'SAVE INTAKE & QUEUE FOR VET REVIEW'}
+                    </button>
+                  )}
+                </div>
               )}
             </div>
           </div>
         </div>
 
       </div>
+      </>
+      )}
 
       {/* Cross-platform Live Camera Viewfinder Modal */}
       {/* Live Clinical Camera Modal */}
