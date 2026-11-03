@@ -1134,19 +1134,19 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             {aiResult && !qualityRejection && !isAnalyzing && (
               <div style={{ marginTop: 12, padding: 12, background: labTestRequired ? '#fffbeb' : '#f8fafc', border: labTestRequired ? '1px solid #fde68a' : '1px solid #e2e8f0', borderRadius: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: 'pointer' }}>
+                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
                     <input
                       type="checkbox"
                       checked={labTestRequired}
                       onChange={(e) => setLabTestRequired(e.target.checked)}
-                      style={{ marginTop: 2, cursor: 'pointer' }}
+                      style={{ marginTop: 2, width: 17, height: 17, cursor: 'pointer', accentColor: '#059669', flexShrink: 0 }}
                     />
                     <div>
                       <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: labTestRequired ? '#b45309' : '#1e293b' }}>
                         Confirmatory Diagnostic Lab Test Required
                       </span>
-                      <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
-                        Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <code>Awaiting Lab Test</code>).
+                      <p style={{ margin: '3px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
+                        Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <span style={{ background: '#e2e8f0', color: '#0f172a', padding: '2px 6px', borderRadius: 4, fontWeight: 600, fontSize: '0.74rem', fontFamily: 'monospace' }}>Awaiting Lab Test</span>).
                       </p>
                     </div>
                   </label>
