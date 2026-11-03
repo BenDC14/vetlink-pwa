@@ -115,16 +115,11 @@ export async function generateGradCAM(imageElement, alpha = 0.5) {
       const meanErythema = erythemaSum / (patchValid || 1)
       const meanTexture  = textureSum  / (patchValid || 1)
 
-      // Suppress border perimeter cells where room backgrounds, floor, or hands appear
-      const isPerimeter = (gx === 0 || gx === gridSize - 1 || gy === 0 || gy === gridSize - 1)
-      const perimeterPenalty = isPerimeter ? 0.45 : 1.0
-
-      // Radial Gaussian receptive field prior centered on camera viewfinder
-      const distFromCenter = Math.hypot(gx - 3, gy - 3)
-      const centerPrior    = Math.exp(-(distFromCenter * distFromCenter) / 9.0)
-
-      // Combine inflammation + texture roughness with center & perimeter weighting
-      grid[gy][gx] = (meanErythema * 0.70 + meanTexture * 0.30) * centerPrior * perimeterPenalty
+      // Dynamic Multi-Focal Lesion Saliency:
+      // Evaluates true localized erythema (inflammation) and texture roughness (crusting, pustules, alopecia margins)
+      // without artificial center biasing, allowing hotspots to illuminate anywhere on the patient (ears, comb, flank, limbs).
+      const rawSaliency = (meanErythema * 0.65 + meanTexture * 0.35)
+      grid[gy][gx] = rawSaliency
     }
   }
 

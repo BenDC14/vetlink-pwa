@@ -1002,15 +1002,27 @@ def get_animal_verifier():
     return _animal_verifier, _animal_mask
 
 SCREEN_OR_TECH_CLASSES = {
-    # Screens / Monitors / Computers / UI
-    "screen", "monitor", "television", "web_site", "digital_clock", "analog_clock",
-    "cellular_telephone", "laptop", "notebook", "desktop_computer", "ping-pong_ball",
-    "switch", "envelope", "traffic_light", "joystick", "scoreboard", "projector",
-    "packet", "menu", "binder", "book_jacket", "desk", "dining_table", "radiator",
-    "sliding_door", "window_shade", "remote_control", "keyboard", "mouse", "modem",
-    "hard_disc", "loudspeaker", "oscilloscope", "plate", "cup", "coffee_mug",
-    "spotlight", "dial", "crossword_puzzle", "rule", "slide_rule"
+    # Physical screens / Monitors / Displays
+    "screen", "monitor", "television", "cellular_telephone",
+    "laptop", "notebook", "desktop_computer", "oscilloscope",
+    "digital_clock", "analog_clock"
 }
+
+def extract_spatial_patches(pil_img):
+    """
+    Universal 6-Sector Multi-Patch Lesion Attention:
+    Extracts multi-region spatial sub-patches across cranial/facial, dorsal,
+    ventral/abdominal, lateral flanks, and focal lesion core to resolve scale dilution.
+    """
+    w, h = pil_img.size
+    return {
+        "Global": pil_img.resize((224, 224)),
+        "Top": pil_img.crop((int(w * 0.10), 0, int(w * 0.90), int(h * 0.50))).resize((224, 224)),
+        "Bottom": pil_img.crop((int(w * 0.10), int(h * 0.50), int(w * 0.90), h)).resize((224, 224)),
+        "Left": pil_img.crop((0, int(h * 0.15), int(w * 0.55), int(h * 0.85))).resize((224, 224)),
+        "Right": pil_img.crop((int(w * 0.45), int(h * 0.15), w, int(h * 0.85))).resize((224, 224)),
+        "Center": pil_img.crop((int(w * 0.20), int(h * 0.20), int(w * 0.80), int(h * 0.80))).resize((224, 224)),
+    }
 
 # Organic texture mimics in veterinary dermatology:
 # Severe crusting, lichenification, and nodular mange / ringworm / calcinosis cutis
@@ -1033,15 +1045,48 @@ def predict_disease(req: AIPredictionRequest):
             img_b64 = img_b64.split(",", 1)[1]
 
         raw_bytes = base64.b64decode(img_b64)
-        pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((224, 224))
-        img_arr = np.array(pil_img, dtype=np.float32)
+        orig_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+        patches = extract_spatial_patches(orig_img)
 
-        # 0. Animal / Screen / Inanimate Object Verification Gate
+        interpreter, labels = get_ai_model()
+        inp_idx = interpreter.get_input_details()[0]["index"]
+        out_idx = interpreter.get_output_details()[0]["index"]
+
+        sp_key = (req.species or "canine").strip().lower()
+        allowed = SPECIES_CLASS_MAP.get(sp_key, labels)
+
+        # 1. Multi-Patch Neural Evaluation across all 6 spatial sectors
+        patch_results = {}
+        for pname, pimg in patches.items():
+            arr = np.array(pimg, dtype=np.float32)
+            inp_tensor = np.expand_dims(arr, axis=0)
+            interpreter.set_tensor(inp_idx, inp_tensor)
+            interpreter.invoke()
+            preds = interpreter.get_tensor(out_idx)[0].tolist()
+            patch_results[pname] = {labels[i]: float(preds[i]) for i in range(len(labels)) if labels[i] in allowed}
+
+        # Multi-Instance Max-Pooling (MIL) across instances
+        pooled_raw = {}
+        peak_sources = {}
+        for c in allowed:
+            if "Healthy" in c:
+                # Healthy is preserved only if the whole field of view indicates healthy tissue
+                pooled_raw[c] = patch_results["Global"][c]
+                peak_sources[c] = "Global"
+            else:
+                best_p = max(patch_results.keys(), key=lambda p: patch_results[p][c])
+                pooled_raw[c] = patch_results[best_p][c]
+                peak_sources[c] = best_p
+
+        max_disease_conf = max([pooled_raw[c] for c in allowed if "Healthy" not in c] or [0.0])
+
+        # 2. Animal / Screen / Inanimate Object Verification Gate
         verifier, animal_mask = get_animal_verifier()
         if verifier and animal_mask is not None:
             try:
                 import tensorflow as tf
-                arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
+                global_arr = np.array(patches["Global"], dtype=np.float32)
+                arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(global_arr.copy())
                 v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
                 
                 # Calculate total probability mass of animal classes (Real animal lesions: 24% - 92%)
@@ -1056,22 +1101,21 @@ def predict_disease(req: AIPredictionRequest):
                 )
                 is_screen_or_tech = (
                     top_name in SCREEN_OR_TECH_CLASSES or 
-                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.05 for t in top_dec)
+                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.10 for t in top_dec)
                 )
 
                 # Calibrated Clinical Rejection Gate:
-                # 1. Screen / computer monitor / digital display detected and animal sum < 25% (monitor photo had 13.3%)
-                # 2. Or dermatological texture mimic (e.g. custard apple / jackfruit on crusted mange) rejected ONLY if near-zero animal signal (< 12%)
-                # 3. Or generic inanimate manufactured artifact and animal sum < 20%
-                # 4. Or overall animal probability mass is below true non-animal cutoff (< 16%)
+                # Rejects non-animal objects (monitors, clocks, inanimate tech) ONLY when:
+                # - Screen or inanimate artifact detected with low animal probability
+                # - AND VetLink disease model does NOT find active high-confidence pathology (max_disease_conf < 0.70)
                 should_reject = False
-                if is_screen_or_tech and p_animal < 0.25:
+                if is_screen_or_tech and p_animal < 0.35 and max_disease_conf < 0.70:
                     should_reject = True
-                elif is_derm_mimic:
-                    should_reject = (p_animal < 0.12)
-                elif is_top_artifact and p_animal < 0.20:
+                elif is_derm_mimic and p_animal < 0.10 and max_disease_conf < 0.70:
                     should_reject = True
-                elif p_animal < 0.16:
+                elif is_top_artifact and p_animal < 0.25 and max_disease_conf < 0.70:
+                    should_reject = True
+                elif p_animal < 0.16 and max_disease_conf < 0.60:
                     should_reject = True
 
                 if should_reject:
@@ -1087,28 +1131,9 @@ def predict_disease(req: AIPredictionRequest):
             except Exception as v_err:
                 print(f"[WARN] Animal verifier check error: {v_err}")
 
-        interpreter, labels = get_ai_model()
-        inp_idx = interpreter.get_input_details()[0]["index"]
-        out_idx = interpreter.get_output_details()[0]["index"]
-
-        inp_tensor = np.expand_dims(img_arr, axis=0)
-        interpreter.set_tensor(inp_idx, inp_tensor)
-        interpreter.invoke()
-        raw_preds = interpreter.get_tensor(out_idx)[0].tolist()
-
-        sp_key = (req.species or "canine").strip().lower()
-        allowed = SPECIES_CLASS_MAP.get(sp_key, labels)
-
-        filtered = [
-            (labels[i], raw_preds[i])
-            for i in range(len(raw_preds))
-            if labels[i] in allowed
-        ]
-
-        # Re-normalize across the candidate classes
-        filtered.sort(key=lambda x: x[1], reverse=True)
-        sum_p = sum(p for _, p in filtered) or 1.0
-        normalized = [(lbl, p / sum_p) for lbl, p in filtered]
+        # 3. Re-normalize across the candidate classes
+        total_p = sum(pooled_raw.values()) or 1.0
+        normalized = sorted([(lbl, pooled_raw[lbl] / total_p) for lbl in allowed], key=lambda x: x[1], reverse=True)
 
         top_label, top_conf = normalized[0]
         top3 = [
@@ -1116,6 +1141,7 @@ def predict_disease(req: AIPredictionRequest):
                 "label": lbl,
                 "display": CLASS_DISPLAY_NAMES.get(lbl, lbl),
                 "confidence": conf,
+                "peakSector": peak_sources.get(lbl, "Global"),
             }
             for lbl, conf in normalized[:3]
         ]

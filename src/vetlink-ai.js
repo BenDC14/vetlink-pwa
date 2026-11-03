@@ -136,6 +136,27 @@ function preprocessImage(imageElement) {
   })
 }
 
+function getPatchCanvases(imageElement) {
+  const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
+  const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
+  const sectors = [
+    { name: 'Global', sx: 0, sy: 0, sw: origW, sh: origH },
+    { name: 'Top',    sx: origW * 0.10, sy: 0, sw: origW * 0.80, sh: origH * 0.50 },
+    { name: 'Bottom', sx: origW * 0.10, sy: origH * 0.50, sw: origW * 0.80, sh: origH * 0.50 },
+    { name: 'Left',   sx: 0, sy: origH * 0.15, sw: origW * 0.55, sh: origH * 0.70 },
+    { name: 'Right',  sx: origW * 0.45, sy: origH * 0.15, sw: origW * 0.55, sh: origH * 0.70 },
+    { name: 'Center', sx: origW * 0.20, sy: origH * 0.20, sw: origW * 0.60, sh: origH * 0.60 },
+  ]
+  return sectors.map((sec) => {
+    const c = document.createElement('canvas')
+    c.width = 224
+    c.height = 224
+    const ctx = c.getContext('2d')
+    ctx.drawImage(imageElement, sec.sx, sec.sy, sec.sw, sec.sh, 0, 0, 224, 224)
+    return { name: sec.name, canvas: c }
+  })
+}
+
 import { generateGradCAM } from './gradcam'
 
 /**
@@ -151,12 +172,26 @@ import { generateGradCAM } from './gradcam'
  */
 function imageToBase64(imageElement) {
   try {
+    const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
+    const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
+    const maxDim = 800
+    let w = origW
+    let h = origH
+    if (w > maxDim || h > maxDim) {
+      if (w > h) {
+        h = Math.round((h * maxDim) / w)
+        w = maxDim
+      } else {
+        w = Math.round((w * maxDim) / h)
+        h = maxDim
+      }
+    }
     const canvas = document.createElement('canvas')
-    canvas.width  = 224
-    canvas.height = 224
+    canvas.width  = w
+    canvas.height = h
     const ctx = canvas.getContext('2d')
-    ctx.drawImage(imageElement, 0, 0, 224, 224)
-    return canvas.toDataURL('image/jpeg', 0.95)
+    ctx.drawImage(imageElement, 0, 0, w, h)
+    return canvas.toDataURL('image/jpeg', 0.90)
   } catch (err) {
     console.warn('[VetLink AI] Failed to convert image to base64:', err)
     return null
@@ -239,42 +274,69 @@ export async function predict(imageElement, species = 'Canine') {
   console.warn('[VetLink AI] Backend unreachable; attempting client-side WASM inference...')
   if (!model) await loadVetLinkModel()
 
-  const tf          = window.tf
-  const inputTensor = preprocessImage(imageElement)
-
-  let outputTensor = null
-  let rawOutput    = null
+  const tf = window.tf
+  const allowedClasses = SPECIES_CLASSES[species] || classLabels
+  const patches = getPatchCanvases(imageElement)
+  const patchResults = {}
 
   try {
-    rawOutput = model.predict(inputTensor)
-
-    if (rawOutput instanceof tf.Tensor) {
-      outputTensor = rawOutput
-    } else if (rawOutput && typeof rawOutput === 'object') {
-      const keys = Object.keys(rawOutput)
-      if (keys.length === 0) throw new Error('TFLite model returned empty outputs')
-      outputTensor = rawOutput[keys[0]]
-    } else {
-      throw new Error(`Unexpected TFLite model output: ${typeof rawOutput}`)
+    for (const patch of patches) {
+      const inputTensor = preprocessImage(patch.canvas)
+      let outputTensor = null
+      let rawOutput = null
+      try {
+        rawOutput = model.predict(inputTensor)
+        if (rawOutput instanceof tf.Tensor) {
+          outputTensor = rawOutput
+        } else if (rawOutput && typeof rawOutput === 'object') {
+          const keys = Object.keys(rawOutput)
+          if (keys.length === 0) throw new Error('TFLite model returned empty outputs')
+          outputTensor = rawOutput[keys[0]]
+        }
+        const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
+        const probs = Array.from(rawData)
+        patchResults[patch.name] = {}
+        classLabels.forEach((lbl, idx) => {
+          if (allowedClasses.includes(lbl)) {
+            patchResults[patch.name][lbl] = probs[idx] || 0
+          }
+        })
+      } finally {
+        inputTensor.dispose()
+        if (outputTensor && typeof outputTensor.dispose === 'function') {
+          outputTensor.dispose()
+        }
+      }
     }
-
-    const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
     console.timeEnd('[VetLink AI] Inference Time')
-    const probabilities = Array.from(rawData)
 
-    // Allowed classes for the selected patient species
-    const allowedClasses = SPECIES_CLASSES[species] || classLabels
+    // Multi-Instance Max-Pooling (MIL) across instances
+    const pooledRaw = {}
+    const peakSources = {}
+    allowedClasses.forEach((lbl) => {
+      if (lbl.includes('Healthy')) {
+        pooledRaw[lbl] = patchResults['Global']?.[lbl] || 0
+        peakSources[lbl] = 'Global'
+      } else {
+        let maxVal = -1
+        let maxP = 'Global'
+        for (const [pname, pmap] of Object.entries(patchResults)) {
+          if ((pmap[lbl] || 0) > maxVal) {
+            maxVal = pmap[lbl] || 0
+            maxP = pname
+          }
+        }
+        pooledRaw[lbl] = Math.max(0, maxVal)
+        peakSources[lbl] = maxP
+      }
+    })
 
-    // Filter candidates to the selected species and normalize
-    const candidateList = classLabels
-      .map((label, idx) => ({ label, prob: probabilities[idx] || 0 }))
-      .filter((item) => allowedClasses.includes(item.label))
-
-    const sumProb = candidateList.reduce((acc, cur) => acc + cur.prob, 0) || 1
-    const classScores = candidateList
-      .map((item) => ({
-        label: item.label,
-        confidence: item.prob / sumProb,
+    const sumProb = Object.values(pooledRaw).reduce((a, b) => a + b, 0) || 1
+    const classScores = allowedClasses
+      .map((lbl) => ({
+        label: lbl,
+        confidence: pooledRaw[lbl] / sumProb,
+        peakSector: peakSources[lbl] || 'Global',
       }))
       .sort((a, b) => b.confidence - a.confidence)
 
@@ -286,14 +348,11 @@ export async function predict(imageElement, species = 'Canine') {
       label:   item.label,
       display: CLASS_DISPLAY[item.label] || item.label,
       confidence: item.confidence,
+      peakSector: item.peakSector,
     }))
 
     // Generate Grad-CAM 3-panel visualization (Original, Heatmap, Overlay)
     const gradcam = await generateGradCAM(imageElement)
-
-    const maxP = Math.max(...probabilities)
-    const minP = Math.min(...probabilities)
-    const isUniform = (maxP - minP) < 0.05
 
     return {
       label:        topLabel,
@@ -304,20 +363,10 @@ export async function predict(imageElement, species = 'Canine') {
       top3,
       gradcam,
       engine:       'wasm',
-      isUniform,
     }
-  } finally {
-    inputTensor.dispose()
-    if (outputTensor && typeof outputTensor.dispose === 'function') {
-      outputTensor.dispose()
-    }
-    if (rawOutput && typeof rawOutput === 'object' && !(rawOutput instanceof tf.Tensor)) {
-      Object.values(rawOutput).forEach((t) => {
-        if (t && typeof t.dispose === 'function' && t !== outputTensor) {
-          t.dispose()
-        }
-      })
-    }
+  } catch (wasmErr) {
+    console.error('[VetLink AI] WASM inference error:', wasmErr)
+    throw wasmErr
   }
 }
 
@@ -396,11 +445,10 @@ export function validateClinicalImageQuality(imgElement) {
       if (lum > 245) overexposedPixels++
       if (lum < 20) underexposedPixels++
 
-      // Screen / Monitor / Slate UI detection
-      // 1. Cold blue/slate UI pixels (b > r + 10 && b > g - 8)
-      // 2. Dark cyan/slate background pixels (e.g., #0f172a, #1e293b, #334155: r < 75 && b > r + 8)
-      const isColdSlateOrScreen = (b > r + 12 && b > g - 8) || (r < 75 && b > r + 8 && b > 25)
-      if (isColdSlateOrScreen) {
+      // Screen / Monitor / Digital Display detection
+      // Targets intense synthetic cold blue/cyan backlight emitted by monitors/screens:
+      const isColdMonitorScreen = (b > r + 45 && b > g + 25 && b > 130)
+      if (isColdMonitorScreen) {
         coldScreenPixels++
       }
 
@@ -498,7 +546,7 @@ export function validateClinicalImageQuality(imgElement) {
     // 5. Digital Screen / Computer Monitor Check
     const coldRatio = coldScreenPixels / n
     const warmRatio = warmOrganicPixels / n
-    if (coldRatio > 0.28 || (coldRatio > 0.16 && warmRatio < 0.10)) {
+    if (coldRatio > 0.40 && warmRatio < 0.05) {
       return {
         isValid: false,
         reason: 'DIGITAL_SCREEN',
@@ -509,7 +557,7 @@ export function validateClinicalImageQuality(imgElement) {
     }
 
     // 6. Biological Gamut Check
-    if ((biologicalColorPixels / n) < 0.30) {
+    if ((biologicalColorPixels / n) < 0.15) {
       return {
         isValid: false,
         reason: 'NON_BIOLOGICAL',

@@ -171,7 +171,7 @@ export default function ImageCropModal({ isOpen, file, onClose, onConfirmCrop, o
               Isolate Lesion Target (ROI Crop & Zoom)
             </span>
             <span style={{ fontSize: '0.74rem', color: '#94a3b8' }}>
-              Center lesion inside the square box to eliminate non-clinical background.
+              Center lesion (crusts, pustules, alopecia, or nodules) inside the box. Avoid framing eyes/whiskers for maximum specificity.
             </span>
           </div>
           <button
@@ -250,10 +250,10 @@ export default function ImageCropModal({ isOpen, file, onClose, onConfirmCrop, o
             }}
           >
             <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.85)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center', border: '1px solid #0284c7' }}>
-              <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>SQUARE LESION TARGET</span>
+              <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>CLINICAL LESION ROI</span>
             </div>
             <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.85)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center' }}>
-              <span style={{ fontSize: '0.68rem', color: '#f8fafc' }}>Drag to center & adjust zoom below</span>
+              <span style={{ fontSize: '0.68rem', color: '#f8fafc' }}>Center active lesion (crusts, pustules, redness)</span>
             </div>
           </div>
         </div>

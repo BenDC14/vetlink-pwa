@@ -1110,14 +1110,28 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                   )}
 
                   <div style={{ marginTop: 8, fontSize: '0.8rem', color: '#94a3b8' }}>
-                    Top 3 Predictions:
+                    Top Spatial Lesion Predictions:
                     {aiResult.top3.map((item, i) => (
                       <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0 2px 14px', color: i === 0 ? '#f1f5f9' : '#94a3b8' }}>
-                        <span>{i + 1}. {getFormalMedicalName(item.display)}</span>
+                        <span>
+                          {i + 1}. {getFormalMedicalName(item.display)}
+                          {item.peakSector && item.peakSector !== 'Global' ? (
+                            <span style={{ fontSize: '0.70rem', color: '#38bdf8', marginLeft: 6, padding: '1px 5px', background: 'rgba(56, 189, 248, 0.15)', borderRadius: 3, border: '1px solid rgba(56, 189, 248, 0.3)' }}>
+                              {item.peakSector} Sector
+                            </span>
+                          ) : null}
+                        </span>
                         <span style={{ fontWeight: i === 0 ? 'bold' : 'normal' }}>{(item.confidence * 100).toFixed(1)}%</span>
                       </div>
                     ))}
                   </div>
+
+                  {/* Multimodal Symptom Synergy Indicator */}
+                  {selectedSymptoms.includes('SYM-SCALING') && aiResult.top3.some(t => t.display.toLowerCase().includes('mange')) && (
+                    <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid #0284c7', borderRadius: 4, fontSize: '0.74rem', color: '#7dd3fc', fontFamily: 'sans-serif' }}>
+                      Clinical Synergy: Marked scaling/crusting selected in symptoms strongly supports Acariasis (Mange) detected in lesion scan.
+                    </div>
+                  )}
 
                   {/* Co-occurring / Comorbidity Detection */}
                   {(() => {
