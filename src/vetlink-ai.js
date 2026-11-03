@@ -280,38 +280,47 @@ export async function predict(imageElement, species = 'Canine') {
       }
     })
 
-    // Feline Cranial Feature Evaluation (Ignores eyes/nose/whiskers)
+    // Automated Feline Ear & Cranial Lesion Focus:
+    // In cats, facial anatomical landmarks (eyes/nose/whiskers) bias MobileNetV3 toward Ringworm.
+    // Automatically checks ear margins (where Notoedres cati crusts localize) for active Mange.
     const spNorm = (species || 'Canine').toLowerCase()
     if ((spNorm === 'feline' || spNorm === 'cat') && candidateScores['Mange'] !== undefined) {
       try {
         const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
         const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
-        const upperCanvas = document.createElement('canvas')
-        upperCanvas.width = 224
-        upperCanvas.height = 224
-        const uctx = upperCanvas.getContext('2d')
-        uctx.drawImage(imageElement, 0, 0, origW, origH * 0.55, 0, 0, 224, 224)
-        const upperTensor = preprocessImage(upperCanvas)
-        let upperOut = model.predict(upperTensor)
-        let upperTensorOut = (upperOut instanceof tf.Tensor) ? upperOut : upperOut[Object.keys(upperOut)[0]]
-        const upperData = upperTensorOut.dataSync ? upperTensorOut.dataSync() : await upperTensorOut.data()
-        const upperProbs = Array.from(upperData)
-        upperTensor.dispose()
-        if (upperTensorOut && typeof upperTensorOut.dispose === 'function') upperTensorOut.dispose()
+        const earBoxes = [
+          { sx: 0, sy: 0, sw: origW * 0.45, sh: origH * 0.35 },        // Left ear pinna
+          { sx: origW * 0.55, sy: 0, sw: origW * 0.45, sh: origH * 0.35 }, // Right ear pinna
+          { sx: origW * 0.15, sy: 0, sw: origW * 0.70, sh: origH * 0.45 }, // Cranial forehead/ears
+        ]
+        for (const box of earBoxes) {
+          const c = document.createElement('canvas')
+          c.width = 224
+          c.height = 224
+          const ctx = c.getContext('2d')
+          ctx.drawImage(imageElement, box.sx, box.sy, box.sw, box.sh, 0, 0, 224, 224)
+          const tensor = preprocessImage(c)
+          let out = model.predict(tensor)
+          let tensorOut = (out instanceof tf.Tensor) ? out : out[Object.keys(out)[0]]
+          const data = tensorOut.dataSync ? tensorOut.dataSync() : await tensorOut.data()
+          const probs = Array.from(data)
+          tensor.dispose()
+          if (tensorOut && typeof tensorOut.dispose === 'function') tensorOut.dispose()
 
-        const upperCandidate = {}
-        classLabels.forEach((lbl, idx) => {
-          if (allowedClasses.includes(lbl)) {
-            upperCandidate[lbl] = upperProbs[idx] || 0
+          const cand = {}
+          classLabels.forEach((lbl, idx) => {
+            if (allowedClasses.includes(lbl)) {
+              cand[lbl] = probs[idx] || 0
+            }
+          })
+          const cSum = Object.values(cand).reduce((a, b) => a + b, 0) || 1
+          if ((cand['Mange'] || 0) / cSum >= 0.70) {
+            candidateScores = cand
+            break
           }
-        })
-        const upperSum = Object.values(upperCandidate).reduce((a, b) => a + b, 0) || 1
-        const pMangeUpper = (upperCandidate['Mange'] || 0) / upperSum
-        if (pMangeUpper >= 0.70) {
-          candidateScores = upperCandidate
         }
       } catch (felineErr) {
-        console.warn('[VetLink AI] Feline cranial check error:', felineErr)
+        console.warn('[VetLink AI] Feline ear focus error:', felineErr)
       }
     }
 

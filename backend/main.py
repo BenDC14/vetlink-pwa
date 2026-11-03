@@ -1046,24 +1046,26 @@ def predict_disease(req: AIPredictionRequest):
         raw_preds = interpreter.get_tensor(out_idx)[0].tolist()
         filtered = {labels[i]: float(raw_preds[i]) for i in range(len(labels)) if labels[i] in allowed}
 
-        # 2. Feline Cranial Feature Evaluation (Ignores facial eyes/nose/whiskers)
+        # 2. Automated Feline Ear & Cranial Lesion Focus:
         # In cats, facial anatomical landmarks (eyes/nose/whiskers) can bias MobileNetV3 toward Ringworm.
-        # If Ringworm is the leading prediction on a feline, check if the upper cranial region (forehead & ears)
-        # reveals severe Notoedric mange crusting.
+        # Check if the ear margins or cranial region (where Notoedres cati crusts localize) reveal severe Mange.
         if sp_key in ["feline", "cat"] and "Mange" in allowed:
             w, h = orig_img.size
-            upper_img = orig_img.crop((0, 0, w, int(h * 0.55)))
-            upper_arr = np.array(upper_img.resize((224, 224)), dtype=np.float32)
-            interpreter.set_tensor(inp_idx, np.expand_dims(upper_arr, axis=0))
-            interpreter.invoke()
-            upper_preds = interpreter.get_tensor(out_idx)[0].tolist()
-            upper_filtered = {labels[i]: float(upper_preds[i]) for i in range(len(labels)) if labels[i] in allowed}
-            upper_sum = sum(upper_filtered.values()) or 1.0
-            p_mange_upper = upper_filtered.get("Mange", 0.0) / upper_sum
-
-            # If the cranial region (free from eyes/nose) shows definitive Mange (>= 70%), use cranial evaluation
-            if p_mange_upper >= 0.70:
-                filtered = upper_filtered
+            ear_candidates = [
+                orig_img.crop((0, 0, int(w * 0.45), int(h * 0.35))),         # Left ear pinna
+                orig_img.crop((int(w * 0.55), 0, w, int(h * 0.35))),         # Right ear pinna
+                orig_img.crop((int(w * 0.15), 0, int(w * 0.85), int(h * 0.45))), # Cranial forehead/ears
+            ]
+            for cand_img in ear_candidates:
+                cand_arr = np.array(cand_img.resize((224, 224)), dtype=np.float32)
+                interpreter.set_tensor(inp_idx, np.expand_dims(cand_arr, axis=0))
+                interpreter.invoke()
+                cand_preds = interpreter.get_tensor(out_idx)[0].tolist()
+                cand_filtered = {labels[i]: float(cand_preds[i]) for i in range(len(labels)) if labels[i] in allowed}
+                cand_sum = sum(cand_filtered.values()) or 1.0
+                if (cand_filtered.get("Mange", 0.0) / cand_sum) >= 0.70:
+                    filtered = cand_filtered
+                    break
 
         tot = sum(filtered.values()) or 1.0
         normalized = sorted([(lbl, filtered[lbl] / tot) for lbl in allowed], key=lambda x: x[1], reverse=True)
