@@ -9,6 +9,7 @@ import {
   getSuggestedSymptomsForDisease
 } from '../vetlink-ai'
 import CameraCaptureModal from '../components/CameraCaptureModal'
+import ImageCropModal from '../components/ImageCropModal'
 
 // Clinical check for co-occurring dermatitis or secondary opportunistic infection
 export function checkComorbidity(top3) {
@@ -173,6 +174,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [modelReady, setModelReady] = useState(false)
   const [modelError, setModelError] = useState(null)
   const [isCameraOpen, setIsCameraOpen] = useState(false)
+  const [cropModalOpen, setCropModalOpen] = useState(false)
+  const [fileToCrop, setFileToCrop] = useState(null)
 
   // Clinical Symptoms & Lab Test State
   const [selectedSymptoms, setSelectedSymptoms] = useState([])
@@ -332,13 +335,28 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     )
   }
 
-  // When user picks a file, show preview and immediately run AI
+  // When user picks a file, open Interactive Lesion ROI Zoom & Crop Tool
   const handleFileChange = (event) => {
     const file = event.target.files?.[0]
     if (file) {
-      processImageFile(file)
+      setFileToCrop(file)
+      setCropModalOpen(true)
     }
     event.target.value = ''
+  }
+
+  const handleConfirmCrop = (croppedFile) => {
+    setCropModalOpen(false)
+    setFileToCrop(null)
+    processImageFile(croppedFile)
+  }
+
+  const handleUseFullImage = () => {
+    setCropModalOpen(false)
+    if (fileToCrop) {
+      processImageFile(fileToCrop)
+      setFileToCrop(null)
+    }
   }
 
   // When user snaps photo from live camera
@@ -686,27 +704,43 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             </div>
           )}
 
-          {/* Retake buttons */}
+          {/* Retake and Crop adjustment buttons */}
           {previewUrl && (
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                onClick={handleOpenCamera}
-                disabled={isAnalyzing || isSaving}
-              >
-                Retake (Camera)
-              </button>
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                onClick={handleOpenFilePicker}
-                disabled={isAnalyzing || isSaving}
-              >
-                Upload File
-              </button>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={handleOpenCamera}
+                  disabled={isAnalyzing || isSaving}
+                >
+                  Retake (Camera)
+                </button>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                  onClick={handleOpenFilePicker}
+                  disabled={isAnalyzing || isSaving}
+                >
+                  Upload File
+                </button>
+              </div>
+              {selectedFile && (
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ padding: '7px 10px', fontSize: '0.8rem', background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+                  onClick={() => {
+                    setFileToCrop(selectedFile)
+                    setCropModalOpen(true)
+                  }}
+                  disabled={isAnalyzing || isSaving}
+                >
+                  Adjust Lesion Crop / Zoom
+                </button>
+              )}
             </div>
           )}
 
@@ -1243,11 +1277,24 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       </div>
 
       {/* Cross-platform Live Camera Viewfinder Modal */}
+      {/* Live Clinical Camera Modal */}
       <CameraCaptureModal
         isOpen={isCameraOpen}
         onClose={() => setIsCameraOpen(false)}
         onCapture={handleCameraCapture}
         onFallbackUpload={handleOpenFilePicker}
+      />
+
+      {/* Interactive Lesion Crop & Zoom Modal */}
+      <ImageCropModal
+        isOpen={cropModalOpen}
+        file={fileToCrop}
+        onClose={() => {
+          setCropModalOpen(false)
+          setFileToCrop(null)
+        }}
+        onConfirmCrop={handleConfirmCrop}
+        onUseFullImage={handleUseFullImage}
       />
     </section>
   )

@@ -318,7 +318,7 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
             />
           )}
 
-          {/* Clinical Macro Lesion Reticle Overlay (over live video) */}
+          {/* Clinical Macro Lesion Reticle Overlay (over live video) - Pure 1:1 Square ROI */}
           {!capturedBlobUrl && !cameraError && !isInitializing && (
             <div
               style={{
@@ -326,23 +326,26 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: '68%',
-                height: '68%',
-                border: '2px dashed rgba(56, 189, 248, 0.85)',
-                borderRadius: 16,
-                boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)',
+                width: 250,
+                height: 250,
+                maxWidth: '75vw',
+                maxHeight: '75vw',
+                border: '2px solid rgba(56, 189, 248, 0.9)',
+                borderRadius: 12,
+                boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.55)',
                 pointerEvents: 'none',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'space-between',
-                padding: 10,
+                padding: 8,
+                boxSizing: 'border-box',
               }}
             >
-              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.75)', padding: '4px 8px', borderRadius: 4, alignSelf: 'center' }}>
-                <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>ALIGN LESION IN FRAME</span>
+              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.85)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center', border: '1px solid #0284c7' }}>
+                <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>SQUARE LESION TARGET</span>
               </div>
-              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.75)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center' }}>
-                <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Fill 70% of box & hold steady</span>
+              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.85)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center' }}>
+                <span style={{ fontSize: '0.68rem', color: '#f8fafc' }}>Center lesion inside square box</span>
               </div>
             </div>
           )}

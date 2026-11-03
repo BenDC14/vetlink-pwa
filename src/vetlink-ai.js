@@ -51,27 +51,23 @@ export const CLASS_DESCRIPTIONS = {
 }
 
 /**
- * Wait for the CDN scripts to be available on window.
- * The scripts are loaded before React, so this should resolve instantly.
+ * Wait for the CDN or local scripts to be available on window.
  */
-function waitForTF(maxWaitMs = 10000) {
+function waitForTF(maxWaitMs = 8000) {
   return new Promise((resolve, reject) => {
+    const start = Date.now()
     const check = () => {
       if (window.tf && window.tflite) {
         resolve({ tf: window.tf, tflite: window.tflite })
-      } else {
+      } else if (Date.now() - start >= maxWaitMs) {
         reject(new Error(
-          'TensorFlow.js did not load. Check your internet connection — ' +
-          'the AI model requires CDN scripts on first load.'
+          'TensorFlow.js WASM runtime did not initialize in time. Please refresh the page.'
         ))
+      } else {
+        setTimeout(check, 100)
       }
     }
-    // Give scripts a moment if they haven't finished yet
-    if (window.tf && window.tflite) {
-      resolve({ tf: window.tf, tflite: window.tflite })
-    } else {
-      setTimeout(check, maxWaitMs)
-    }
+    check()
   })
 }
 
@@ -93,10 +89,8 @@ export async function loadVetLinkModel() {
     const { tf, tflite } = await waitForTF()
     await tf.ready()
 
-    // Set WASM path for the TFLite runtime (alpha.9 contains the required wasm binaries)
-    tflite.setWasmPath(
-      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/'
-    )
+    // Set local WASM path for self-hosted zero-latency, 100% offline-ready TFLite runtime
+    tflite.setWasmPath('/wasm/')
 
     // 1. Fetch label map
     const labelResponse = await fetch('/models/vetlink_labels_v2.json')
@@ -197,11 +191,15 @@ export async function predict(imageElement, species = 'Canine') {
     ]
     for (const endpoint of candidateEndpoints) {
       try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 1500)
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image: b64, species }),
+          signal: controller.signal,
         })
+        clearTimeout(timer)
         if (res.ok) {
           const data = await res.json()
           console.timeEnd('[VetLink AI] Inference Time')
