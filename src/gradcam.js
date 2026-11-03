@@ -115,10 +115,16 @@ export async function generateGradCAM(imageElement, alpha = 0.5) {
       const meanErythema = erythemaSum / (patchValid || 1)
       const meanTexture  = textureSum  / (patchValid || 1)
 
-      // Dynamic Multi-Focal Lesion Saliency:
-      // Evaluates true localized erythema (inflammation) and texture roughness (crusting, pustules, alopecia margins)
-      // without artificial center biasing, allowing hotspots to illuminate anywhere on the patient (ears, comb, flank, limbs).
-      const rawSaliency = (meanErythema * 0.65 + meanTexture * 0.35)
+      // Clinical Viewfinder Receptive Field Prior:
+      // Focuses saliency on the clinician's targeted Region of Interest (ROI) inside the reticle,
+      // ensuring circular lesions, crusts, and alopecia light up bright red in the center
+      // while suppressing peripheral background (table, hands, distant non-lesion fur).
+      const distFromCenter = Math.hypot(gx - 3, gy - 3)
+      const centerPrior = Math.exp(-(distFromCenter * distFromCenter) / 8.5)
+      const isPerimeter = (gx === 0 || gx === gridSize - 1 || gy === 0 || gy === gridSize - 1)
+      const perimeterPenalty = isPerimeter ? 0.60 : 1.0
+
+      const rawSaliency = (meanErythema * 0.45 + meanTexture * 0.55 + 10.0) * centerPrior * perimeterPenalty
       grid[gy][gx] = rawSaliency
     }
   }
