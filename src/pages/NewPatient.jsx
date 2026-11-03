@@ -1148,6 +1148,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                           type="checkbox"
                           checked={isChecked}
                           onChange={() => toggleSymptom(sym.id)}
+                          style={{ accentColor: '#059669', width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
                         />
                         <span>{sym.shortName}</span>
                       </label>

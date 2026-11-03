@@ -59,6 +59,12 @@ body {
   margin: 0;
 }
 
+input[type="checkbox"] {
+  accent-color: #059669;
+  color-scheme: light;
+  cursor: pointer;
+}
+
 #root {
   width: 100%;
   max-width: 100%;
