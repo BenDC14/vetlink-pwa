@@ -1008,22 +1008,6 @@ SCREEN_OR_TECH_CLASSES = {
     "digital_clock", "analog_clock"
 }
 
-def extract_spatial_patches(pil_img):
-    """
-    Universal 6-Sector Multi-Patch Lesion Attention:
-    Extracts multi-region spatial sub-patches across cranial/facial, dorsal,
-    ventral/abdominal, lateral flanks, and focal lesion core to resolve scale dilution.
-    """
-    w, h = pil_img.size
-    return {
-        "Global": pil_img.resize((224, 224)),
-        "Top": pil_img.crop((int(w * 0.10), 0, int(w * 0.90), int(h * 0.50))).resize((224, 224)),
-        "Bottom": pil_img.crop((int(w * 0.10), int(h * 0.50), int(w * 0.90), h)).resize((224, 224)),
-        "Left": pil_img.crop((0, int(h * 0.15), int(w * 0.55), int(h * 0.85))).resize((224, 224)),
-        "Right": pil_img.crop((int(w * 0.45), int(h * 0.15), w, int(h * 0.85))).resize((224, 224)),
-        "Center": pil_img.crop((int(w * 0.20), int(h * 0.20), int(w * 0.80), int(h * 0.80))).resize((224, 224)),
-    }
-
 # Organic texture mimics in veterinary dermatology:
 # Severe crusting, lichenification, and nodular mange / ringworm / calcinosis cutis
 # often share low-level visual textures with fruits, fungi, barks, or sponges in ImageNet.
@@ -1046,7 +1030,7 @@ def predict_disease(req: AIPredictionRequest):
 
         raw_bytes = base64.b64decode(img_b64)
         orig_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-        patches = extract_spatial_patches(orig_img)
+        img_arr = np.array(orig_img.resize((224, 224)), dtype=np.float32)
 
         interpreter, labels = get_ai_model()
         inp_idx = interpreter.get_input_details()[0]["index"]
@@ -1055,41 +1039,44 @@ def predict_disease(req: AIPredictionRequest):
         sp_key = (req.species or "canine").strip().lower()
         allowed = SPECIES_CLASS_MAP.get(sp_key, labels)
 
-        # 1. Multi-Patch Neural Evaluation across all 6 spatial sectors
-        patch_results = {}
-        for pname, pimg in patches.items():
-            arr = np.array(pimg, dtype=np.float32)
-            inp_tensor = np.expand_dims(arr, axis=0)
-            interpreter.set_tensor(inp_idx, inp_tensor)
+        # 1. Primary Neural Evaluation on the clinician's submitted image
+        inp_tensor = np.expand_dims(img_arr, axis=0)
+        interpreter.set_tensor(inp_idx, inp_tensor)
+        interpreter.invoke()
+        raw_preds = interpreter.get_tensor(out_idx)[0].tolist()
+        filtered = {labels[i]: float(raw_preds[i]) for i in range(len(labels)) if labels[i] in allowed}
+
+        # 2. Feline Cranial Feature Evaluation (Ignores facial eyes/nose/whiskers)
+        # In cats, facial anatomical landmarks (eyes/nose/whiskers) can bias MobileNetV3 toward Ringworm.
+        # If Ringworm is the leading prediction on a feline, check if the upper cranial region (forehead & ears)
+        # reveals severe Notoedric mange crusting.
+        if sp_key in ["feline", "cat"] and "Mange" in allowed:
+            w, h = orig_img.size
+            upper_img = orig_img.crop((0, 0, w, int(h * 0.55)))
+            upper_arr = np.array(upper_img.resize((224, 224)), dtype=np.float32)
+            interpreter.set_tensor(inp_idx, np.expand_dims(upper_arr, axis=0))
             interpreter.invoke()
-            preds = interpreter.get_tensor(out_idx)[0].tolist()
-            patch_results[pname] = {labels[i]: float(preds[i]) for i in range(len(labels)) if labels[i] in allowed}
+            upper_preds = interpreter.get_tensor(out_idx)[0].tolist()
+            upper_filtered = {labels[i]: float(upper_preds[i]) for i in range(len(labels)) if labels[i] in allowed}
+            upper_sum = sum(upper_filtered.values()) or 1.0
+            p_mange_upper = upper_filtered.get("Mange", 0.0) / upper_sum
 
-        # Multi-Instance Max-Pooling (MIL) across instances
-        pooled_raw = {}
-        peak_sources = {}
-        for c in allowed:
-            if "Healthy" in c:
-                # Healthy is preserved only if the whole field of view indicates healthy tissue
-                pooled_raw[c] = patch_results["Global"][c]
-                peak_sources[c] = "Global"
-            else:
-                best_p = max(patch_results.keys(), key=lambda p: patch_results[p][c])
-                pooled_raw[c] = patch_results[best_p][c]
-                peak_sources[c] = best_p
+            # If the cranial region (free from eyes/nose) shows definitive Mange (>= 70%), use cranial evaluation
+            if p_mange_upper >= 0.70:
+                filtered = upper_filtered
 
-        max_disease_conf = max([pooled_raw[c] for c in allowed if "Healthy" not in c] or [0.0])
+        tot = sum(filtered.values()) or 1.0
+        normalized = sorted([(lbl, filtered[lbl] / tot) for lbl in allowed], key=lambda x: x[1], reverse=True)
+        top_label, top_conf = normalized[0]
+        max_disease_conf = max([filtered[lbl] / tot for lbl in allowed if "Healthy" not in lbl] or [0.0])
 
-        # 2. Animal / Screen / Inanimate Object Verification Gate
+        # 3. Animal / Screen / Inanimate Object Verification Gate
         verifier, animal_mask = get_animal_verifier()
         if verifier and animal_mask is not None:
             try:
                 import tensorflow as tf
-                global_arr = np.array(patches["Global"], dtype=np.float32)
-                arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(global_arr.copy())
+                arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
                 v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
-                
-                # Calculate total probability mass of animal classes (Real animal lesions: 24% - 92%)
                 p_animal = float(np.sum(v_preds[0, animal_mask]))
                 
                 top_dec = tf.keras.applications.mobilenet_v3.decode_predictions(v_preds, top=5)[0]
@@ -1105,9 +1092,7 @@ def predict_disease(req: AIPredictionRequest):
                 )
 
                 # Calibrated Clinical Rejection Gate:
-                # Rejects non-animal objects (monitors, clocks, inanimate tech) ONLY when:
-                # - Screen or inanimate artifact detected with low animal probability
-                # - AND VetLink disease model does NOT find active high-confidence pathology (max_disease_conf < 0.70)
+                # Bypass rejection if VetLink disease model confirms high-confidence animal pathology (>= 0.70)
                 should_reject = False
                 if is_screen_or_tech and p_animal < 0.35 and max_disease_conf < 0.70:
                     should_reject = True
@@ -1131,17 +1116,11 @@ def predict_disease(req: AIPredictionRequest):
             except Exception as v_err:
                 print(f"[WARN] Animal verifier check error: {v_err}")
 
-        # 3. Re-normalize across the candidate classes
-        total_p = sum(pooled_raw.values()) or 1.0
-        normalized = sorted([(lbl, pooled_raw[lbl] / total_p) for lbl in allowed], key=lambda x: x[1], reverse=True)
-
-        top_label, top_conf = normalized[0]
         top3 = [
             {
                 "label": lbl,
                 "display": CLASS_DISPLAY_NAMES.get(lbl, lbl),
                 "confidence": conf,
-                "peakSector": peak_sources.get(lbl, "Global"),
             }
             for lbl, conf in normalized[:3]
         ]

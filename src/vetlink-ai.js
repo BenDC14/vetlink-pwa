@@ -136,27 +136,6 @@ function preprocessImage(imageElement) {
   })
 }
 
-function getPatchCanvases(imageElement) {
-  const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
-  const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
-  const sectors = [
-    { name: 'Global', sx: 0, sy: 0, sw: origW, sh: origH },
-    { name: 'Top',    sx: origW * 0.10, sy: 0, sw: origW * 0.80, sh: origH * 0.50 },
-    { name: 'Bottom', sx: origW * 0.10, sy: origH * 0.50, sw: origW * 0.80, sh: origH * 0.50 },
-    { name: 'Left',   sx: 0, sy: origH * 0.15, sw: origW * 0.55, sh: origH * 0.70 },
-    { name: 'Right',  sx: origW * 0.45, sy: origH * 0.15, sw: origW * 0.55, sh: origH * 0.70 },
-    { name: 'Center', sx: origW * 0.20, sy: origH * 0.20, sw: origW * 0.60, sh: origH * 0.60 },
-  ]
-  return sectors.map((sec) => {
-    const c = document.createElement('canvas')
-    c.width = 224
-    c.height = 224
-    const ctx = c.getContext('2d')
-    ctx.drawImage(imageElement, sec.sx, sec.sy, sec.sw, sec.sh, 0, 0, 224, 224)
-    return { name: sec.name, canvas: c }
-  })
-}
-
 import { generateGradCAM } from './gradcam'
 
 /**
@@ -276,97 +255,105 @@ export async function predict(imageElement, species = 'Canine') {
 
   const tf = window.tf
   const allowedClasses = SPECIES_CLASSES[species] || classLabels
-  const patches = getPatchCanvases(imageElement)
-  const patchResults = {}
+  const inputTensor = preprocessImage(imageElement)
+
+  let outputTensor = null
+  let rawOutput = null
 
   try {
-    for (const patch of patches) {
-      const inputTensor = preprocessImage(patch.canvas)
-      let outputTensor = null
-      let rawOutput = null
-      try {
-        rawOutput = model.predict(inputTensor)
-        if (rawOutput instanceof tf.Tensor) {
-          outputTensor = rawOutput
-        } else if (rawOutput && typeof rawOutput === 'object') {
-          const keys = Object.keys(rawOutput)
-          if (keys.length === 0) throw new Error('TFLite model returned empty outputs')
-          outputTensor = rawOutput[keys[0]]
-        }
-        const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
-        const probs = Array.from(rawData)
-        patchResults[patch.name] = {}
-        classLabels.forEach((lbl, idx) => {
-          if (allowedClasses.includes(lbl)) {
-            patchResults[patch.name][lbl] = probs[idx] || 0
-          }
-        })
-      } finally {
-        inputTensor.dispose()
-        if (outputTensor && typeof outputTensor.dispose === 'function') {
-          outputTensor.dispose()
-        }
-      }
+    rawOutput = model.predict(inputTensor)
+    if (rawOutput instanceof tf.Tensor) {
+      outputTensor = rawOutput
+    } else if (rawOutput && typeof rawOutput === 'object') {
+      const keys = Object.keys(rawOutput)
+      if (keys.length === 0) throw new Error('TFLite model returned empty outputs')
+      outputTensor = rawOutput[keys[0]]
     }
+    const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
     console.timeEnd('[VetLink AI] Inference Time')
+    const probabilities = Array.from(rawData)
 
-    // Multi-Instance Max-Pooling (MIL) across instances
-    const pooledRaw = {}
-    const peakSources = {}
-    allowedClasses.forEach((lbl) => {
-      if (lbl.includes('Healthy')) {
-        pooledRaw[lbl] = patchResults['Global']?.[lbl] || 0
-        peakSources[lbl] = 'Global'
-      } else {
-        let maxVal = -1
-        let maxP = 'Global'
-        for (const [pname, pmap] of Object.entries(patchResults)) {
-          if ((pmap[lbl] || 0) > maxVal) {
-            maxVal = pmap[lbl] || 0
-            maxP = pname
-          }
-        }
-        pooledRaw[lbl] = Math.max(0, maxVal)
-        peakSources[lbl] = maxP
+    let candidateScores = {}
+    classLabels.forEach((lbl, idx) => {
+      if (allowedClasses.includes(lbl)) {
+        candidateScores[lbl] = probabilities[idx] || 0
       }
     })
 
-    const sumProb = Object.values(pooledRaw).reduce((a, b) => a + b, 0) || 1
+    // Feline Cranial Feature Evaluation (Ignores eyes/nose/whiskers)
+    const spNorm = (species || 'Canine').toLowerCase()
+    if ((spNorm === 'feline' || spNorm === 'cat') && candidateScores['Mange'] !== undefined) {
+      try {
+        const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
+        const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
+        const upperCanvas = document.createElement('canvas')
+        upperCanvas.width = 224
+        upperCanvas.height = 224
+        const uctx = upperCanvas.getContext('2d')
+        uctx.drawImage(imageElement, 0, 0, origW, origH * 0.55, 0, 0, 224, 224)
+        const upperTensor = preprocessImage(upperCanvas)
+        let upperOut = model.predict(upperTensor)
+        let upperTensorOut = (upperOut instanceof tf.Tensor) ? upperOut : upperOut[Object.keys(upperOut)[0]]
+        const upperData = upperTensorOut.dataSync ? upperTensorOut.dataSync() : await upperTensorOut.data()
+        const upperProbs = Array.from(upperData)
+        upperTensor.dispose()
+        if (upperTensorOut && typeof upperTensorOut.dispose === 'function') upperTensorOut.dispose()
+
+        const upperCandidate = {}
+        classLabels.forEach((lbl, idx) => {
+          if (allowedClasses.includes(lbl)) {
+            upperCandidate[lbl] = upperProbs[idx] || 0
+          }
+        })
+        const upperSum = Object.values(upperCandidate).reduce((a, b) => a + b, 0) || 1
+        const pMangeUpper = (upperCandidate['Mange'] || 0) / upperSum
+        if (pMangeUpper >= 0.70) {
+          candidateScores = upperCandidate
+        }
+      } catch (felineErr) {
+        console.warn('[VetLink AI] Feline cranial check error:', felineErr)
+      }
+    }
+
+    const sumProb = Object.values(candidateScores).reduce((a, b) => a + b, 0) || 1
     const classScores = allowedClasses
       .map((lbl) => ({
         label: lbl,
-        confidence: pooledRaw[lbl] / sumProb,
-        peakSector: peakSources[lbl] || 'Global',
+        confidence: (candidateScores[lbl] || 0) / sumProb,
       }))
       .sort((a, b) => b.confidence - a.confidence)
 
-    const topItem  = classScores[0] || { label: 'Unknown', confidence: 0 }
+    const topItem = classScores[0] || { label: 'Unknown', confidence: 0 }
     const topLabel = topItem.label
-    const topConf  = topItem.confidence
+    const topConf = topItem.confidence
 
     const top3 = classScores.slice(0, 3).map((item) => ({
-      label:   item.label,
+      label: item.label,
       display: CLASS_DISPLAY[item.label] || item.label,
       confidence: item.confidence,
-      peakSector: item.peakSector,
     }))
 
     // Generate Grad-CAM 3-panel visualization (Original, Heatmap, Overlay)
     const gradcam = await generateGradCAM(imageElement)
 
     return {
-      label:        topLabel,
+      label: topLabel,
       displayLabel: CLASS_DISPLAY[topLabel] || topLabel,
-      confidence:   topConf,
-      percent:      `${(topConf * 100).toFixed(1)}%`,
-      description:  CLASS_DESCRIPTIONS[topLabel] || '',
+      confidence: topConf,
+      percent: `${(topConf * 100).toFixed(1)}%`,
+      description: CLASS_DESCRIPTIONS[topLabel] || '',
       top3,
       gradcam,
-      engine:       'wasm',
+      engine: 'wasm',
     }
   } catch (wasmErr) {
     console.error('[VetLink AI] WASM inference error:', wasmErr)
     throw wasmErr
+  } finally {
+    inputTensor.dispose()
+    if (outputTensor && typeof outputTensor.dispose === 'function') {
+      outputTensor.dispose()
+    }
   }
 }
 
