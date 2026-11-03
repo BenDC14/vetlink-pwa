@@ -304,3 +304,4 @@ export default function ImageCropModal({ isOpen, file, onClose, onConfirmCrop, o
     </div>
   )
 }
+

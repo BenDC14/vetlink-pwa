@@ -11,6 +11,7 @@ import {
   getConsultationSymptoms
 } from '../db/database'
 import CameraCaptureModal from '../components/CameraCaptureModal'
+import ImageCropModal from '../components/ImageCropModal'
 
 const CLINICAL_DIAGNOSES = [
   'Mange',
@@ -70,6 +71,8 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [isSavingRecheck, setIsSavingRecheck]           = useState(false)
   const [recheckError, setRecheckError]                 = useState('')
   const [isRecheckCameraOpen, setIsRecheckCameraOpen]   = useState(false)
+  const [recheckCropOpen, setRecheckCropOpen]           = useState(false)
+  const [recheckFileToCrop, setRecheckFileToCrop]       = useState(null)
   const recheckInputRef                                 = useRef(null)
 
   const refreshPatients = async () => {
@@ -351,17 +354,34 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const handleRecheckFileChange = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setRecheckFile(file)
-    if (recheckPreview) URL.revokeObjectURL(recheckPreview)
-    setRecheckPreview(URL.createObjectURL(file))
+    setRecheckFileToCrop(file)
+    setRecheckCropOpen(true)
     e.target.value = ''
   }
 
   const handleRecheckCameraCapture = (file) => {
     if (!file) return
-    setRecheckFile(file)
+    setIsRecheckCameraOpen(false)
+    setRecheckFileToCrop(file)
+    setRecheckCropOpen(true)
+  }
+
+  const handleConfirmRecheckCrop = (croppedFile) => {
+    setRecheckCropOpen(false)
+    setRecheckFileToCrop(null)
+    setRecheckFile(croppedFile)
     if (recheckPreview) URL.revokeObjectURL(recheckPreview)
-    setRecheckPreview(URL.createObjectURL(file))
+    setRecheckPreview(URL.createObjectURL(croppedFile))
+  }
+
+  const handleUseFullRecheckImage = () => {
+    setRecheckCropOpen(false)
+    if (recheckFileToCrop) {
+      setRecheckFile(recheckFileToCrop)
+      if (recheckPreview) URL.revokeObjectURL(recheckPreview)
+      setRecheckPreview(URL.createObjectURL(recheckFileToCrop))
+      setRecheckFileToCrop(null)
+    }
   }
 
   const handleSaveRecheck = async (e) => {
@@ -1101,6 +1121,30 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                           Upload File
                         </button>
                       </div>
+                      {recheckFile && (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          style={{
+                            width: '100%',
+                            marginTop: 6,
+                            padding: '6px 8px',
+                            fontSize: '0.74rem',
+                            background: '#e0f2fe',
+                            color: '#0369a1',
+                            border: '1px solid #7dd3fc',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                          }}
+                          onClick={() => {
+                            setRecheckFileToCrop(recheckFile)
+                            setRecheckCropOpen(true)
+                          }}
+                        >
+                          Adjust Crop / Zoom
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div
@@ -1275,6 +1319,18 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         onClose={() => setIsRecheckCameraOpen(false)}
         onCapture={handleRecheckCameraCapture}
         onFallbackUpload={() => recheckInputRef.current?.click()}
+      />
+
+      {/* Recheck Lesion Crop & Zoom Modal */}
+      <ImageCropModal
+        isOpen={recheckCropOpen}
+        file={recheckFileToCrop}
+        onClose={() => {
+          setRecheckCropOpen(false)
+          setRecheckFileToCrop(null)
+        }}
+        onConfirmCrop={handleConfirmRecheckCrop}
+        onUseFullImage={handleUseFullRecheckImage}
       />
     </section>
   )

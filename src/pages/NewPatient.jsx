@@ -359,9 +359,11 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     }
   }
 
-  // When user snaps photo from live camera
+  // When user snaps photo from live camera, route to Crop & Zoom review before predicting
   const handleCameraCapture = (file) => {
-    processImageFile(file)
+    setIsCameraOpen(false)
+    setFileToCrop(file)
+    setCropModalOpen(true)
   }
 
   // When species changes, re-run AI if an image is already loaded and valid
@@ -1023,6 +1025,11 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
                 {/* Colab-exact Prediction Banner with Differential Ambiguity Alert */}
                 <div style={{ borderTop: '1px dashed #334155', paddingTop: 10, marginTop: 4, fontFamily: 'monospace' }}>
+                  {aiResult.isUniform && (
+                    <div style={{ marginBottom: 8, padding: '8px 10px', background: 'rgba(239, 68, 68, 0.18)', border: '1px solid #ef4444', borderRadius: 6, fontSize: '0.76rem', color: '#fca5a5', lineHeight: 1.4, fontFamily: 'sans-serif' }}>
+                      <strong>Backend AI Server Offline Notice:</strong> The in-browser WebAssembly engine produced an uncalibrated flat probability distribution. To activate the full 97.33% native MobileNetV3 neural engine and non-animal gate, launch the backend terminal with <code>npm run backend</code>.
+                    </div>
+                  )}
                   {(() => {
                     const runnerUp = aiResult.top3?.[1]
                     const isAmbiguous = aiResult.confidence < 0.75 || (runnerUp && runnerUp.confidence > 0.25)
