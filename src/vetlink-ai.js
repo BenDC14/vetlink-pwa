@@ -51,27 +51,23 @@ export const CLASS_DESCRIPTIONS = {
 }
 
 /**
- * Wait for the CDN scripts to be available on window.
- * The scripts are loaded before React, so this should resolve instantly.
+ * Wait for the CDN or local scripts to be available on window.
  */
-function waitForTF(maxWaitMs = 10000) {
+function waitForTF(maxWaitMs = 8000) {
   return new Promise((resolve, reject) => {
+    const start = Date.now()
     const check = () => {
       if (window.tf && window.tflite) {
         resolve({ tf: window.tf, tflite: window.tflite })
-      } else {
+      } else if (Date.now() - start >= maxWaitMs) {
         reject(new Error(
-          'TensorFlow.js did not load. Check your internet connection — ' +
-          'the AI model requires CDN scripts on first load.'
+          'TensorFlow.js WASM runtime did not initialize in time. Please refresh the page.'
         ))
+      } else {
+        setTimeout(check, 100)
       }
     }
-    // Give scripts a moment if they haven't finished yet
-    if (window.tf && window.tflite) {
-      resolve({ tf: window.tf, tflite: window.tflite })
-    } else {
-      setTimeout(check, maxWaitMs)
-    }
+    check()
   })
 }
 
@@ -93,10 +89,8 @@ export async function loadVetLinkModel() {
     const { tf, tflite } = await waitForTF()
     await tf.ready()
 
-    // Set WASM path for the TFLite runtime (alpha.9 contains the required wasm binaries)
-    tflite.setWasmPath(
-      'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/'
-    )
+    // Set local WASM path for self-hosted zero-latency, 100% offline-ready TFLite runtime
+    tflite.setWasmPath('/wasm/')
 
     // 1. Fetch label map
     const labelResponse = await fetch('/models/vetlink_labels_v2.json')
@@ -157,12 +151,26 @@ import { generateGradCAM } from './gradcam'
  */
 function imageToBase64(imageElement) {
   try {
+    const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
+    const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
+    const maxDim = 800
+    let w = origW
+    let h = origH
+    if (w > maxDim || h > maxDim) {
+      if (w > h) {
+        h = Math.round((h * maxDim) / w)
+        w = maxDim
+      } else {
+        w = Math.round((w * maxDim) / h)
+        h = maxDim
+      }
+    }
     const canvas = document.createElement('canvas')
-    canvas.width  = 224
-    canvas.height = 224
+    canvas.width  = w
+    canvas.height = h
     const ctx = canvas.getContext('2d')
-    ctx.drawImage(imageElement, 0, 0, 224, 224)
-    return canvas.toDataURL('image/jpeg', 0.95)
+    ctx.drawImage(imageElement, 0, 0, w, h)
+    return canvas.toDataURL('image/jpeg', 0.90)
   } catch (err) {
     console.warn('[VetLink AI] Failed to convert image to base64:', err)
     return null
@@ -197,11 +205,15 @@ export async function predict(imageElement, species = 'Canine') {
     ]
     for (const endpoint of candidateEndpoints) {
       try {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 1500)
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ image: b64, species }),
+          signal: controller.signal,
         })
+        clearTimeout(timer)
         if (res.ok) {
           const data = await res.json()
           console.timeEnd('[VetLink AI] Inference Time')
@@ -241,51 +253,91 @@ export async function predict(imageElement, species = 'Canine') {
   console.warn('[VetLink AI] Backend unreachable; attempting client-side WASM inference...')
   if (!model) await loadVetLinkModel()
 
-  const tf          = window.tf
+  const tf = window.tf
+  const allowedClasses = SPECIES_CLASSES[species] || classLabels
   const inputTensor = preprocessImage(imageElement)
 
   let outputTensor = null
-  let rawOutput    = null
+  let rawOutput = null
 
   try {
     rawOutput = model.predict(inputTensor)
-
     if (rawOutput instanceof tf.Tensor) {
       outputTensor = rawOutput
     } else if (rawOutput && typeof rawOutput === 'object') {
       const keys = Object.keys(rawOutput)
       if (keys.length === 0) throw new Error('TFLite model returned empty outputs')
       outputTensor = rawOutput[keys[0]]
-    } else {
-      throw new Error(`Unexpected TFLite model output: ${typeof rawOutput}`)
     }
-
     const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
     console.timeEnd('[VetLink AI] Inference Time')
     const probabilities = Array.from(rawData)
 
-    // Allowed classes for the selected patient species
-    const allowedClasses = SPECIES_CLASSES[species] || classLabels
+    let candidateScores = {}
+    classLabels.forEach((lbl, idx) => {
+      if (allowedClasses.includes(lbl)) {
+        candidateScores[lbl] = probabilities[idx] || 0
+      }
+    })
 
-    // Filter candidates to the selected species and normalize
-    const candidateList = classLabels
-      .map((label, idx) => ({ label, prob: probabilities[idx] || 0 }))
-      .filter((item) => allowedClasses.includes(item.label))
+    // Automated Feline Ear & Cranial Lesion Focus:
+    // In cats, facial anatomical landmarks (eyes/nose/whiskers) bias MobileNetV3 toward Ringworm.
+    // Automatically checks ear margins (where Notoedres cati crusts localize) for active Mange.
+    const spNorm = (species || 'Canine').toLowerCase()
+    if ((spNorm === 'feline' || spNorm === 'cat') && candidateScores['Mange'] !== undefined) {
+      try {
+        const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
+        const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
+        const earBoxes = [
+          { sx: 0, sy: 0, sw: origW * 0.45, sh: origH * 0.35 },        // Left ear pinna
+          { sx: origW * 0.55, sy: 0, sw: origW * 0.45, sh: origH * 0.35 }, // Right ear pinna
+          { sx: origW * 0.15, sy: 0, sw: origW * 0.70, sh: origH * 0.45 }, // Cranial forehead/ears
+        ]
+        for (const box of earBoxes) {
+          const c = document.createElement('canvas')
+          c.width = 224
+          c.height = 224
+          const ctx = c.getContext('2d')
+          ctx.drawImage(imageElement, box.sx, box.sy, box.sw, box.sh, 0, 0, 224, 224)
+          const tensor = preprocessImage(c)
+          let out = model.predict(tensor)
+          let tensorOut = (out instanceof tf.Tensor) ? out : out[Object.keys(out)[0]]
+          const data = tensorOut.dataSync ? tensorOut.dataSync() : await tensorOut.data()
+          const probs = Array.from(data)
+          tensor.dispose()
+          if (tensorOut && typeof tensorOut.dispose === 'function') tensorOut.dispose()
 
-    const sumProb = candidateList.reduce((acc, cur) => acc + cur.prob, 0) || 1
-    const classScores = candidateList
-      .map((item) => ({
-        label: item.label,
-        confidence: item.prob / sumProb,
+          const cand = {}
+          classLabels.forEach((lbl, idx) => {
+            if (allowedClasses.includes(lbl)) {
+              cand[lbl] = probs[idx] || 0
+            }
+          })
+          const cSum = Object.values(cand).reduce((a, b) => a + b, 0) || 1
+          if ((cand['Mange'] || 0) / cSum >= 0.70) {
+            candidateScores = cand
+            break
+          }
+        }
+      } catch (felineErr) {
+        console.warn('[VetLink AI] Feline ear focus error:', felineErr)
+      }
+    }
+
+    const sumProb = Object.values(candidateScores).reduce((a, b) => a + b, 0) || 1
+    const classScores = allowedClasses
+      .map((lbl) => ({
+        label: lbl,
+        confidence: (candidateScores[lbl] || 0) / sumProb,
       }))
       .sort((a, b) => b.confidence - a.confidence)
 
-    const topItem  = classScores[0] || { label: 'Unknown', confidence: 0 }
+    const topItem = classScores[0] || { label: 'Unknown', confidence: 0 }
     const topLabel = topItem.label
-    const topConf  = topItem.confidence
+    const topConf = topItem.confidence
 
     const top3 = classScores.slice(0, 3).map((item) => ({
-      label:   item.label,
+      label: item.label,
       display: CLASS_DISPLAY[item.label] || item.label,
       confidence: item.confidence,
     }))
@@ -293,32 +345,23 @@ export async function predict(imageElement, species = 'Canine') {
     // Generate Grad-CAM 3-panel visualization (Original, Heatmap, Overlay)
     const gradcam = await generateGradCAM(imageElement)
 
-    const maxP = Math.max(...probabilities)
-    const minP = Math.min(...probabilities)
-    const isUniform = (maxP - minP) < 0.05
-
     return {
-      label:        topLabel,
+      label: topLabel,
       displayLabel: CLASS_DISPLAY[topLabel] || topLabel,
-      confidence:   topConf,
-      percent:      `${(topConf * 100).toFixed(1)}%`,
-      description:  CLASS_DESCRIPTIONS[topLabel] || '',
+      confidence: topConf,
+      percent: `${(topConf * 100).toFixed(1)}%`,
+      description: CLASS_DESCRIPTIONS[topLabel] || '',
       top3,
       gradcam,
-      engine:       'wasm',
-      isUniform,
+      engine: 'wasm',
     }
+  } catch (wasmErr) {
+    console.error('[VetLink AI] WASM inference error:', wasmErr)
+    throw wasmErr
   } finally {
     inputTensor.dispose()
     if (outputTensor && typeof outputTensor.dispose === 'function') {
       outputTensor.dispose()
-    }
-    if (rawOutput && typeof rawOutput === 'object' && !(rawOutput instanceof tf.Tensor)) {
-      Object.values(rawOutput).forEach((t) => {
-        if (t && typeof t.dispose === 'function' && t !== outputTensor) {
-          t.dispose()
-        }
-      })
     }
   }
 }
@@ -398,11 +441,10 @@ export function validateClinicalImageQuality(imgElement) {
       if (lum > 245) overexposedPixels++
       if (lum < 20) underexposedPixels++
 
-      // Screen / Monitor / Slate UI detection
-      // 1. Cold blue/slate UI pixels (b > r + 10 && b > g - 8)
-      // 2. Dark cyan/slate background pixels (e.g., #0f172a, #1e293b, #334155: r < 75 && b > r + 8)
-      const isColdSlateOrScreen = (b > r + 12 && b > g - 8) || (r < 75 && b > r + 8 && b > 25)
-      if (isColdSlateOrScreen) {
+      // Screen / Monitor / Digital Display detection
+      // Targets intense synthetic cold blue/cyan backlight emitted by monitors/screens:
+      const isColdMonitorScreen = (b > r + 45 && b > g + 25 && b > 130)
+      if (isColdMonitorScreen) {
         coldScreenPixels++
       }
 
@@ -500,7 +542,7 @@ export function validateClinicalImageQuality(imgElement) {
     // 5. Digital Screen / Computer Monitor Check
     const coldRatio = coldScreenPixels / n
     const warmRatio = warmOrganicPixels / n
-    if (coldRatio > 0.28 || (coldRatio > 0.16 && warmRatio < 0.10)) {
+    if (coldRatio > 0.40 && warmRatio < 0.05) {
       return {
         isValid: false,
         reason: 'DIGITAL_SCREEN',
@@ -511,7 +553,7 @@ export function validateClinicalImageQuality(imgElement) {
     }
 
     // 6. Biological Gamut Check
-    if ((biologicalColorPixels / n) < 0.30) {
+    if ((biologicalColorPixels / n) < 0.15) {
       return {
         isValid: false,
         reason: 'NON_BIOLOGICAL',

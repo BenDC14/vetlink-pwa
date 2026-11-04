@@ -3,6 +3,7 @@ import {
   getPatients,
   mergeCloudPatients,
   updatePatient,
+  deletePatient,
   addConsultation,
   getConsultationsByPatient,
   updateConsultation,
@@ -11,12 +12,16 @@ import {
   getConsultationSymptoms
 } from '../db/database'
 import CameraCaptureModal from '../components/CameraCaptureModal'
+import ImageCropModal from '../components/ImageCropModal'
 
 const CLINICAL_DIAGNOSES = [
   'Mange',
   'Ringworm',
   'Pyoderma',
   'Hot Spots',
+  'Mange with Secondary Pyoderma',
+  'Ringworm with Secondary Pyoderma',
+  'Hot Spots with Secondary Pyoderma',
   'Healthy',
   'Avian Fowl Pox',
   'Scaly Face Scaly Leg Mite',
@@ -67,6 +72,8 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [isSavingRecheck, setIsSavingRecheck]           = useState(false)
   const [recheckError, setRecheckError]                 = useState('')
   const [isRecheckCameraOpen, setIsRecheckCameraOpen]   = useState(false)
+  const [recheckCropOpen, setRecheckCropOpen]           = useState(false)
+  const [recheckFileToCrop, setRecheckFileToCrop]       = useState(null)
   const recheckInputRef                                 = useRef(null)
 
   const refreshPatients = async () => {
@@ -186,6 +193,20 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     }
   }
 
+  const handleDeletePatient = async (patient) => {
+    if (!window.confirm(`Are you sure you want to delete patient "${patient.name}" (${patient.id})? This will permanently remove the record and its unsubmitted scans.`)) {
+      return
+    }
+    try {
+      await deletePatient(patient.id)
+      setPatients((prev) => prev.filter((p) => p.id !== patient.id))
+      setSuccessMessage(`Patient ${patient.id} (${patient.name}) was deleted.`)
+    } catch (err) {
+      console.error('Failed to delete patient:', err)
+      alert('Could not delete patient record: ' + (err.message || 'Unknown error'))
+    }
+  }
+
   const openClinicalReviewModal = async (patient) => {
     setReviewPatient(patient)
     setClinicalStatus(patient.status || 'Review Results')
@@ -229,9 +250,22 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
       // 2. Update consultation if diagnosis overridden or lab notes added
       if (reviewConsult) {
         const updates = {}
-        const finalDiag = overrideDiag === 'OTHER' ? customDiag.trim() : overrideDiag.trim()
-        if (finalDiag) {
-          updates.diagnosis = finalDiag
+        const rawDiag = overrideDiag === 'OTHER' ? customDiag.trim() : overrideDiag.trim()
+        if (rawDiag) {
+          let primaryParsed = rawDiag
+          let secondaryParsed = null
+          if (rawDiag.toLowerCase().includes(' with ')) {
+            const parts = rawDiag.split(/ with /i)
+            primaryParsed = parts[0].trim()
+            secondaryParsed = parts[1].trim()
+          } else if (rawDiag.includes(' + ')) {
+            const parts = rawDiag.split(' + ')
+            primaryParsed = parts[0].trim()
+            secondaryParsed = parts[1].trim()
+          }
+          updates.diagnosis = primaryParsed
+          updates.secondaryDiagnosis = secondaryParsed
+          updates.isComorbid = Boolean(secondaryParsed)
         }
         if (labNotes && labNotes.trim()) {
           const currentNotes = reviewConsult.clinicalNotes || ''
@@ -335,17 +369,34 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const handleRecheckFileChange = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
-    setRecheckFile(file)
-    if (recheckPreview) URL.revokeObjectURL(recheckPreview)
-    setRecheckPreview(URL.createObjectURL(file))
+    setRecheckFileToCrop(file)
+    setRecheckCropOpen(true)
     e.target.value = ''
   }
 
   const handleRecheckCameraCapture = (file) => {
     if (!file) return
-    setRecheckFile(file)
+    setIsRecheckCameraOpen(false)
+    setRecheckFileToCrop(file)
+    setRecheckCropOpen(true)
+  }
+
+  const handleConfirmRecheckCrop = (croppedFile) => {
+    setRecheckCropOpen(false)
+    setRecheckFileToCrop(null)
+    setRecheckFile(croppedFile)
     if (recheckPreview) URL.revokeObjectURL(recheckPreview)
-    setRecheckPreview(URL.createObjectURL(file))
+    setRecheckPreview(URL.createObjectURL(croppedFile))
+  }
+
+  const handleUseFullRecheckImage = () => {
+    setRecheckCropOpen(false)
+    if (recheckFileToCrop) {
+      setRecheckFile(recheckFileToCrop)
+      if (recheckPreview) URL.revokeObjectURL(recheckPreview)
+      setRecheckPreview(URL.createObjectURL(recheckFileToCrop))
+      setRecheckFileToCrop(null)
+    }
   }
 
   const handleSaveRecheck = async (e) => {
@@ -561,14 +612,16 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 <td>{renderStatusBadge(patient.status)}</td>
                 <td>
                   <div className="table-actions-row">
-                    <button
-                      className="primary-btn table-action-btn view-case-btn"
-                      type="button"
-                      onClick={() => openClinicalReviewModal(patient)}
-                      title="Review Clinical Case"
-                    >
-                      View Case
-                    </button>
+                    {currentUser?.role !== 'Clinic Staff' && (
+                      <button
+                        className="primary-btn table-action-btn view-case-btn"
+                        type="button"
+                        onClick={() => openClinicalReviewModal(patient)}
+                        title="Review Clinical Case"
+                      >
+                        View Case
+                      </button>
+                    )}
                     <button
                       className="secondary-btn table-action-btn recheck-pill-btn"
                       type="button"
@@ -584,6 +637,15 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       title="Edit Patient Details"
                     >
                       Edit
+                    </button>
+                    <button
+                      className="small-outline table-action-btn delete-pill-btn"
+                      type="button"
+                      onClick={() => handleDeletePatient(patient)}
+                      title="Delete Patient Record"
+                      style={{ color: '#ef4444', borderColor: '#fca5a5' }}
+                    >
+                      Delete
                     </button>
                   </div>
                 </td>
@@ -678,8 +740,13 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   <input type="date" value={formData.lastVisit} onChange={(event) => setFormData({ ...formData, lastVisit: event.target.value })} />
                 </label>
                 <label>
-                  <span>Status</span>
-                  <select value={formData.status} onChange={(event) => setFormData({ ...formData, status: event.target.value })}>
+                  <span>Status {currentUser?.role === 'Clinic Staff' && <small style={{ color: '#64748b' }}>(Locked - Doctor/Admin only)</small>}</span>
+                  <select
+                    value={formData.status}
+                    onChange={(event) => setFormData({ ...formData, status: event.target.value })}
+                    disabled={currentUser?.role === 'Clinic Staff'}
+                    title={currentUser?.role === 'Clinic Staff' ? 'Status modification restricted to Veterinarian / Administrator' : 'Change patient status'}
+                  >
                     <option>Active</option>
                     <option>Inactive</option>
                     <option>Needs Vet Review</option>
@@ -902,21 +969,40 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       className="secondary-btn"
                       style={{ padding: '8px 14px', fontSize: '0.85rem', background: '#f8fafc', border: '1px solid #cbd5e1', fontWeight: 700 }}
                       onClick={() => {
-                        const finalDiag = overrideDiag === 'OTHER'
+                        const rawDiag = overrideDiag === 'OTHER'
                           ? (customDiag.trim() || 'Custom Dermatological Condition')
                           : (overrideDiag || reviewConsult?.diagnosis || 'Skin Lesion')
+
+                        let primaryParsed = rawDiag
+                        let secondaryParsed = null
+
+                        if (rawDiag.toLowerCase().includes(' with ')) {
+                          const parts = rawDiag.split(/ with /i)
+                          primaryParsed = parts[0].trim()
+                          secondaryParsed = parts[1].trim()
+                        } else if (rawDiag.includes(' + ')) {
+                          const parts = rawDiag.split(' + ')
+                          primaryParsed = parts[0].trim()
+                          secondaryParsed = parts[1].trim()
+                        } else if (overrideDiag) {
+                          // Doctor overridden to specific single condition -> purge stale AI secondary condition!
+                          secondaryParsed = null
+                        } else {
+                          secondaryParsed = reviewConsult?.secondaryDiagnosis || null
+                        }
+
                         onProceedToTreatment({
                           patient: reviewPatient,
                           consultation: reviewConsult,
                           aiResult: {
-                            displayLabel: finalDiag,
+                            displayLabel: primaryParsed,
                             percent: reviewScreening?.aiPercent || 'Clinical Evaluation',
                             top3: reviewScreening?.aiTop3 ? JSON.parse(reviewScreening.aiTop3) : [],
                           },
                           previewUrl: reviewScreening?.imageData,
-                          diagnosis: finalDiag,
-                          secondaryDiagnosis: reviewConsult?.secondaryDiagnosis || null,
-                          isComorbid: Boolean(reviewConsult?.isComorbid || reviewConsult?.secondaryDiagnosis),
+                          diagnosis: primaryParsed,
+                          secondaryDiagnosis: secondaryParsed,
+                          isComorbid: Boolean(secondaryParsed),
                           assignedStatus: clinicalStatus,
                           labTestRequired: clinicalStatus === 'Awaiting Lab Test' || reviewConsult?.reviewStatus === 'awaiting_lab',
                         })
@@ -1059,6 +1145,30 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                           Upload File
                         </button>
                       </div>
+                      {recheckFile && (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          style={{
+                            width: '100%',
+                            marginTop: 6,
+                            padding: '6px 8px',
+                            fontSize: '0.74rem',
+                            background: '#e0f2fe',
+                            color: '#0369a1',
+                            border: '1px solid #7dd3fc',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                          }}
+                          onClick={() => {
+                            setRecheckFileToCrop(recheckFile)
+                            setRecheckCropOpen(true)
+                          }}
+                        >
+                          Adjust Crop / Zoom
+                        </button>
+                      )}
                     </div>
                   ) : (
                     <div
@@ -1233,6 +1343,18 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         onClose={() => setIsRecheckCameraOpen(false)}
         onCapture={handleRecheckCameraCapture}
         onFallbackUpload={() => recheckInputRef.current?.click()}
+      />
+
+      {/* Recheck Lesion Crop & Zoom Modal */}
+      <ImageCropModal
+        isOpen={recheckCropOpen}
+        file={recheckFileToCrop}
+        onClose={() => {
+          setRecheckCropOpen(false)
+          setRecheckFileToCrop(null)
+        }}
+        onConfirmCrop={handleConfirmRecheckCrop}
+        onUseFullImage={handleUseFullRecheckImage}
       />
     </section>
   )

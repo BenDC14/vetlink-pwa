@@ -36,3 +36,4 @@ __pycache__/
 *.pyc
 *.pyo
 backup_snapshots/
+_backup_pre_multipatch/

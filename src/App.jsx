@@ -516,7 +516,7 @@ function App() {
               </button>
               <button
                 type="button"
-                className={"nav-item " + (activeView === 'patients' && !showNewPatient ? 'active' : '')}
+                className={"nav-item " + ((activeView === 'patients' || (activeView === 'treatment' && treatmentCaseData)) && !showNewPatient ? 'active' : '')}
                 onClick={() => { setActiveView('patients'); setShowNewPatient(false); setShowSettings(false); }}
               >
                 <div className="nav-item-label">
@@ -529,6 +529,26 @@ function App() {
                   <span>Patient Records</span>
                 </div>
               </button>
+              {activeView === 'treatment' && treatmentCaseData && !showNewPatient && (
+                <div style={{
+                  margin: '-4px 10px 10px 24px',
+                  padding: '5px 10px',
+                  background: 'rgba(13, 148, 136, 0.15)',
+                  borderLeft: '3px solid #0d9488',
+                  borderRadius: '0 6px 6px 0',
+                  fontSize: '0.78rem',
+                  color: '#2dd4bf',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6
+                }}>
+                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#2dd4bf', display: 'inline-block' }}></span>
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    Consulting: {treatmentCaseData?.patient?.name || treatmentCaseData?.name || 'Patient'}
+                  </span>
+                </div>
+              )}
               {currentUser?.role === 'Clinic Admin' && (
                 <button
                   type="button"
@@ -546,10 +566,10 @@ function App() {
                   </div>
                 </button>
               )}
-              {(currentUser?.role === 'Clinic Admin' || currentUser?.role === 'Clinic Staff' || !currentUser?.role) && (
+              {(currentUser?.role === 'Clinic Admin' || !currentUser?.role) && (
                 <button
                   type="button"
-                  className={"nav-item " + (activeView === 'treatment' && !showNewPatient && !showSettings ? 'active' : '')}
+                  className={"nav-item " + (activeView === 'treatment' && !treatmentCaseData && !showNewPatient && !showSettings ? 'active' : '')}
                   onClick={() => { setTreatmentCaseData(null); setActiveView('treatment'); setShowNewPatient(false); setShowSettings(false); }}
                 >
                   <div className="nav-item-label">
@@ -561,28 +581,30 @@ function App() {
                   </div>
                 </button>
               )}
-              <button
-                type="button"
-                className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
-                onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
-              >
-                <div className="nav-item-label">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-                  </svg>
-                  <span>Sync</span>
-                </div>
-                <div className="nav-sync-meta">
-                  <span className={`nav-sync-badge ${syncBadgeClass}`}>
-                    {syncBadgeText}
-                  </span>
-                  {lastSyncTime && (
-                    <span className="nav-sync-time" title={`Last synchronized: ${lastSyncTime}`}>
-                      Last synced: {lastSyncTime}
+              {currentUser?.role === 'Clinic Admin' && (
+                <button
+                  type="button"
+                  className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
+                  onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
+                >
+                  <div className="nav-item-label">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                    </svg>
+                    <span>Sync</span>
+                  </div>
+                  <div className="nav-sync-meta">
+                    <span className={`nav-sync-badge ${syncBadgeClass}`}>
+                      {syncBadgeText}
                     </span>
-                  )}
-                </div>
-              </button>
+                    {lastSyncTime && (
+                      <span className="nav-sync-time" title={`Last synchronized: ${lastSyncTime}`}>
+                        {lastSyncTime}
+                      </span>
+                    )}
+                  </div>
+                </button>
+              )}
             </nav>
 
             <div className="sidebar-actions">
@@ -617,13 +639,16 @@ function App() {
                   <img src={vetlinkLogo} alt="VetLink" className="mobile-header-logo" />
                   <span className="mobile-header-title">VetLink</span>
                 </div>
-                <h2>{showSettings ? 'Settings' : showNewPatient ? 'New Patient' : {
-                  clinic: 'Clinical Analysis',
-                  patients: 'Patient Records',
-                  staff: 'Manage Staff',
-                  treatment: 'Treatment Protocols',
-                  sync: 'Sync',
-                }[activeView]}</h2>
+                <h2>{showSettings ? 'Settings' : showNewPatient ? 'New Patient Intake' : (
+                  activeView === 'treatment' && treatmentCaseData ? 'Prescription & Clinical Consultation' :
+                  {
+                    clinic: 'Clinical Analysis',
+                    patients: 'Patient Records',
+                    staff: 'Manage Staff',
+                    treatment: 'Treatment Protocols Library',
+                    sync: 'Database Synchronization',
+                  }[activeView]
+                )}</h2>
               </div>
               <div className="header-actions">
                 <button
@@ -683,8 +708,19 @@ function App() {
                 isOffline={currentUser?.isOffline}
                 onCapture={(payload) => {
                   setShowNewPatient(false)
-                  setTreatmentCaseData(payload)
-                  setActiveView('treatment')
+                  if (currentUser?.role === 'Clinic Staff') {
+                    // Clinic Staff returns to Patient Records table (cannot prescribe or view treatment directly)
+                    setTreatmentCaseData(null)
+                    setActiveView('patients')
+                  } else if (payload?.proceedToTreatment) {
+                    // Veterinarian / Admin who specifically opts into treatment
+                    setTreatmentCaseData(payload)
+                    setActiveView('treatment')
+                  } else {
+                    // Default safe workflow: route to Patient Records
+                    setTreatmentCaseData(null)
+                    setActiveView('patients')
+                  }
                 }}
               />
             ) : (

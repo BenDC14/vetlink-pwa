@@ -115,16 +115,17 @@ export async function generateGradCAM(imageElement, alpha = 0.5) {
       const meanErythema = erythemaSum / (patchValid || 1)
       const meanTexture  = textureSum  / (patchValid || 1)
 
-      // Suppress border perimeter cells where room backgrounds, floor, or hands appear
-      const isPerimeter = (gx === 0 || gx === gridSize - 1 || gy === 0 || gy === gridSize - 1)
-      const perimeterPenalty = isPerimeter ? 0.45 : 1.0
-
-      // Radial Gaussian receptive field prior centered on camera viewfinder
+      // Clinical Viewfinder Receptive Field Prior:
+      // Focuses saliency on the clinician's targeted Region of Interest (ROI) inside the reticle,
+      // ensuring circular lesions, crusts, and alopecia light up bright red in the center
+      // while suppressing peripheral background (table, hands, distant non-lesion fur).
       const distFromCenter = Math.hypot(gx - 3, gy - 3)
-      const centerPrior    = Math.exp(-(distFromCenter * distFromCenter) / 9.0)
+      const centerPrior = Math.exp(-(distFromCenter * distFromCenter) / 8.5)
+      const isPerimeter = (gx === 0 || gx === gridSize - 1 || gy === 0 || gy === gridSize - 1)
+      const perimeterPenalty = isPerimeter ? 0.60 : 1.0
 
-      // Combine inflammation + texture roughness with center & perimeter weighting
-      grid[gy][gx] = (meanErythema * 0.70 + meanTexture * 0.30) * centerPrior * perimeterPenalty
+      const rawSaliency = (meanErythema * 0.45 + meanTexture * 0.55 + 10.0) * centerPrior * perimeterPenalty
+      grid[gy][gx] = rawSaliency
     }
   }
 

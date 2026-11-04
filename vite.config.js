@@ -7,7 +7,6 @@ export default defineConfig({
     host: true,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
     },
     proxy: {
       '/api': {
@@ -19,7 +18,6 @@ export default defineConfig({
   preview: {
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
-      'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
   plugins: [
@@ -29,7 +27,7 @@ export default defineConfig({
       devOptions: {
         enabled: true,
       },
-      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'icons.svg', 'models/*'],
+      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'icons.svg', 'models/*', 'wasm/*'],
       manifest: {
         name: "VetLink Animal Skin Disease Support",
         short_name: "VetLink",

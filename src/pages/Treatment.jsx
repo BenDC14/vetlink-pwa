@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { updateConsultation } from '../db/database'
 
 export const BASE_TREATMENT_PROTOCOLS = {
@@ -297,6 +297,73 @@ function getSpeciesProtocolKey(diseaseName, speciesName) {
   return diseaseName
 }
 
+// Isolated hidden iframe printer: Prints without triggering @media print on parent window
+// Prevents parent webpage from flashing white or hiding dashboard UI behind the print dialog
+function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Document') {
+  if (!elementHtml) return
+
+  const iframe = document.createElement('iframe')
+  iframe.style.position = 'fixed'
+  iframe.style.right = '0'
+  iframe.style.bottom = '0'
+  iframe.style.width = '0'
+  iframe.style.height = '0'
+  iframe.style.border = '0'
+  iframe.style.visibility = 'hidden'
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>${docTitle}</title>
+        <style>
+          @page {
+            size: A4 portrait;
+            margin: 14mm 16mm;
+          }
+          * {
+            box-sizing: border-box;
+          }
+          body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+        </style>
+      </head>
+      <body>
+        ${elementHtml}
+      </body>
+    </html>
+  `)
+  doc.close()
+
+  iframe.contentWindow.focus()
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.print()
+    } catch (err) {
+      console.error('Isolated iframe print error:', err)
+    } finally {
+      setTimeout(() => {
+        try {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe)
+          }
+        } catch (e) {}
+      }, 1500)
+    }
+  }, 250)
+}
+
 export default function Treatment({ onBack, caseData, currentUser }) {
   const [protocols, setProtocols] = useState(loadSavedProtocols)
   const isLibraryMode = !caseData?.patient
@@ -313,7 +380,21 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   )
 
   const patientSpecies = patient?.species || caseData?.species || 'Canine'
-  const rawDiagnosis = caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange'
+  let parsedPrimary = caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange'
+  let parsedSecondary = caseData?.approvedSecondary || caseData?.secondaryDiagnosis || null
+
+  // Cleanly parse dual conditions like "Mange with Pyoderma" or "Mange + Pyoderma"
+  if (parsedPrimary.toLowerCase().includes(' with ')) {
+    const parts = parsedPrimary.split(/ with /i)
+    parsedPrimary = parts[0].trim()
+    parsedSecondary = parts[1].trim()
+  } else if (parsedPrimary.includes(' + ')) {
+    const parts = parsedPrimary.split(' + ')
+    parsedPrimary = parts[0].trim()
+    parsedSecondary = parts[1].trim()
+  }
+
+  const rawDiagnosis = parsedPrimary
 
   // Initial selection
   const initialKey = isLibraryMode
@@ -324,6 +405,8 @@ export default function Treatment({ onBack, caseData, currentUser }) {
 
   // Show "Add Custom Protocol" modal state
   const [showAddModal, setShowAddModal] = useState(false)
+  const [showRxPreviewModal, setShowRxPreviewModal] = useState(false)
+  const [showLabSlipPreviewModal, setShowLabSlipPreviewModal] = useState(false)
   const [newProtocolName, setNewProtocolName] = useState('')
   const [newProtocolCategory, setNewProtocolCategory] = useState('Canine Protocols (Aso)')
   const [newProtocolSteps, setNewProtocolSteps] = useState('')
@@ -332,8 +415,8 @@ export default function Treatment({ onBack, caseData, currentUser }) {
 
   const activeProtocolKey = isLibraryMode ? selectedDisease : getSpeciesProtocolKey(rawDiagnosis, patientSpecies)
   const diagnosis         = isLibraryMode ? (protocols[selectedDisease]?.baseCondition || selectedDisease) : rawDiagnosis
-  const secondaryDiagnosis = caseData?.approvedSecondary || caseData?.secondaryDiagnosis || null
-  const isComorbid        = Boolean(caseData?.isComorbid || secondaryDiagnosis)
+  const secondaryDiagnosis = parsedSecondary
+  const isComorbid        = Boolean(parsedSecondary)
   const isOverridden      = Boolean(caseData?.isOverridden)
 
   // Resolve Primary Protocol
@@ -519,8 +602,35 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   }
 
   const handlePrint = () => {
-    window.print()
+    if (isAwaitingLab) {
+      handlePrintLabSlip()
+    } else {
+      handlePrintRx()
+    }
   }
+
+  const rxPrintCardRef = useRef(null)
+  const labSlipPrintCardRef = useRef(null)
+
+  const handlePrintRx = () => {
+    const content = rxPrintCardRef.current ? rxPrintCardRef.current.innerHTML : ''
+    if (!content) return
+    printElementViaIframe(content, `Prescription_${patient?.name || 'Patient'}_${cleanRxId}`)
+  }
+
+  const handlePrintLabSlip = () => {
+    const content = labSlipPrintCardRef.current ? labSlipPrintCardRef.current.innerHTML : ''
+    if (!content) return
+    printElementViaIframe(content, `LabOrder_${patient?.name || 'Patient'}_${cleanRxId}`)
+  }
+
+  const cleanDiagnosisDisplay = secondaryDiagnosis
+    ? `${diagnosis} with Secondary ${secondaryDiagnosis}`
+    : diagnosis
+
+  const cleanRxId = consultation?.id
+    ? (consultation.id.length > 18 ? `RX-${consultation.id.slice(0, 8).toUpperCase()}` : consultation.id)
+    : `RX-2026-${patient?.id ? String(patient.id).replace('PT-', '') : '0142'}`
 
   const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
   const isVetOrAdmin = currentUser?.role === 'Clinic Admin' || !currentUser?.role
@@ -556,26 +666,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
     <>
       <style>{`
         @media print {
-          body * {
-            visibility: hidden !important;
-          }
-          .official-rx-print-document, .official-rx-print-document * {
-            visibility: visible !important;
-          }
-          .official-rx-print-document {
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
-            width: 100% !important;
-            margin: 0 !important;
-            padding: 24px 30px !important;
-            background: white !important;
-            color: #0f172a !important;
-            display: block !important;
-            box-sizing: border-box !important;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
-          }
-          .no-print {
+          .no-print, .modal-overlay {
             display: none !important;
           }
         }
@@ -583,6 +674,59 @@ export default function Treatment({ onBack, caseData, currentUser }) {
 
       {/* ── Screen View: Interactive Treatment Plan ────────────────── */}
       <section className="treatment-card no-print">
+        {!isLibraryMode && (
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            flexWrap: 'wrap',
+            gap: 12,
+            padding: '12px 18px',
+            background: 'var(--surface, #ffffff)',
+            border: '1px solid var(--border, #cbd5e1)',
+            borderRadius: 10,
+            marginBottom: 16,
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              {onBack && (
+                <button
+                  type="button"
+                  onClick={onBack}
+                  className="small-outline"
+                  style={{
+                    fontWeight: 700,
+                    fontSize: '0.85rem',
+                    padding: '6px 14px',
+                    cursor: 'pointer',
+                  }}
+                >
+                  ← Back to Patient Records
+                </button>
+              )}
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-h, #0f172a)' }}>
+                  Prescription & Clinical Consultation: {patient?.name || 'Patient'} ({patientSpecies})
+                </h3>
+                <span style={{ fontSize: '0.78rem', color: '#64748b' }}>
+                  Patient ID: {patient?.id || 'P-XXXX'} • Owner: {patient?.ownerName || 'Walk-in'}
+                </span>
+              </div>
+            </div>
+            <span style={{
+              fontSize: '0.75rem',
+              fontWeight: 800,
+              padding: '4px 10px',
+              borderRadius: 6,
+              background: isAwaitingLab ? '#fef3c7' : '#ecfdf5',
+              color: isAwaitingLab ? '#92400e' : '#065f46',
+              border: isAwaitingLab ? '1px solid #fde68a' : '1px solid #a7f3d0',
+              letterSpacing: '0.5px',
+              textTransform: 'uppercase',
+            }}>
+              {isAwaitingLab ? 'Status: Awaiting Lab Test' : 'Status: Clinical Consultation'}
+            </span>
+          </div>
+        )}
         {isLibraryMode && (
           <div style={{ padding: '16px 20px', background: 'var(--surface, #ffffff)', border: '1px solid var(--border, #e2e8f0)', borderRadius: '14px', marginBottom: '18px', boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '10px', marginBottom: '14px' }}>
@@ -937,10 +1081,16 @@ export default function Treatment({ onBack, caseData, currentUser }) {
             <button
               type="button"
               className="secondary-btn"
-              onClick={handlePrint}
+              onClick={() => {
+                if (isAwaitingLab) {
+                  setShowLabSlipPreviewModal(true)
+                } else {
+                  setShowRxPreviewModal(true)
+                }
+              }}
               style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
             >
-              {isAwaitingLab ? 'Print Lab Requisition Slip' : 'Print Rx / Save PDF'}
+              {isAwaitingLab ? 'View Laboratory Requisition Slip' : 'Preview & Print Prescription (Rx)'}
             </button>
             {!isLibraryMode && (
               <button
@@ -1042,6 +1192,239 @@ export default function Treatment({ onBack, caseData, currentUser }) {
         </div>
       )}
 
+      {/* ── Prescription Preview Modal (Option B - In-App Preview) ── */}
+      {showRxPreviewModal && (
+        <div className="modal-overlay no-print" role="dialog" aria-modal="true" style={{ zIndex: 1000 }}>
+          <div className="modal-dialog" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto', background: '#0f172a', padding: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, color: '#f8fafc' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#38bdf8' }}>Official Prescription Preview</h3>
+                <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>Review the document before generating physical printout or saving PDF</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowRxPreviewModal(false)}
+                className="modal-close-btn"
+                style={{ background: '#334155', color: '#f8fafc', border: 'none', borderRadius: 6, width: 30, height: 30, cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Authentic White Paper Document Preview */}
+            <div ref={rxPrintCardRef} style={{ background: '#ffffff', color: '#0f172a', padding: 28, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a' }}>
+              <div style={{ textAlign: 'center', borderBottom: '2px solid #0f172a', paddingBottom: 12, marginBottom: 16 }}>
+                <h2 style={{ margin: '0 0 4px', fontSize: '1.45rem', color: '#0f172a', letterSpacing: '0.5px' }}>
+                  VETLINK ANIMAL CARE CLINIC & HOSPITAL
+                </h2>
+                <p style={{ margin: '0 0 4px', fontSize: '0.85rem', color: '#334155', fontWeight: 600 }}>
+                  Veterinary Medical Center • Department of Clinical Dermatology
+                </p>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+                  102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+                </p>
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12, padding: 10, background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 6, marginBottom: 14, fontSize: '0.84rem' }}>
+                <div>
+                  <strong>FOR (PATIENT):</strong> <span style={{ fontSize: '0.98rem', fontWeight: 800 }}>{patient?.name || 'Buddy'}</span><br />
+                  <strong>SPECIES / BREED:</strong> {patientSpecies} • {patient?.breed || 'Aspin'}<br />
+                  <strong>WEIGHT:</strong> {patient?.weight ? `${patient.weight} kg` : 'N/A'} • <strong>AGE:</strong> {patient?.age || 'N/A'}
+                </div>
+                <div>
+                  <strong>OWNER:</strong> {patient?.ownerName || 'Walk-in'}<br />
+                  <strong>CONTACT:</strong> {patient?.ownerPhone || 'N/A'}<br />
+                  <strong>DATE:</strong> {todayStr}<br />
+                  <strong>CASE / RX ID:</strong> {cleanRxId}
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', background: '#f1f5f9', borderLeft: '4px solid #1e3a8a', marginBottom: 14 }}>
+                <span style={{ fontSize: '0.84rem' }}>
+                  <strong>CLINICAL DIAGNOSIS:</strong> <u style={{ fontWeight: 800 }}>{cleanDiagnosisDisplay}</u> ({patientSpecies})
+                </span>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#16a34a' }}>
+                  VALIDATED CLINICAL PRESCRIPTION
+                </span>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
+                  <span style={{ fontFamily: 'Georgia, serif', fontSize: '2rem', fontWeight: 900, color: '#1e3a8a', lineHeight: 1 }}>
+                    ℞
+                  </span>
+                  <span style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0f172a' }}>
+                    MEDICATION & DOSAGE DISPENSING ORDER
+                  </span>
+                </div>
+                <div style={{
+                  padding: 12,
+                  border: '1.5px solid #0f172a',
+                  borderRadius: 6,
+                  fontSize: '0.9rem',
+                  lineHeight: 1.6,
+                  whiteSpace: 'pre-wrap',
+                  fontFamily: 'Consolas, "Courier New", monospace',
+                  background: '#fafafa',
+                  color: '#0f172a',
+                }}>
+                  {prescription}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontWeight: 800, fontSize: '0.84rem', color: '#0f172a', marginBottom: 4, textTransform: 'uppercase' }}>
+                  CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:
+                </div>
+                <div style={{ padding: 10, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: '0.82rem', lineHeight: 1.5, background: '#ffffff', color: '#334155' }}>
+                  {clinicalNotes}
+                </div>
+              </div>
+
+              <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 12, borderTop: '1px solid #cbd5e1' }}>
+                <div style={{ fontSize: '0.72rem', color: '#64748b', maxWidth: 360, lineHeight: 1.4 }}>
+                  Notice: Official prescription issued under Republic Act 9268. Valid for 30 days from date of examination. Substitution requires attending veterinarian authorization.
+                </div>
+                <div style={{ textAlign: 'center', width: 210 }}>
+                  <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: 24 }}></div>
+                  <strong style={{ fontSize: '0.88rem' }}>Dr. Sarah Lin, DVM</strong><br />
+                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PRC License No.: VET-894102</span><br />
+                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PTR No.: 1948201</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => setShowRxPreviewModal(false)}
+                className="small-outline"
+                style={{ padding: '8px 16px', background: '#334155', color: '#f8fafc', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+              >
+                Close Preview
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintRx}
+                className="action-btn blue"
+                style={{ padding: '8px 20px', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
+              >
+                Confirm & Print Document
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Laboratory Slip Preview Modal (Option B - In-App Preview) ── */}
+      {showLabSlipPreviewModal && (
+        <div className="modal-overlay no-print" role="dialog" aria-modal="true" style={{ zIndex: 1000 }}>
+          <div className="modal-dialog" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto', background: '#0f172a', padding: 20 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, color: '#f8fafc' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#f59e0b' }}>Official Laboratory Requisition Order Preview</h3>
+                <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>Review requisition specifications before printing laboratory order slip</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowLabSlipPreviewModal(false)}
+                className="modal-close-btn"
+                style={{ background: '#334155', color: '#f8fafc', border: 'none', borderRadius: 6, width: 30, height: 30, cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Authentic White Paper Requisition Sheet */}
+            <div ref={labSlipPrintCardRef} style={{ background: '#ffffff', color: '#0f172a', padding: 28, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a' }}>
+              <div style={{ textAlign: 'center', borderBottom: '2px solid #0f172a', paddingBottom: 12, marginBottom: 14 }}>
+                <h2 style={{ margin: '0 0 4px', fontSize: '1.45rem', color: '#0f172a', letterSpacing: '0.5px' }}>
+                  VETLINK ANIMAL CARE CLINIC & HOSPITAL
+                </h2>
+                <p style={{ margin: '0 0 4px', fontSize: '0.85rem', color: '#334155', fontWeight: 600 }}>
+                  Department of Clinical Pathology & Diagnostic Dermatology
+                </p>
+                <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+                  102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+                </p>
+              </div>
+
+              <div style={{ background: '#fef3c7', border: '1px solid #f59e0b', padding: '6px 12px', textAlign: 'center', fontWeight: 800, color: '#92400e', marginBottom: 14, fontSize: '0.88rem', letterSpacing: '0.5px' }}>
+                OFFICIAL LABORATORY REQUISITION ORDER SLIP
+              </div>
+
+              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12, padding: 10, border: '1px solid #cbd5e1', borderRadius: 6, marginBottom: 14, fontSize: '0.84rem' }}>
+                <div>
+                  <strong>PATIENT NAME:</strong> {patient?.name || 'Buddy'}<br />
+                  <strong>SPECIES / BREED:</strong> {patientSpecies} • {patient?.breed || 'Aspin'}<br />
+                  <strong>WEIGHT:</strong> {patient?.weight ? `${patient.weight} kg` : 'N/A'} • <strong>AGE:</strong> {patient?.age || 'N/A'}<br />
+                  <strong>PATIENT ID:</strong> {patient?.id || 'P-XXXX'}
+                </div>
+                <div>
+                  <strong>OWNER:</strong> {patient?.ownerName || 'Walk-in'}<br />
+                  <strong>CONTACT:</strong> {patient?.ownerPhone || 'N/A'}<br />
+                  <strong>DATE:</strong> {todayStr}<br />
+                  <strong>ORDERING VET:</strong> Dr. Sarah Lin, DVM<br />
+                  <strong>REQUISITION ID:</strong> {cleanRxId}
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 14 }}>
+                <div style={{ fontWeight: 800, fontSize: '0.88rem', borderBottom: '1px solid #cbd5e1', paddingBottom: 4, marginBottom: 6 }}>
+                  SUSPECTED DERMATOLOGICAL ETIOLOGY:
+                </div>
+                <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: '0.85rem' }}>
+                  <strong>Primary:</strong> {diagnosis} • <strong>Comorbidity Flag:</strong> {secondaryDiagnosis || 'None'}<br />
+                  <strong>Algorithmic Triage Flag:</strong> {aiResult?.percent || '<60%'} (Confirmatory testing mandated prior to pharmacological dispensing)
+                </div>
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <div style={{ fontWeight: 800, fontSize: '0.88rem', borderBottom: '1px solid #cbd5e1', paddingBottom: 4, marginBottom: 6 }}>
+                  SPECIFIED LABORATORY DIAGNOSTIC PROCEDURES:
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 20, fontSize: '0.84rem', lineHeight: 1.6 }}>
+                  <li>[X] <strong>Deep / Superficial Skin Scraping:</strong> Mineral oil preparation for Demodex / Sarcoptes / Notoedres mites</li>
+                  <li>[X] <strong>Wood\'s Lamp Examination & DTM Fungal Culture:</strong> Rule out Dermatophytosis (Microsporum canis)</li>
+                  <li>[X] <strong>Tape Impression Cytology:</strong> Diff-Quik stain for Malassezia yeast and bacterial cocci</li>
+                </ul>
+              </div>
+
+              <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 12, borderTop: '1px solid #cbd5e1' }}>
+                <div style={{ fontSize: '0.72rem', color: '#64748b', maxWidth: 360 }}>
+                  Specimen Collection Protocol: Sample active lesion borders. Label specimen slides with Patient ID and collection time.
+                </div>
+                <div style={{ textAlign: 'center', width: 210 }}>
+                  <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: 24 }}></div>
+                  <strong style={{ fontSize: '0.88rem' }}>Dr. Sarah Lin, DVM</strong><br />
+                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PRC License No.: VET-894102</span><br />
+                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PTR No.: 1948201</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+              <button
+                type="button"
+                onClick={() => setShowLabSlipPreviewModal(false)}
+                className="small-outline"
+                style={{ padding: '8px 16px', background: '#334155', color: '#f8fafc', border: 'none', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+              >
+                Close Preview
+              </button>
+              <button
+                type="button"
+                onClick={handlePrintLabSlip}
+                className="action-btn blue"
+                style={{ padding: '8px 20px', borderRadius: 6, cursor: 'pointer', fontWeight: 700 }}
+              >
+                Confirm & Print Requisition Slip
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── Official Print Document (Authentic Philippine Veterinary Format) ── */}
       <div className="official-rx-print-document" style={{ display: 'none' }}>
         {isAwaitingLab ? (
@@ -1136,18 +1519,17 @@ export default function Treatment({ onBack, caseData, currentUser }) {
                 <strong>WEIGHT:</strong> {patient?.weight ? `${patient.weight} kg` : '________ kg'} • <strong>AGE:</strong> {patient?.age || '________'}
               </div>
               <div>
-                <strong>OWNER:</strong> {patient?.ownerName || '________'}<br />
-                <strong>CONTACT:</strong> {patient?.ownerPhone || '________'}<br />
+                <strong>OWNER:</strong> {patient?.ownerName || 'Walk-in'}<br />
+                <strong>CONTACT:</strong> {patient?.ownerPhone || 'N/A'}<br />
                 <strong>DATE:</strong> {todayStr}<br />
-                <strong>CASE / RX ID:</strong> {consultation?.id || 'RX-2026-1027'}
+                <strong>CASE / RX ID:</strong> {cleanRxId}
               </div>
             </div>
 
             {/* Diagnosis Banner */}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', background: '#f1f5f9', borderLeft: '4px solid #1e3a8a', marginBottom: 18 }}>
               <span style={{ fontSize: '0.88rem' }}>
-                <strong>CLINICAL DIAGNOSIS:</strong> <u style={{ fontWeight: 800 }}>{diagnosis}</u> ({primaryProtocol.category || patientSpecies})
-                {secondaryDiagnosis ? ` + ${secondaryDiagnosis} (Concurrent Comorbidity)` : ''}
+                <strong>CLINICAL DIAGNOSIS:</strong> <u style={{ fontWeight: 800 }}>{cleanDiagnosisDisplay}</u> ({patientSpecies})
               </span>
               <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#16a34a' }}>
                 VALIDATED CLINICAL PRESCRIPTION

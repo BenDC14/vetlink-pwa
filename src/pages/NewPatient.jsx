@@ -9,6 +9,7 @@ import {
   getSuggestedSymptomsForDisease
 } from '../vetlink-ai'
 import CameraCaptureModal from '../components/CameraCaptureModal'
+import ImageCropModal from '../components/ImageCropModal'
 
 // Clinical check for co-occurring dermatitis or secondary opportunistic infection
 export function checkComorbidity(top3) {
@@ -91,6 +92,67 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
   }
 }
 
+/**
+ * Downscale image locally in browser canvas before upload/storage.
+ * Max dimension 1024px, JPEG quality 85% (~150KB - 200KB).
+ * Preserves full dermatological detail while eliminating 5-10 second network lag.
+ */
+function downscaleImage(fileOrBlob, maxDim = 1024, quality = 0.85) {
+  return new Promise((resolve) => {
+    const img = new Image()
+    const reader = new FileReader()
+    reader.onload = (e) => {
+      img.onload = () => {
+        let { width, height } = img
+        if (width > maxDim || height > maxDim) {
+          if (width > height) {
+            height = Math.round((height * maxDim) / width)
+            width = maxDim
+          } else {
+            width = Math.round((width * maxDim) / height)
+            height = maxDim
+          }
+        }
+        const canvas = document.createElement('canvas')
+        canvas.width = width
+        canvas.height = height
+        const ctx = canvas.getContext('2d')
+        ctx.imageSmoothingEnabled = true
+        ctx.imageSmoothingQuality = 'high'
+        ctx.drawImage(img, 0, 0, width, height)
+        canvas.toBlob((blob) => {
+          if (blob) {
+            const downscaledFile = new File([blob], fileOrBlob.name || 'lesion_optimized.jpg', {
+              type: 'image/jpeg',
+              lastModified: Date.now()
+            })
+            resolve({ file: downscaledFile, dataUrl: canvas.toDataURL('image/jpeg', quality) })
+          } else {
+            resolve({ file: fileOrBlob, dataUrl: e.target.result })
+          }
+        }, 'image/jpeg', quality)
+      }
+      img.onerror = () => resolve({ file: fileOrBlob, dataUrl: e.target.result })
+      img.src = e.target.result
+    }
+    reader.onerror = () => resolve({ file: fileOrBlob, dataUrl: null })
+    reader.readAsDataURL(fileOrBlob)
+  })
+}
+
+function getFormalMedicalName(display) {
+  const norm = (display || '').toLowerCase()
+  if (norm.includes('hot spot')) return 'Hot Spots (Acute Moist Dermatitis)'
+  if (norm.includes('mange') && !norm.includes('rabbit')) return 'Mange (Sarcoptic / Demodectic Acariasis)'
+  if (norm.includes('ringworm') && !norm.includes('rabbit')) return 'Ringworm (Dermatophytosis)'
+  if (norm.includes('pyoderma')) return 'Pyoderma (Bacterial Folliculitis)'
+  if (norm.includes('fowl pox')) return 'Avian Fowl Pox (Avipoxvirus)'
+  if (norm.includes('scaly')) return 'Scaly Face / Scaly Leg (Knemidocoptes)'
+  if (norm.includes('rabbit mange')) return 'Rabbit Mange (Psoroptes cuniculi)'
+  if (norm.includes('rabbit ringworm')) return 'Rabbit Ringworm (T. mentagrophytes)'
+  return display
+}
+
 export default function NewPatient({ onBack, onViewPending, onCapture, currentUser, authToken, apiBaseUrl, isOffline }) {
   const [name, setName] = useState('')
   const [species, setSpecies] = useState('Canine')
@@ -101,6 +163,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [ownerPhone, setOwnerPhone] = useState('')
   const [areaOfConcern, setAreaOfConcern] = useState('')
   const [isSaving, setIsSaving] = useState(false)
+  const isSavingRef = useRef(false)
   const [error, setError] = useState('')
 
   // Image & AI state
@@ -112,6 +175,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [modelReady, setModelReady] = useState(false)
   const [modelError, setModelError] = useState(null)
   const [isCameraOpen, setIsCameraOpen] = useState(false)
+  const [cropModalOpen, setCropModalOpen] = useState(false)
+  const [fileToCrop, setFileToCrop] = useState(null)
 
   // Clinical Symptoms & Lab Test State
   const [selectedSymptoms, setSelectedSymptoms] = useState([])
@@ -125,6 +190,35 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
   const fileInputRef = useRef(null)
 
+  const resetForm = () => {
+    setName('')
+    setSpecies('Canine')
+    setBreed('')
+    setWeight('')
+    setAge('')
+    setOwnerName('')
+    setOwnerPhone('')
+    setAreaOfConcern('')
+    setSelectedSymptoms([])
+    setOtherSymptoms('')
+    setCustomSymptomInput('')
+    setSelectedFile(null)
+    if (previewUrl) {
+      try { URL.revokeObjectURL(previewUrl) } catch (e) { }
+    }
+    setPreviewUrl(null)
+    setAiResult(null)
+    setQualityRejection(null)
+    setLabTestRequired(false)
+    setLabTestReason('')
+    setError('')
+    setIntakeSuccess(false)
+    setSavedSummary(null)
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+  }
+
   // Pre-load the model in the background as soon as the page mounts
   useEffect(() => {
     let cancelled = false
@@ -135,20 +229,32 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   }, [])
 
   // Process image from either live camera snapshot or file upload
-  const processImageFile = async (file) => {
-    if (!file) return
+  const processImageFile = async (rawFile) => {
+    if (!rawFile) return
 
     // 10 MB maximum file size limit
     const MAX_FILE_SIZE = 10 * 1024 * 1024
-    if (file.size > MAX_FILE_SIZE) {
-      setError(`Image file is too large (${(file.size / (1024 * 1024)).toFixed(1)} MB). Please select a photo under 10 MB.`)
+    if (rawFile.size > MAX_FILE_SIZE) {
+      setError(`Image file is too large (${(rawFile.size / (1024 * 1024)).toFixed(1)} MB). Please select a photo under 10 MB.`)
       return
+    }
+
+    // Downscale locally in browser canvas to max 1024px @ 85% JPEG (~150KB)
+    // Instantaneous upload on Render/Vercel with 0% accuracy loss for 224x224 MobileNetV3
+    let file = rawFile
+    let downscaledDataUrl = null
+    try {
+      const downscaled = await downscaleImage(rawFile, 1024, 0.85)
+      file = downscaled.file
+      downscaledDataUrl = downscaled.dataUrl
+    } catch (downscaleErr) {
+      console.warn('Downscaling fallback to raw file:', downscaleErr)
     }
 
     // Revoke previous preview URL to avoid memory leaks
     if (previewUrl) URL.revokeObjectURL(previewUrl)
 
-    const url = URL.createObjectURL(file)
+    const url = downscaledDataUrl || URL.createObjectURL(file)
     setSelectedFile(file)
     setPreviewUrl(url)
     setAiResult(null)
@@ -230,18 +336,35 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     )
   }
 
-  // When user picks a file, show preview and immediately run AI
+  // When user picks a file, open Interactive Lesion ROI Zoom & Crop Tool
   const handleFileChange = (event) => {
     const file = event.target.files?.[0]
     if (file) {
-      processImageFile(file)
+      setFileToCrop(file)
+      setCropModalOpen(true)
     }
     event.target.value = ''
   }
 
-  // When user snaps photo from live camera
+  const handleConfirmCrop = (croppedFile) => {
+    setCropModalOpen(false)
+    setFileToCrop(null)
+    processImageFile(croppedFile)
+  }
+
+  const handleUseFullImage = () => {
+    setCropModalOpen(false)
+    if (fileToCrop) {
+      processImageFile(fileToCrop)
+      setFileToCrop(null)
+    }
+  }
+
+  // When user snaps photo from live camera, route to Crop & Zoom review before predicting
   const handleCameraCapture = (file) => {
-    processImageFile(file)
+    setIsCameraOpen(false)
+    setFileToCrop(file)
+    setCropModalOpen(true)
   }
 
   // When species changes, re-run AI if an image is already loaded and valid
@@ -293,12 +416,14 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   }
 
   // Save the patient record, then retain its linked local case analysis.
-  const handleSave = async () => {
+  const handleSave = async (proceedToTreatment = false) => {
+    if (isSavingRef.current || isSaving) return
     if (!name.trim()) { setError('Patient name is required.'); return }
     if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
     if (qualityRejection) { setError(`Cannot save: Image was rejected (${qualityRejection.reason || 'Quality Check Failed'}). Please capture or upload a valid animal skin lesion photo.`); return }
     if (!aiResult) { setError('Waiting for AI analysis to complete.'); return }
 
+    isSavingRef.current = true
     setIsSaving(true)
     setError('')
 
@@ -368,43 +493,75 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       // 6. Save itemized symptoms into consultationSymptoms store
       await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
 
-      // 7. Role-aware completion: Assistant gets confirmation screen; Admin/Doctor gets direct capture
-      if (currentUser?.role === 'Clinic Staff') {
-        setIntakeSuccess(true)
-        setSavedSummary({
-          patientId: patient.id,
-          name: patient.name,
-          species: patient.species,
-          breed: patient.breed,
-          weight: patient.weight,
-          ownerName: patient.ownerName,
-          status: assignedStatus,
-          diagnosis: aiResult.displayLabel,
-          secondary: comorb.isComorbid ? comorb.secondary : null,
-          labOrdered: labTestRequired,
-        })
-      } else {
-        // Veterinarian / Clinic Admin flow
+      const fullPayload = {
+        patient,
+        consultation,
+        aiResult,
+        previewUrl,
+        comorbidityInfo: comorb,
+        selectedSymptoms,
+        otherSymptoms,
+        labTestRequired,
+        assignedStatus,
+        diagnosis: aiResult.displayLabel,
+        secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
+        isComorbid: comorb.isComorbid,
+      }
+
+      // If requested to proceed directly to treatment (e.g. Clinic Admin / Vet direct action)
+      if (proceedToTreatment && onCapture) {
         onCapture({
-          patient,
-          consultation,
-          aiResult,
-          previewUrl,
-          comorbidityInfo: comorb,
-          selectedSymptoms,
-          otherSymptoms,
-          labTestRequired,
-          assignedStatus,
-          diagnosis: aiResult.displayLabel,
-          secondaryDiagnosis: comorb.isComorbid ? comorb.secondary : null,
-          isComorbid: comorb.isComorbid,
+          ...fullPayload,
+          proceedToTreatment: true,
         })
+        return
+      }
+
+      // Otherwise, clean up form state and show admitted confirmation card
+      setName('')
+      setSpecies('Canine')
+      setBreed('')
+      setWeight('')
+      setAge('')
+      setOwnerName('')
+      setOwnerPhone('')
+      setAreaOfConcern('')
+      setSelectedSymptoms([])
+      setOtherSymptoms('')
+      setCustomSymptomInput('')
+      setSelectedFile(null)
+      setAiResult(null)
+      setQualityRejection(null)
+      setLabTestRequired(false)
+      setLabTestReason('')
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+
+      setIntakeSuccess(true)
+      setSavedSummary({
+        patientId: patient.id,
+        name: patient.name,
+        species: patient.species,
+        breed: patient.breed,
+        weight: patient.weight,
+        ownerName: patient.ownerName,
+        status: assignedStatus,
+        diagnosis: aiResult.displayLabel,
+        secondary: comorb.isComorbid ? comorb.secondary : null,
+        labOrdered: labTestRequired,
+        fullPayload,
+      })
+
+      if (typeof window !== 'undefined') {
+        window.scrollTo({ top: 0, behavior: 'smooth' })
       }
 
     } catch (saveError) {
       console.error('Failed to save patient:', saveError)
       setError('Unable to save. Please try again.')
     } finally {
+      isSavingRef.current = false
       setIsSaving(false)
     }
   }
@@ -500,23 +657,12 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             <strong>Next Step:</strong> Hand off the patient to the Attending Veterinarian. The doctor will review the Grad-CAM heatmap, confirm symptoms, and finalize the prescription.
           </p>
 
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
             <button
               type="button"
               className="action-btn blue"
               style={{ padding: '9px 18px', fontSize: '0.88rem' }}
-              onClick={() => {
-                setName('')
-                setAreaOfConcern('')
-                setSelectedFile(null)
-                setPreviewUrl(null)
-                setAiResult(null)
-                setSelectedSymptoms([])
-                setOtherSymptoms('')
-                setLabTestRequired(false)
-                setIntakeSuccess(false)
-                setSavedSummary(null)
-              }}
+              onClick={resetForm}
             >
               Intake Next Patient
             </button>
@@ -528,619 +674,718 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             >
               View Patient Records
             </button>
+            {currentUser?.role === 'Clinic Admin' && onCapture && savedSummary.fullPayload && (
+              <button
+                type="button"
+                className="action-btn blue"
+                style={{ padding: '9px 18px', fontSize: '0.88rem', background: '#0f766e' }}
+                onClick={() => {
+                  onCapture({
+                    ...savedSummary.fullPayload,
+                    proceedToTreatment: true,
+                  })
+                }}
+              >
+                Proceed to Consultation & Rx
+              </button>
+            )}
           </div>
         </div>
       )}
 
-      <div className="new-patient-header">
-        <button className="secondary-btn small-back" type="button" onClick={onBack}>← DASHBOARD</button>
-        <span className={`status-chip ${modelReady ? 'green' : modelError ? 'red' : 'gray'}`}>
-          {modelReady ? 'AI READY' : modelError ? 'AI ERROR' : 'LOADING AI...'}
-        </span>
-      </div>
-
-      <div className="new-patient-topbar">
-        <div>
-          <div className="brand-badge">NEW CASE</div>
-          <p>Fill in details then capture a photo</p>
-        </div>
-      </div>
-
-      <div className="new-patient-main">
-
-        {/* ── Left: Image Preview ─────────────────────────────── */}
-        <div className="new-patient-preview">
-          {previewUrl ? (
-            <img
-              src={previewUrl}
-              alt="Pet photo preview"
-              style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }}
-            />
-          ) : (
-            <div
-              className="image-placeholder"
-              style={{
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                gap: 12,
-                padding: '24px 16px',
-                textAlign: 'center',
-              }}
-            >
-              <div style={{ color: '#64748b' }}>
-                <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                  <circle cx="12" cy="13" r="4" />
-                </svg>
-              </div>
-              <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#334155' }}>
-                Capture or Upload Patient Photo
-              </div>
-              <div style={{ fontSize: '0.78rem', color: '#64748b', maxWidth: 220, lineHeight: 1.35 }}>
-
-              </div>
-            </div>
-          )}
-
-          {/* Retake buttons */}
-          {previewUrl && (
-            <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                onClick={handleOpenCamera}
-                disabled={isAnalyzing || isSaving}
-              >
-                Retake (Camera)
-              </button>
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                onClick={handleOpenFilePicker}
-                disabled={isAnalyzing || isSaving}
-              >
-                Upload File
-              </button>
-            </div>
-          )}
-
-          {/* Quality check rejection alert */}
-          {qualityRejection && (
-            <div style={{
-              marginTop: 10,
-              padding: '12px 14px',
-              background: '#fef2f2',
-              border: '2px solid #ef4444',
-              borderRadius: 10,
-              color: '#991b1b',
-              fontSize: '0.82rem',
-              lineHeight: 1.45,
-              textAlign: 'left',
-              boxShadow: '0 2px 8px rgba(239, 68, 68, 0.12)',
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'bold', fontSize: '0.88rem', marginBottom: 4 }}>
-                <span>{qualityRejection.title}</span>
-              </div>
-              <p style={{ margin: '0 0 8px 0', color: '#7f1d1d', fontSize: '0.8rem' }}>
-                {qualityRejection.message}
-              </p>
-              <div style={{
-                background: 'white',
-                padding: '6px 10px',
-                borderRadius: 6,
-                border: '1px solid #fca5a5',
-                color: '#991b1b',
-                fontWeight: 600,
-                fontSize: '0.76rem',
-              }}>
-                {qualityRejection.instructions}
-              </div>
-            </div>
-          )}
-
-          {/* Macro Framing Guide */}
-          <div style={{
-            marginTop: 10,
-            padding: '10px 12px',
-            background: '#f0f9ff',
-            border: '1px solid #bae6fd',
-            borderRadius: 8,
-            fontSize: '0.78rem',
-            color: '#0369a1',
-            lineHeight: 1.45,
-            textAlign: 'left',
-          }}>
-            <strong>Clinical Imaging Tip:</strong> Take a tight close-up photo where the lesion fills 70–80% of the frame. Wide shots showing the full dog face or body will cause the AI to focus on surrounding healthy fur instead of the lesion.
+      {/* Main Form — hidden when intake was successful so only the admitted card shows */}
+      {!intakeSuccess && (
+        <>
+          <div className="new-patient-header">
+            <button className="secondary-btn small-back" type="button" onClick={onBack}>← DASHBOARD</button>
+            <span className={`status-chip ${modelReady ? 'green' : modelError ? 'red' : 'gray'}`}>
+              {modelReady ? 'AI READY' : modelError ? 'AI ERROR' : 'LOADING AI...'}
+            </span>
           </div>
-        </div>
 
-        {/* ── Right: Form + AI Result ─────────────────────────── */}
-        <div className="new-patient-form-card">
-          <div className="form-card-heading">Patient Details</div>
-          <div className="new-patient-form">
-            <p className="id-auto-note">Patient ID will be assigned automatically.</p>
+          <div className="new-patient-topbar">
+            <div>
+              <div className="brand-badge">NEW CASE</div>
+              <p>Fill in details then capture a photo</p>
+            </div>
+          </div>
 
-            <label>
-              <span>PATIENT NAME *</span>
-              <input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. Buddy / Max"
-                disabled={isSaving}
-                required
-              />
-            </label>
+          <div className="new-patient-main">
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <label>
-                <span>SPECIES *</span>
-                <select
-                  value={species}
-                  onChange={(e) => handleSpeciesChange(e.target.value)}
-                  disabled={isSaving}
+            {/* ── Left: Image Preview ─────────────────────────────── */}
+            <div className="new-patient-preview">
+              {previewUrl ? (
+                <img
+                  src={previewUrl}
+                  alt="Pet photo preview"
+                  style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: 8 }}
+                />
+              ) : (
+                <div
+                  className="image-placeholder"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 12,
+                    padding: '24px 16px',
+                    textAlign: 'center',
+                  }}
                 >
-                  <option>Canine</option>
-                  <option>Feline</option>
-                  <option>Avian</option>
-                  <option>Rabbit</option>
-                </select>
-              </label>
-
-              <label>
-                <span>BREED (OPTIONAL)</span>
-                <input
-                  value={breed}
-                  onChange={(e) => setBreed(e.target.value)}
-                  placeholder="e.g. Shih Tzu, Aspin, Persian"
-                  disabled={isSaving}
-                />
-              </label>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <label>
-                <span>WEIGHT IN KG (OPTIONAL)</span>
-                <input
-                  type="number"
-                  step="0.1"
-                  min="0"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  placeholder="e.g. 5.5"
-                  disabled={isSaving}
-                />
-              </label>
-
-              <label>
-                <span>AGE (OPTIONAL)</span>
-                <input
-                  value={age}
-                  onChange={(e) => setAge(e.target.value)}
-                  placeholder="e.g. 2 yrs / 6 mos"
-                  disabled={isSaving}
-                />
-              </label>
-            </div>
-
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-              <label>
-                <span>OWNER NAME (OPTIONAL)</span>
-                <input
-                  value={ownerName}
-                  onChange={(e) => setOwnerName(e.target.value)}
-                  placeholder="e.g. Maria Santos"
-                  disabled={isSaving}
-                />
-              </label>
-
-              <label>
-                <span>OWNER CONTACT / PHONE (OPTIONAL)</span>
-                <input
-                  type="tel"
-                  value={ownerPhone}
-                  onChange={(e) => setOwnerPhone(e.target.value)}
-                  placeholder="e.g. 0917-123-4567"
-                  disabled={isSaving}
-                />
-              </label>
-            </div>
-
-            <label>
-              <span>AREA OF CONCERN</span>
-              <input
-                value={areaOfConcern}
-                onChange={(e) => setAreaOfConcern(e.target.value)}
-                placeholder="e.g. Back leg rash / ear crusts"
-                disabled={isSaving}
-              />
-            </label>
-
-            {error && <p role="alert" style={{ color: '#ef4444', fontSize: '0.85rem', margin: '4px 0' }}>{error}</p>}
-
-            {/* AI Analysis Result */}
-            {isAnalyzing && (
-              <div className="ai-result-box analyzing">
-                <span className="ai-spinner">⏳</span> Analyzing image with Edge WASM & Grad-CAM...
-              </div>
-            )}
-
-            {/* Clinical Image Rejection Card */}
-            {qualityRejection && !isAnalyzing && (
-              <div style={{
-                marginTop: 14,
-                padding: 16,
-                background: 'linear-gradient(135deg, #fef2f2, #fff1f2)',
-                border: '2px solid #ef4444',
-                borderRadius: 12,
-                boxShadow: '0 4px 14px rgba(239, 68, 68, 0.12)',
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
-                  <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#b91c1c', flexShrink: 0 }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                      <circle cx="12" cy="12" r="10" />
-                      <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+                  <div style={{ color: '#64748b' }}>
+                    <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                      <circle cx="12" cy="13" r="4" />
                     </svg>
                   </div>
-                  <div>
-                    <h4 style={{ margin: 0, color: '#991b1b', fontSize: '1.02rem', fontWeight: 700 }}>
-                      {qualityRejection.title}
-                    </h4>
-                    <span style={{
-                      display: 'inline-block',
-                      marginTop: 2,
-                      padding: '2px 8px',
-                      background: '#fee2e2',
-                      border: '1px solid #fca5a5',
-                      borderRadius: 4,
-                      fontSize: '0.72rem',
-                      fontWeight: 700,
-                      color: '#b91c1c',
-                      textTransform: 'uppercase',
-                      letterSpacing: '0.5px',
-                    }}>
-                      GATE: {qualityRejection.reason} {qualityRejection.detected ? `• DETECTED: ${qualityRejection.detected}` : ''}
-                    </span>
+                  <div style={{ fontSize: '0.92rem', fontWeight: 600, color: '#334155' }}>
+                    Capture or Upload Patient Photo
+                  </div>
+                  <div style={{ fontSize: '0.78rem', color: '#64748b', maxWidth: 220, lineHeight: 1.35 }}>
+
                   </div>
                 </div>
+              )}
 
-                <p style={{ margin: '0 0 10px 0', color: '#374151', fontSize: '0.84rem', lineHeight: 1.5 }}>
-                  {qualityRejection.message}
-                </p>
+              {/* Retake and Crop adjustment buttons */}
+              {previewUrl && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 8 }}>
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      onClick={handleOpenCamera}
+                      disabled={isAnalyzing || isSaving}
+                    >
+                      Retake (Camera)
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{ flex: 1, padding: '8px 10px', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                      onClick={handleOpenFilePicker}
+                      disabled={isAnalyzing || isSaving}
+                    >
+                      Upload File
+                    </button>
+                  </div>
+                  {selectedFile && (
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{ padding: '7px 10px', fontSize: '0.8rem', background: '#e0f2fe', color: '#0369a1', border: '1px solid #7dd3fc', borderRadius: 6, cursor: 'pointer', fontWeight: 600 }}
+                      onClick={() => {
+                        setFileToCrop(selectedFile)
+                        setCropModalOpen(true)
+                      }}
+                      disabled={isAnalyzing || isSaving}
+                    >
+                      Adjust Lesion Crop / Zoom
+                    </button>
+                  )}
+                </div>
+              )}
 
+              {/* Quality check rejection alert */}
+              {qualityRejection && (
                 <div style={{
-                  background: 'white',
-                  borderRadius: 8,
-                  padding: '10px 12px',
-                  border: '1px solid #fecaca',
-                  marginBottom: 14,
-                  fontSize: '0.8rem',
-                  color: '#7f1d1d',
+                  marginTop: 10,
+                  padding: '12px 14px',
+                  background: '#fef2f2',
+                  border: '2px solid #ef4444',
+                  borderRadius: 10,
+                  color: '#991b1b',
+                  fontSize: '0.82rem',
                   lineHeight: 1.45,
+                  textAlign: 'left',
+                  boxShadow: '0 2px 8px rgba(239, 68, 68, 0.12)',
                 }}>
-                  <strong>Action Required:</strong> {qualityRejection.instructions}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 'bold', fontSize: '0.88rem', marginBottom: 4 }}>
+                    <span>{qualityRejection.title}</span>
+                  </div>
+                  <p style={{ margin: '0 0 8px 0', color: '#7f1d1d', fontSize: '0.8rem' }}>
+                    {qualityRejection.message}
+                  </p>
+                  <div style={{
+                    background: 'white',
+                    padding: '6px 10px',
+                    borderRadius: 6,
+                    border: '1px solid #fca5a5',
+                    color: '#991b1b',
+                    fontWeight: 600,
+                    fontSize: '0.76rem',
+                  }}>
+                    {qualityRejection.instructions}
+                  </div>
                 </div>
+              )}
 
-                <div style={{ display: 'flex', gap: 10 }}>
-                  <button
-                    type="button"
-                    className="action-btn blue"
-                    style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                    onClick={handleOpenCamera}
-                  >
-                    Retake with Camera
-                  </button>
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'white' }}
-                    onClick={handleOpenFilePicker}
-                  >
-                    Select Another Image
-                  </button>
-                </div>
+              {/* Macro Framing Guide */}
+              <div style={{
+                marginTop: 10,
+                padding: '10px 12px',
+                background: '#f0f9ff',
+                border: '1px solid #bae6fd',
+                borderRadius: 8,
+                fontSize: '0.78rem',
+                color: '#0369a1',
+                lineHeight: 1.45,
+                textAlign: 'left',
+              }}>
+                <strong>Clinical Imaging Tip:</strong> Take a tight close-up photo where the lesion fills 70–80% of the frame. Wide shots showing the full dog face or body will cause the AI to focus on surrounding healthy fur instead of the lesion.
               </div>
-            )}
+            </div>
 
-            {aiResult && !qualityRejection && !isAnalyzing && (
-              <div className="ai-result-box" style={{ background: '#0f172a', color: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #334155' }}>
-                <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: 10, color: '#38bdf8' }}>
-                  Grad-CAM: {aiResult.displayLabel} ({aiResult.percent} confident)
-                </div>
+            {/* ── Right: Form + AI Result ─────────────────────────── */}
+            <div className="new-patient-form-card">
+              <div className="form-card-heading">Patient Details</div>
+              <div className="new-patient-form">
+                <p className="id-auto-note">Patient ID will be assigned automatically.</p>
 
-                {/* 3-Panel Grad-CAM Visualization matching Colab Cell 8 */}
-                {aiResult.gradcam && (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
-                    <div style={{ textAlign: 'center' }}>
-                      <img
-                        src={aiResult.gradcam.originalUrl}
-                        alt="Original"
-                        style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
-                      />
-                      <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>Original Image</span>
-                    </div>
-
-                    <div style={{ textAlign: 'center' }}>
-                      <img
-                        src={aiResult.gradcam.heatmapUrl}
-                        alt="Heatmap"
-                        style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
-                      />
-                      <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>
-                        Heatmap<br /><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = AI focused)</span>
-                      </span>
-                    </div>
-
-                    <div style={{ textAlign: 'center' }}>
-                      <img
-                        src={aiResult.gradcam.overlayUrl}
-                        alt="Overlay"
-                        style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
-                      />
-                      <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>Overlay</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* Colab-exact Prediction Banner */}
-                <div style={{ borderTop: '1px dashed #334155', paddingTop: 10, marginTop: 4, fontFamily: 'monospace' }}>
-                  <div style={{ fontSize: '0.88rem', color: '#4ade80', fontWeight: 'bold' }}>
-                    TOP PREDICTION: {aiResult.displayLabel.toUpperCase()}
-                  </div>
-                  <div style={{ fontSize: '0.82rem', color: '#cbd5e1', marginLeft: 20 }}>
-                    Confidence: {aiResult.percent}
-                  </div>
-
-                  {/* FR7: 60% Decision Boundary (Thesis pp. 11, 41, 46, 56) */}
-                  {aiResult.confidence >= 0.60 ? (
-                    <div style={{ marginTop: 6, padding: '5px 8px', background: 'rgba(22, 101, 52, 0.35)', border: '1px solid #16a34a', borderRadius: 4, fontSize: '0.74rem', color: '#86efac' }}>
-                      Confidence &ge; 60%: First-line care protocol auto-populated into consultation draft.
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(180, 83, 9, 0.35)', border: '1px solid #d97706', borderRadius: 4, fontSize: '0.74rem', color: '#fde68a' }}>
-                      Confidence &lt; 60% decision boundary: Secondary confirmatory laboratory diagnostics (Skin Scraping, Fungal Culture, or Tape Cytology) recommended.
-                    </div>
-                  )}
-
-                  <div style={{ marginTop: 8, fontSize: '0.8rem', color: '#94a3b8' }}>
-                    Top 3 Predictions:
-                    {aiResult.top3.map((item, i) => (
-                      <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0 2px 14px', color: i === 0 ? '#f1f5f9' : '#94a3b8' }}>
-                        <span>{i + 1}. {item.display}</span>
-                        <span style={{ fontWeight: i === 0 ? 'bold' : 'normal' }}>{(item.confidence * 100).toFixed(1)}%</span>
-                      </div>
-                    ))}
-                  </div>
-
-                  {/* Co-occurring / Comorbidity Detection */}
-                  {(() => {
-                    const comorb = checkComorbidity(aiResult.top3)
-                    if (!comorb.isComorbid) return null
-                    return (
-                      <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(59, 130, 246, 0.25)', border: '1px solid #3b82f6', borderRadius: 6, fontSize: '0.78rem', color: '#bfdbfe', lineHeight: 1.4 }}>
-                        <strong>Suspected Comorbidity / Secondary Condition:</strong> Elevated probability detected for both <strong>{comorb.primary} ({(comorb.primaryConf * 100).toFixed(1)}%)</strong> and <strong>{comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%)</strong>. Clinical evaluation for secondary opportunistic infection (e.g. bacterial colonization over fungal/parasitic lesion) recommended.
-                      </div>
-                    )
-                  })()}
-
-                  {/* Early-Stage Subclinical / Facial Differential Advisory */}
-                  {(() => {
-                    const diff = checkEarlyStageDifferential(aiResult, species, areaOfConcern)
-                    if (!diff) return null
-                    return (
-                      <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(168, 85, 247, 0.2)', border: '1px solid #a855f7', borderRadius: 6, fontSize: '0.78rem', color: '#e9d5ff', lineHeight: 1.4 }}>
-                        <strong>{diff.title}:</strong> {diff.message}
-                        <div style={{ marginTop: 4, fontSize: '0.72rem', color: '#d8b4fe' }}>
-                          <em>{diff.overrideHint}</em>
-                        </div>
-                      </div>
-                    )
-                  })()}
-
-                  {aiResult.engine === 'backend' ? (
-                    <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#4ade80', display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span><strong>Native TFLite Engine (0.04s)</strong> — Neural inference verified on FastAPI backend</span>
-                    </div>
-                  ) : (
-                    <div style={{ marginTop: 8, fontSize: '0.75rem', color: '#fbbf24', background: 'rgba(217, 119, 6, 0.2)', border: '1px solid #d97706', padding: '6px 8px', borderRadius: 4 }}>
-                      <strong>Offline WASM Fallback Active:</strong> FastAPI backend (port 8000) was unreachable. For 99.9% clinical accuracy, ensure backend is running (<code>python -m uvicorn backend.main:app --port 8000</code>).
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* Clinical Symptoms Checklist & Custom Input */}
-            {aiResult && !qualityRejection && !isAnalyzing && (
-              <div style={{ marginTop: 14, padding: 14, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#1e293b' }}>
-                    Observed Clinical Signs & Symptoms
-                  </span>
-                  <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
-                    {aiResult.confidence >= 0.60 ? 'Auto-suggested from AI findings' : 'Manual verification required (<60%)'}
-                  </span>
-                </div>
-                <p style={{ fontSize: '0.78rem', color: '#475569', margin: '0 0 10px', lineHeight: 1.35 }}>
-                  Select observed physical lesion signs. These will be linked directly into the consultation record:
-                </p>
-
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6, marginBottom: 10 }}>
-                  {MASTER_SYMPTOMS.map((sym) => {
-                    const isChecked = selectedSymptoms.includes(sym.id)
-                    return (
-                      <label
-                        key={sym.id}
-                        style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 6,
-                          padding: '6px 8px',
-                          borderRadius: 6,
-                          fontSize: '0.78rem',
-                          background: isChecked ? '#e0f2fe' : '#ffffff',
-                          border: isChecked ? '1px solid #38bdf8' : '1px solid #cbd5e1',
-                          color: isChecked ? '#0369a1' : '#334155',
-                          cursor: 'pointer',
-                          fontWeight: isChecked ? 600 : 400,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={isChecked}
-                          onChange={() => toggleSymptom(sym.id)}
-                        />
-                        <span>{sym.shortName}</span>
-                      </label>
-                    )
-                  })}
-                </div>
-
-                {/* Others / Custom Symptoms free-text */}
-                <label style={{ display: 'block', marginTop: 8 }}>
-                  <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>
-                    Other Clinical Signs / Specific Observations (Free-text):
-                  </span>
+                <label>
+                  <span>PATIENT NAME *</span>
                   <input
-                    type="text"
-                    value={otherSymptoms}
-                    onChange={(e) => setOtherSymptoms(e.target.value)}
-                    placeholder="e.g. Mild fever, localized swelling, foul ear discharge, lethargic..."
-                    style={{ width: '100%', padding: '6px 10px', fontSize: '0.82rem', borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 4, boxSizing: 'border-box' }}
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="e.g. Buddy / Max"
+                    disabled={isSaving}
+                    required
                   />
                 </label>
-              </div>
-            )}
 
-            {/* Confirmatory Diagnostic Lab Testing Section */}
-            {aiResult && !qualityRejection && !isAnalyzing && (
-              <div style={{ marginTop: 12, padding: 12, background: labTestRequired ? '#fffbeb' : '#f8fafc', border: labTestRequired ? '1px solid #fde68a' : '1px solid #e2e8f0', borderRadius: 10 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
-                  <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label>
+                    <span>SPECIES *</span>
+                    <select
+                      value={species}
+                      onChange={(e) => handleSpeciesChange(e.target.value)}
+                      disabled={isSaving}
+                    >
+                      <option>Canine</option>
+                      <option>Feline</option>
+                      <option>Avian</option>
+                      <option>Rabbit</option>
+                    </select>
+                  </label>
+
+                  <label>
+                    <span>BREED (OPTIONAL)</span>
                     <input
-                      type="checkbox"
-                      checked={labTestRequired}
-                      disabled={currentUser?.role === 'Clinic Staff'}
-                      onChange={(e) => setLabTestRequired(e.target.checked)}
-                      style={{ marginTop: 2 }}
+                      value={breed}
+                      onChange={(e) => setBreed(e.target.value)}
+                      placeholder="e.g. Shih Tzu, Aspin, Persian"
+                      disabled={isSaving}
                     />
-                    <div>
-                      <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: labTestRequired ? '#b45309' : '#1e293b' }}>
-                        Confirmatory Diagnostic Lab Test Required
-                      </span>
-                      <p style={{ margin: '2px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
-                        Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <code>Awaiting Lab Test</code>).
-                      </p>
-                    </div>
                   </label>
                 </div>
 
-                {currentUser?.role === 'Clinic Staff' && labTestRequired && (
-                  <div style={{ marginTop: 6, padding: '6px 10px', background: '#fef3c7', borderRadius: 6, color: '#92400e', fontSize: '0.76rem', fontWeight: 600 }}>
-                    Mandated by AI Triage Protocol: Low confidence or secondary comorbidity detected. Awaiting Attending Veterinarian authorization.
-                  </div>
-                )}
-
-                {labTestRequired && (
-                  <div style={{ marginTop: 8, paddingLeft: 22 }}>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label>
+                    <span>WEIGHT IN KG (OPTIONAL)</span>
                     <input
-                      type="text"
-                      value={labTestReason}
-                      disabled={currentUser?.role === 'Clinic Staff'}
-                      onChange={(e) => setLabTestReason(e.target.value)}
-                      placeholder="Specify test: e.g. Skin scrape for Demodex mites / Fungal DTM culture"
-                      style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #f59e0b', boxSizing: 'border-box', background: currentUser?.role === 'Clinic Staff' ? '#fef3c7' : '#ffffff' }}
+                      type="number"
+                      step="0.1"
+                      min="0"
+                      value={weight}
+                      onChange={(e) => setWeight(e.target.value)}
+                      placeholder="e.g. 5.5"
+                      disabled={isSaving}
                     />
+                  </label>
+
+                  <label>
+                    <span>AGE (OPTIONAL)</span>
+                    <input
+                      value={age}
+                      onChange={(e) => setAge(e.target.value)}
+                      placeholder="e.g. 2 yrs / 6 mos"
+                      disabled={isSaving}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label>
+                    <span>OWNER NAME (OPTIONAL)</span>
+                    <input
+                      value={ownerName}
+                      onChange={(e) => setOwnerName(e.target.value)}
+                      placeholder="e.g. Maria Santos"
+                      disabled={isSaving}
+                    />
+                  </label>
+
+                  <label>
+                    <span>OWNER CONTACT / PHONE (OPTIONAL)</span>
+                    <input
+                      type="tel"
+                      value={ownerPhone}
+                      onChange={(e) => setOwnerPhone(e.target.value)}
+                      placeholder="e.g. 0917-123-4567"
+                      disabled={isSaving}
+                    />
+                  </label>
+                </div>
+
+                <label>
+                  <span>AREA OF CONCERN</span>
+                  <input
+                    value={areaOfConcern}
+                    onChange={(e) => setAreaOfConcern(e.target.value)}
+                    placeholder="e.g. Back leg rash / ear crusts"
+                    disabled={isSaving}
+                  />
+                </label>
+
+                {error && <p role="alert" style={{ color: '#ef4444', fontSize: '0.85rem', margin: '4px 0' }}>{error}</p>}
+
+                {/* AI Analysis Result */}
+                {isAnalyzing && (
+                  <div className="ai-result-box analyzing">
+                    <span className="ai-spinner">⏳</span> Analyzing image with Edge WASM & Grad-CAM...
                   </div>
                 )}
-              </div>
-            )}
 
-            <div className="form-actions-row" style={{ flexDirection: 'column', gap: 8, marginTop: 14 }}>
-              {/* Step 1: Capture or Upload photo */}
-              {!previewUrl && (
-                <div style={{ display: 'flex', gap: 10, width: '100%' }}>
-                  <button
-                    className="capture-btn"
-                    type="button"
-                    onClick={handleOpenCamera}
-                    disabled={isSaving || isAnalyzing}
-                    style={{ flex: 1.2, margin: 0 }}
-                  >
-                    TAKE LIVE PHOTO
-                  </button>
-                  <button
-                    className="secondary-btn"
-                    type="button"
-                    onClick={handleOpenFilePicker}
-                    disabled={isSaving || isAnalyzing}
-                    style={{
-                      flex: 1,
-                      margin: 0,
-                      padding: '12px 14px',
-                      fontSize: '0.88rem',
+                {/* Clinical Image Rejection Card */}
+                {qualityRejection && !isAnalyzing && (
+                  <div style={{
+                    marginTop: 14,
+                    padding: 16,
+                    background: 'linear-gradient(135deg, #fef2f2, #fff1f2)',
+                    border: '2px solid #ef4444',
+                    borderRadius: 12,
+                    boxShadow: '0 4px 14px rgba(239, 68, 68, 0.12)',
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                      <div style={{ width: 36, height: 36, borderRadius: '50%', background: '#fee2e2', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#b91c1c', flexShrink: 0 }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="12" cy="12" r="10" />
+                          <line x1="4.93" y1="4.93" x2="19.07" y2="19.07" />
+                        </svg>
+                      </div>
+                      <div>
+                        <h4 style={{ margin: 0, color: '#991b1b', fontSize: '1.02rem', fontWeight: 700 }}>
+                          {qualityRejection.title}
+                        </h4>
+                        <span style={{
+                          display: 'inline-block',
+                          marginTop: 2,
+                          padding: '2px 8px',
+                          background: '#fee2e2',
+                          border: '1px solid #fca5a5',
+                          borderRadius: 4,
+                          fontSize: '0.72rem',
+                          fontWeight: 700,
+                          color: '#b91c1c',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.5px',
+                        }}>
+                          GATE: {qualityRejection.reason} {qualityRejection.detected ? `• DETECTED: ${qualityRejection.detected}` : ''}
+                        </span>
+                      </div>
+                    </div>
+
+                    <p style={{ margin: '0 0 10px 0', color: '#374151', fontSize: '0.84rem', lineHeight: 1.5 }}>
+                      {qualityRejection.message}
+                    </p>
+
+                    <div style={{
+                      background: 'white',
+                      borderRadius: 8,
+                      padding: '10px 12px',
+                      border: '1px solid #fecaca',
+                      marginBottom: 14,
+                      fontSize: '0.8rem',
+                      color: '#7f1d1d',
+                      lineHeight: 1.45,
+                    }}>
+                      <strong>Action Required:</strong> {qualityRejection.instructions}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: 10 }}>
+                      <button
+                        type="button"
+                        className="action-btn blue"
+                        style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
+                        onClick={handleOpenCamera}
+                      >
+                        Retake with Camera
+                      </button>
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ flex: 1, padding: '10px 12px', fontSize: '0.84rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, background: 'white' }}
+                        onClick={handleOpenFilePicker}
+                      >
+                        Select Another Image
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {aiResult && !qualityRejection && !isAnalyzing && (
+                  <div className="ai-result-box" style={{ background: '#0f172a', color: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #334155' }}>
+                    <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: 10, color: '#38bdf8' }}>
+                      Grad-CAM: {aiResult.displayLabel} ({aiResult.percent} confident)
+                    </div>
+
+                    {/* 3-Panel Grad-CAM Visualization matching Colab Cell 8 */}
+                    {aiResult.gradcam && (
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8, marginBottom: 12 }}>
+                        <div style={{ textAlign: 'center' }}>
+                          <img
+                            src={aiResult.gradcam.originalUrl}
+                            alt="Original"
+                            style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
+                          />
+                          <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>Original Image</span>
+                        </div>
+
+                        <div style={{ textAlign: 'center' }}>
+                          <img
+                            src={aiResult.gradcam.heatmapUrl}
+                            alt="Heatmap"
+                            style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
+                          />
+                          <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>
+                            Heatmap<br /><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = AI focused)</span>
+                          </span>
+                        </div>
+
+                        <div style={{ textAlign: 'center' }}>
+                          <img
+                            src={aiResult.gradcam.overlayUrl}
+                            alt="Overlay"
+                            style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
+                          />
+                          <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>Overlay</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Colab-exact Prediction Banner with Differential Ambiguity Alert */}
+                    <div style={{ borderTop: '1px dashed #334155', paddingTop: 10, marginTop: 4, fontFamily: 'monospace' }}>
+                      {aiResult.isUniform && (
+                        <div style={{ marginBottom: 8, padding: '8px 10px', background: 'rgba(239, 68, 68, 0.18)', border: '1px solid #ef4444', borderRadius: 6, fontSize: '0.76rem', color: '#fca5a5', lineHeight: 1.4, fontFamily: 'sans-serif' }}>
+                          <strong>Backend AI Server Offline Notice:</strong> The in-browser WebAssembly engine produced an uncalibrated flat probability distribution. To activate the full 97.33% native MobileNetV3 neural engine and non-animal gate, launch the backend terminal with <code>npm run backend</code>.
+                        </div>
+                      )}
+                      {(() => {
+                        const runnerUp = aiResult.top3?.[1]
+                        const isAmbiguous = aiResult.confidence < 0.75 || (runnerUp && runnerUp.confidence > 0.25)
+                        if (isAmbiguous) {
+                          return (
+                            <div>
+                              <div style={{ fontSize: '0.88rem', color: '#fbbf24', fontWeight: 'bold' }}>
+                                TENTATIVE CLINICAL IMPRESSION: {aiResult.displayLabel.toUpperCase()}
+                              </div>
+                              <div style={{ fontSize: '0.82rem', color: '#cbd5e1', marginLeft: 16 }}>
+                                Confidence: {aiResult.percent} (Differential Ambiguity Zone)
+                              </div>
+                              <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(217, 119, 6, 0.25)', border: '1px solid #d97706', borderRadius: 4, fontSize: '0.75rem', color: '#fef3c7', lineHeight: 1.4, fontFamily: 'sans-serif' }}>
+                                <strong>Differential Advisory:</strong> Visual mimicry detected between {aiResult.displayLabel} and {runnerUp ? runnerUp.display : 'secondary condition'} ({runnerUp ? `${(runnerUp.confidence * 100).toFixed(1)}%` : ''}). Confirmatory laboratory testing (Skin Scraping, Fungal Culture, or Tape Cytology) recommended prior to definitive therapy.
+                              </div>
+                            </div>
+                          )
+                        }
+                        return (
+                          <div>
+                            <div style={{ fontSize: '0.88rem', color: '#4ade80', fontWeight: 'bold' }}>
+                              PREDICTED PRIMARY CONDITION: {aiResult.displayLabel.toUpperCase()}
+                            </div>
+                            <div style={{ fontSize: '0.82rem', color: '#cbd5e1', marginLeft: 16 }}>
+                              Confidence: {aiResult.percent}
+                            </div>
+                          </div>
+                        )
+                      })()}
+
+                      {/* FR7: 60% Decision Boundary (Thesis pp. 11, 41, 46, 56) */}
+                      {aiResult.confidence >= 0.60 ? (
+                        <div style={{ marginTop: 6, padding: '5px 8px', background: 'rgba(22, 101, 52, 0.35)', border: '1px solid #16a34a', borderRadius: 4, fontSize: '0.74rem', color: '#86efac', fontFamily: 'sans-serif' }}>
+                          Confidence &ge; 60%: First-line care protocol auto-populated into consultation draft.
+                        </div>
+                      ) : (
+                        <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(180, 83, 9, 0.35)', border: '1px solid #d97706', borderRadius: 4, fontSize: '0.74rem', color: '#fde68a', fontFamily: 'sans-serif' }}>
+                          Confidence &lt; 60% decision boundary: Secondary confirmatory laboratory diagnostics (Skin Scraping, Fungal Culture, or Tape Cytology) recommended.
+                        </div>
+                      )}
+
+                      <div style={{ marginTop: 8, fontSize: '0.8rem', color: '#94a3b8' }}>
+                        Top 3 Predictions:
+                        {aiResult.top3.map((item, i) => (
+                          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', padding: '2px 0 2px 14px', color: i === 0 ? '#f1f5f9' : '#94a3b8' }}>
+                            <span>{i + 1}. {getFormalMedicalName(item.display)}</span>
+                            <span style={{ fontWeight: i === 0 ? 'bold' : 'normal' }}>{(item.confidence * 100).toFixed(1)}%</span>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Multimodal Symptom Synergy Indicator */}
+                      {selectedSymptoms.includes('SYM-SCALING') && aiResult.top3.some(t => t.display.toLowerCase().includes('mange')) && (
+                        <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid #0284c7', borderRadius: 4, fontSize: '0.74rem', color: '#7dd3fc', fontFamily: 'sans-serif' }}>
+                          Clinical Synergy: Marked scaling/crusting selected in symptoms strongly supports Acariasis (Mange) detected in lesion scan.
+                        </div>
+                      )}
+
+                      {/* Co-occurring / Comorbidity Detection */}
+                      {(() => {
+                        const comorb = checkComorbidity(aiResult.top3)
+                        if (!comorb.isComorbid) return null
+                        return (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(59, 130, 246, 0.25)', border: '1px solid #3b82f6', borderRadius: 6, fontSize: '0.78rem', color: '#bfdbfe', lineHeight: 1.4, fontFamily: 'sans-serif' }}>
+                            <strong>Suspected Comorbidity / Secondary Condition:</strong> Elevated probability detected for both <strong>{comorb.primary} ({(comorb.primaryConf * 100).toFixed(1)}%)</strong> and <strong>{comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%)</strong>. Clinical evaluation for secondary opportunistic infection (e.g. bacterial colonization over fungal/parasitic lesion) recommended.
+                          </div>
+                        )
+                      })()}
+
+                      {/* Early-Stage Subclinical / Facial Differential Advisory */}
+                      {(() => {
+                        const diff = checkEarlyStageDifferential(aiResult, species, areaOfConcern)
+                        if (!diff) return null
+                        return (
+                          <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(168, 85, 247, 0.2)', border: '1px solid #a855f7', borderRadius: 6, fontSize: '0.78rem', color: '#e9d5ff', lineHeight: 1.4, fontFamily: 'sans-serif' }}>
+                            <strong>{diff.title}:</strong> {diff.message}
+                            <div style={{ marginTop: 4, fontSize: '0.72rem', color: '#d8b4fe' }}>
+                              <em>{diff.overrideHint}</em>
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  </div>
+                )}
+
+                {/* Clinical Symptoms Checklist & Custom Input */}
+                {aiResult && !qualityRejection && !isAnalyzing && (
+                  <div style={{ marginTop: 14, padding: 14, background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                      <span style={{ fontWeight: 'bold', fontSize: '0.88rem', color: '#1e293b' }}>
+                        Observed Clinical Signs & Symptoms
+                      </span>
+                      <span style={{ fontSize: '0.74rem', color: '#64748b' }}>
+                        {aiResult.confidence >= 0.60 ? 'Auto-suggested from AI findings' : 'Manual verification required (<60%)'}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.78rem', color: '#475569', margin: '0 0 10px', lineHeight: 1.35 }}>
+                      Select observed physical lesion signs. These will be linked directly into the consultation record:
+                    </p>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: 6, marginBottom: 10 }}>
+                      {MASTER_SYMPTOMS.map((sym) => {
+                        const isChecked = selectedSymptoms.includes(sym.id)
+                        return (
+                          <label
+                            key={sym.id}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 6,
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              fontSize: '0.78rem',
+                              background: isChecked ? '#e0f2fe' : '#ffffff',
+                              border: isChecked ? '1px solid #38bdf8' : '1px solid #cbd5e1',
+                              color: isChecked ? '#0369a1' : '#334155',
+                              cursor: 'pointer',
+                              fontWeight: isChecked ? 600 : 400,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={isChecked}
+                              onChange={() => toggleSymptom(sym.id)}
+                              style={{ accentColor: '#059669', width: 16, height: 16, cursor: 'pointer', flexShrink: 0 }}
+                            />
+                            <span>{sym.shortName}</span>
+                          </label>
+                        )
+                      })}
+                    </div>
+
+                    {/* Others / Custom Symptoms free-text */}
+                    <label style={{ display: 'block', marginTop: 8 }}>
+                      <span style={{ fontSize: '0.78rem', fontWeight: 600, color: '#334155' }}>
+                        Other Clinical Signs / Specific Observations (Free-text):
+                      </span>
+                      <input
+                        type="text"
+                        value={otherSymptoms}
+                        onChange={(e) => setOtherSymptoms(e.target.value)}
+                        placeholder="e.g. Mild fever, localized swelling, foul ear discharge, lethargic..."
+                        style={{ width: '100%', padding: '6px 10px', fontSize: '0.82rem', borderRadius: 6, border: '1px solid #cbd5e1', marginTop: 4, boxSizing: 'border-box' }}
+                      />
+                    </label>
+                  </div>
+                )}
+
+                {/* Confirmatory Diagnostic Lab Testing Section */}
+                {aiResult && !qualityRejection && !isAnalyzing && (
+                  <div style={{ marginTop: 12, padding: 12, background: labTestRequired ? '#fffbeb' : '#f8fafc', border: labTestRequired ? '1px solid #fde68a' : '1px solid #e2e8f0', borderRadius: 10 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
+                      <label style={{ display: 'flex', alignItems: 'flex-start', gap: 10, cursor: 'pointer' }}>
+                        <input
+                          type="checkbox"
+                          checked={labTestRequired}
+                          onChange={(e) => setLabTestRequired(e.target.checked)}
+                          style={{ marginTop: 2, width: 17, height: 17, cursor: 'pointer', accentColor: '#059669', flexShrink: 0 }}
+                        />
+                        <div>
+                          <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: labTestRequired ? '#b45309' : '#1e293b' }}>
+                            Confirmatory Diagnostic Lab Test Required
+                          </span>
+                          <p style={{ margin: '3px 0 0', fontSize: '0.76rem', color: '#475569', lineHeight: 1.35 }}>
+                            Check if attending staff or clinician needs microscope skin scraping, fungal DTM culture, or tape cytology. (Patient will be flagged as <span style={{ background: '#e2e8f0', color: '#0f172a', padding: '2px 6px', borderRadius: 4, fontWeight: 600, fontSize: '0.74rem', fontFamily: 'monospace' }}>Awaiting Lab Test</span>).
+                          </p>
+                        </div>
+                      </label>
+                    </div>
+
+                    {labTestRequired && (
+                      <div style={{ marginTop: 8, paddingLeft: 22 }}>
+                        <input
+                          type="text"
+                          value={labTestReason}
+                          onChange={(e) => setLabTestReason(e.target.value)}
+                          placeholder="Specify test: e.g. Skin scrape for Demodex mites / Fungal DTM culture"
+                          style={{ width: '100%', padding: '6px 10px', fontSize: '0.8rem', borderRadius: 6, border: '1px solid #f59e0b', boxSizing: 'border-box', background: '#ffffff' }}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <div className="form-actions-row" style={{ flexDirection: 'column', gap: 8, marginTop: 14 }}>
+                  {/* Step 1: Capture or Upload photo */}
+                  {!previewUrl && (
+                    <div style={{ display: 'flex', gap: 10, width: '100%' }}>
+                      <button
+                        className="capture-btn"
+                        type="button"
+                        onClick={handleOpenCamera}
+                        disabled={isSaving || isAnalyzing}
+                        style={{ flex: 1.2, margin: 0 }}
+                      >
+                        TAKE LIVE PHOTO
+                      </button>
+                      <button
+                        className="secondary-btn"
+                        type="button"
+                        onClick={handleOpenFilePicker}
+                        disabled={isSaving || isAnalyzing}
+                        style={{
+                          flex: 1,
+                          margin: 0,
+                          padding: '12px 14px',
+                          fontSize: '0.88rem',
+                          fontWeight: 600,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 6,
+                          background: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                        }}
+                      >
+                        UPLOAD FILE
+                      </button>
+                    </div>
+                  )}
+
+                  {/* Quality rejection block indicator */}
+                  {qualityRejection && !isAnalyzing && (
+                    <div style={{
+                      padding: '10px 14px',
+                      background: '#fef2f2',
+                      border: '1px dashed #ef4444',
+                      borderRadius: 8,
+                      textAlign: 'center',
+                      color: '#b91c1c',
+                      fontSize: '0.82rem',
                       fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      gap: 6,
-                      background: '#f8fafc',
-                      border: '1px solid #cbd5e1',
-                    }}
-                  >
-                    UPLOAD FILE
-                  </button>
-                </div>
-              )}
+                      marginTop: 4,
+                    }}>
+                      Patient record cannot be submitted with a rejected image. Please retake photo above.
+                    </div>
+                  )}
 
-              {/* Quality rejection block indicator */}
-              {qualityRejection && !isAnalyzing && (
-                <div style={{
-                  padding: '10px 14px',
-                  background: '#fef2f2',
-                  border: '1px dashed #ef4444',
-                  borderRadius: 8,
-                  textAlign: 'center',
-                  color: '#b91c1c',
-                  fontSize: '0.82rem',
-                  fontWeight: 600,
-                  marginTop: 4,
-                }}>
-                  Patient record cannot be submitted with a rejected image. Please retake photo above.
+                  {/* Step 2: Save after AI result is ready */}
+                  {aiResult && !qualityRejection && !isAnalyzing && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
+                      {currentUser?.role === 'Clinic Admin' ? (
+                        <>
+                          <button
+                            className="capture-btn"
+                            type="button"
+                            onClick={() => handleSave(true)}
+                            disabled={isSaving}
+                            style={{
+                              background: 'linear-gradient(135deg, #0d9488, #0f766e)',
+                              boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
+                              fontWeight: 700
+                            }}
+                          >
+                            {isSaving ? 'SAVING PATIENT & SCAN...' : 'SAVE & PROCEED TO CONSULTATION / RX'}
+                          </button>
+                          <button
+                            className="secondary-btn"
+                            type="button"
+                            onClick={() => handleSave(false)}
+                            disabled={isSaving}
+                            style={{
+                              padding: '11px 16px',
+                              fontSize: '0.88rem',
+                              fontWeight: 600,
+                              background: '#f8fafc',
+                              border: '1px solid #cbd5e1',
+                              color: '#334155'
+                            }}
+                          >
+                            SAVE & INTAKE NEXT PATIENT
+                          </button>
+                        </>
+                      ) : (
+                        <button
+                          className="capture-btn"
+                          type="button"
+                          onClick={() => handleSave(false)}
+                          disabled={isSaving}
+                          style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
+                        >
+                          {isSaving ? 'SAVING INTAKE & SCAN...' : 'SAVE INTAKE & QUEUE FOR VET REVIEW'}
+                        </button>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
-
-              {/* Step 2: Save after AI result is ready */}
-              {aiResult && !qualityRejection && !isAnalyzing && (
-                <button
-                  className="capture-btn"
-                  type="button"
-                  onClick={handleSave}
-                  disabled={isSaving}
-                  style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)', marginTop: 8 }}
-                >
-                  {isSaving
-                    ? 'SAVING PATIENT & SCAN...'
-                    : currentUser?.role === 'Clinic Staff'
-                      ? 'SAVE INTAKE & QUEUE FOR VET REVIEW'
-                      : 'SAVE PATIENT RECORD'}
-                </button>
-              )}
+              </div>
             </div>
-          </div>
-        </div>
 
-      </div>
+          </div>
+        </>
+      )}
 
       {/* Cross-platform Live Camera Viewfinder Modal */}
+      {/* Live Clinical Camera Modal */}
       <CameraCaptureModal
         isOpen={isCameraOpen}
         onClose={() => setIsCameraOpen(false)}
         onCapture={handleCameraCapture}
         onFallbackUpload={handleOpenFilePicker}
+      />
+
+      {/* Interactive Lesion Crop & Zoom Modal */}
+      <ImageCropModal
+        isOpen={cropModalOpen}
+        file={fileToCrop}
+        onClose={() => {
+          setCropModalOpen(false)
+          setFileToCrop(null)
+        }}
+        onConfirmCrop={handleConfirmCrop}
+        onUseFullImage={handleUseFullImage}
       />
     </section>
   )

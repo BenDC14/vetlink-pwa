@@ -226,7 +226,55 @@ export async function addPatient(patient) {
 
 export async function getPatients() {
   const db = await initDatabase()
-  return db.getAll('patients')
+  const list = await db.getAll('patients')
+  return (list || []).filter((p) => !p._deletedLocally)
+}
+
+export async function deletePatient(id) {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const tx = db.transaction(['patients', 'consultations', 'screeningResults', 'syncQueue'], 'readwrite')
+  const patientStore = tx.objectStore('patients')
+  const existing = await patientStore.get(id)
+
+  if (existing) {
+    const queueStore = tx.objectStore('syncQueue')
+    const queuedItems = await queueStore.index('entityId').getAll(id)
+    const matchingQueueItems = queuedItems.filter((item) => item.entityType === 'patients')
+    const isLocalOnly = matchingQueueItems.some((item) => item.operation === 'CREATE') || existing.syncStatus !== 'synced'
+    const originalQueueItem = matchingQueueItems[0]
+    const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
+
+    if (isLocalOnly) {
+      // Record was never synced to cloud - delete directly
+      await patientStore.delete(id)
+      for (const item of matchingQueueItems) await queueStore.delete(item.id)
+    } else {
+      // Soft-delete locally until cloud sync confirms
+      const softDeleted = { ...existing, _deletedLocally: true, syncStatus: 'pending', updatedAt: now }
+      await patientStore.put(softDeleted)
+      for (const item of matchingQueueItems) await queueStore.delete(item.id)
+      await queueStore.put(createSyncQueueItem('patients', id, 'DELETE', { id }, now, baseVersion))
+    }
+
+    // Clean up local linked consultations & screenings if local only
+    if (isLocalOnly) {
+      const consultStore = tx.objectStore('consultations')
+      const consults = await consultStore.index('patientId').getAll(id)
+      const screeningStore = tx.objectStore('screeningResults')
+      for (const c of consults) {
+        await consultStore.delete(c.id)
+        const screenings = await screeningStore.index('consultationId').getAll(c.id)
+        for (const s of screenings) {
+          await screeningStore.delete(s.id)
+        }
+      }
+    }
+  }
+
+  await tx.done
+  notifyQueueUpdated()
+  return id
 }
 
 export async function cacheCloudPatient(patient) {

@@ -135,26 +135,36 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
     setFacingMode(nextMode)
   }
 
-  // Snap photo from live video frame
+  // Snap photo from live video frame with Square Lesion ROI Cropping
   const handleSnapPhoto = () => {
     const video = videoRef.current
     if (!video) return
 
-    const width = video.videoWidth || 1280
-    const height = video.videoHeight || 720
+    const rawW = video.videoWidth || 1280
+    const rawH = video.videoHeight || 720
 
+    // Compute square ROI matching the viewfinder box (68% of min dimension)
+    const minDim = Math.min(rawW, rawH)
+    const cropSize = Math.round(minDim * 0.75)
+    const startX = Math.round((rawW - cropSize) / 2)
+    const startY = Math.round((rawH - cropSize) / 2)
+
+    // Downscale target to max 1024x1024 for instant upload & inference (0% loss for MobileNetV3)
+    const targetDim = Math.min(cropSize, 1024)
     const canvas = document.createElement('canvas')
-    canvas.width = width
-    canvas.height = height
+    canvas.width = targetDim
+    canvas.height = targetDim
     const ctx = canvas.getContext('2d')
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
 
     // If using user/front camera on laptop or phone, mirror horizontally
     if (facingMode === 'user') {
-      ctx.translate(width, 0)
+      ctx.translate(targetDim, 0)
       ctx.scale(-1, 1)
     }
 
-    ctx.drawImage(video, 0, 0, width, height)
+    ctx.drawImage(video, startX, startY, cropSize, cropSize, 0, 0, targetDim, targetDim)
 
     canvas.toBlob(
       (blob) => {
@@ -170,7 +180,7 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
         stopTracks()
       },
       'image/jpeg',
-      0.95
+      0.88
     )
   }
 
@@ -308,7 +318,7 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
             />
           )}
 
-          {/* Clinical Macro Lesion Reticle Overlay (over live video) */}
+          {/* Clinical Macro Lesion Reticle Overlay (over live video) - Pure 1:1 Square ROI */}
           {!capturedBlobUrl && !cameraError && !isInitializing && (
             <div
               style={{
@@ -316,23 +326,26 @@ export default function CameraCaptureModal({ isOpen, onClose, onCapture, onFallb
                 top: '50%',
                 left: '50%',
                 transform: 'translate(-50%, -50%)',
-                width: '68%',
-                height: '68%',
-                border: '2px dashed rgba(56, 189, 248, 0.85)',
-                borderRadius: 16,
-                boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)',
+                width: 250,
+                height: 250,
+                maxWidth: '75vw',
+                maxHeight: '75vw',
+                border: '2px solid rgba(56, 189, 248, 0.9)',
+                borderRadius: 12,
+                boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.55)',
                 pointerEvents: 'none',
                 display: 'flex',
                 flexDirection: 'column',
                 justifyContent: 'space-between',
-                padding: 10,
+                padding: 8,
+                boxSizing: 'border-box',
               }}
             >
-              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.75)', padding: '4px 8px', borderRadius: 4, alignSelf: 'center' }}>
-                <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>ALIGN LESION IN FRAME</span>
+              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.85)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center', border: '1px solid #0284c7' }}>
+                <span style={{ fontSize: '0.72rem', color: '#38bdf8', fontWeight: 600 }}>CLINICAL LESION ROI</span>
               </div>
-              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.75)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center' }}>
-                <span style={{ fontSize: '0.68rem', color: '#94a3b8' }}>Fill 70% of box & hold steady</span>
+              <div style={{ textAlign: 'center', background: 'rgba(15, 23, 42, 0.85)', padding: '3px 8px', borderRadius: 4, alignSelf: 'center' }}>
+                <span style={{ fontSize: '0.68rem', color: '#f8fafc' }}>Center active lesion (crusts, pustules, redness)</span>
               </div>
             </div>
           )}

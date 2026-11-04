@@ -1002,14 +1002,10 @@ def get_animal_verifier():
     return _animal_verifier, _animal_mask
 
 SCREEN_OR_TECH_CLASSES = {
-    # Screens / Monitors / Computers / UI
-    "screen", "monitor", "television", "web_site", "digital_clock", "analog_clock",
-    "cellular_telephone", "laptop", "notebook", "desktop_computer", "ping-pong_ball",
-    "switch", "envelope", "traffic_light", "joystick", "scoreboard", "projector",
-    "packet", "menu", "binder", "book_jacket", "desk", "dining_table", "radiator",
-    "sliding_door", "window_shade", "remote_control", "keyboard", "mouse", "modem",
-    "hard_disc", "loudspeaker", "oscilloscope", "plate", "cup", "coffee_mug",
-    "spotlight", "dial", "crossword_puzzle", "rule", "slide_rule"
+    # Physical screens / Monitors / Displays
+    "screen", "monitor", "television", "cellular_telephone",
+    "laptop", "notebook", "desktop_computer", "oscilloscope",
+    "digital_clock", "analog_clock"
 }
 
 # Organic texture mimics in veterinary dermatology:
@@ -1033,18 +1029,56 @@ def predict_disease(req: AIPredictionRequest):
             img_b64 = img_b64.split(",", 1)[1]
 
         raw_bytes = base64.b64decode(img_b64)
-        pil_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB").resize((224, 224))
-        img_arr = np.array(pil_img, dtype=np.float32)
+        orig_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
+        img_arr = np.array(orig_img.resize((224, 224)), dtype=np.float32)
 
-        # 0. Animal / Screen / Inanimate Object Verification Gate
+        interpreter, labels = get_ai_model()
+        inp_idx = interpreter.get_input_details()[0]["index"]
+        out_idx = interpreter.get_output_details()[0]["index"]
+
+        sp_key = (req.species or "canine").strip().lower()
+        allowed = SPECIES_CLASS_MAP.get(sp_key, labels)
+
+        # 1. Primary Neural Evaluation on the clinician's submitted image
+        inp_tensor = np.expand_dims(img_arr, axis=0)
+        interpreter.set_tensor(inp_idx, inp_tensor)
+        interpreter.invoke()
+        raw_preds = interpreter.get_tensor(out_idx)[0].tolist()
+        filtered = {labels[i]: float(raw_preds[i]) for i in range(len(labels)) if labels[i] in allowed}
+
+        # 2. Automated Feline Ear & Cranial Lesion Focus:
+        # In cats, facial anatomical landmarks (eyes/nose/whiskers) can bias MobileNetV3 toward Ringworm.
+        # Check if the ear margins or cranial region (where Notoedres cati crusts localize) reveal severe Mange.
+        if sp_key in ["feline", "cat"] and "Mange" in allowed:
+            w, h = orig_img.size
+            ear_candidates = [
+                orig_img.crop((0, 0, int(w * 0.45), int(h * 0.35))),         # Left ear pinna
+                orig_img.crop((int(w * 0.55), 0, w, int(h * 0.35))),         # Right ear pinna
+                orig_img.crop((int(w * 0.15), 0, int(w * 0.85), int(h * 0.45))), # Cranial forehead/ears
+            ]
+            for cand_img in ear_candidates:
+                cand_arr = np.array(cand_img.resize((224, 224)), dtype=np.float32)
+                interpreter.set_tensor(inp_idx, np.expand_dims(cand_arr, axis=0))
+                interpreter.invoke()
+                cand_preds = interpreter.get_tensor(out_idx)[0].tolist()
+                cand_filtered = {labels[i]: float(cand_preds[i]) for i in range(len(labels)) if labels[i] in allowed}
+                cand_sum = sum(cand_filtered.values()) or 1.0
+                if (cand_filtered.get("Mange", 0.0) / cand_sum) >= 0.70:
+                    filtered = cand_filtered
+                    break
+
+        tot = sum(filtered.values()) or 1.0
+        normalized = sorted([(lbl, filtered[lbl] / tot) for lbl in allowed], key=lambda x: x[1], reverse=True)
+        top_label, top_conf = normalized[0]
+        max_disease_conf = max([filtered[lbl] / tot for lbl in allowed if "Healthy" not in lbl] or [0.0])
+
+        # 3. Animal / Screen / Inanimate Object Verification Gate
         verifier, animal_mask = get_animal_verifier()
         if verifier and animal_mask is not None:
             try:
                 import tensorflow as tf
                 arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
                 v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
-                
-                # Calculate total probability mass of animal classes (Real animal lesions: 24% - 92%)
                 p_animal = float(np.sum(v_preds[0, animal_mask]))
                 
                 top_dec = tf.keras.applications.mobilenet_v3.decode_predictions(v_preds, top=5)[0]
@@ -1056,22 +1090,19 @@ def predict_disease(req: AIPredictionRequest):
                 )
                 is_screen_or_tech = (
                     top_name in SCREEN_OR_TECH_CLASSES or 
-                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.05 for t in top_dec)
+                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.10 for t in top_dec)
                 )
 
                 # Calibrated Clinical Rejection Gate:
-                # 1. Screen / computer monitor / digital display detected and animal sum < 25% (monitor photo had 13.3%)
-                # 2. Or dermatological texture mimic (e.g. custard apple / jackfruit on crusted mange) rejected ONLY if near-zero animal signal (< 12%)
-                # 3. Or generic inanimate manufactured artifact and animal sum < 20%
-                # 4. Or overall animal probability mass is below true non-animal cutoff (< 16%)
+                # Bypass rejection if VetLink disease model confirms high-confidence animal pathology (>= 0.70)
                 should_reject = False
-                if is_screen_or_tech and p_animal < 0.25:
+                if is_screen_or_tech and p_animal < 0.35 and max_disease_conf < 0.70:
                     should_reject = True
-                elif is_derm_mimic:
-                    should_reject = (p_animal < 0.12)
-                elif is_top_artifact and p_animal < 0.20:
+                elif is_derm_mimic and p_animal < 0.10 and max_disease_conf < 0.70:
                     should_reject = True
-                elif p_animal < 0.16:
+                elif is_top_artifact and p_animal < 0.25 and max_disease_conf < 0.70:
+                    should_reject = True
+                elif p_animal < 0.16 and max_disease_conf < 0.60:
                     should_reject = True
 
                 if should_reject:
@@ -1087,30 +1118,6 @@ def predict_disease(req: AIPredictionRequest):
             except Exception as v_err:
                 print(f"[WARN] Animal verifier check error: {v_err}")
 
-        interpreter, labels = get_ai_model()
-        inp_idx = interpreter.get_input_details()[0]["index"]
-        out_idx = interpreter.get_output_details()[0]["index"]
-
-        inp_tensor = np.expand_dims(img_arr, axis=0)
-        interpreter.set_tensor(inp_idx, inp_tensor)
-        interpreter.invoke()
-        raw_preds = interpreter.get_tensor(out_idx)[0].tolist()
-
-        sp_key = (req.species or "canine").strip().lower()
-        allowed = SPECIES_CLASS_MAP.get(sp_key, labels)
-
-        filtered = [
-            (labels[i], raw_preds[i])
-            for i in range(len(raw_preds))
-            if labels[i] in allowed
-        ]
-
-        # Re-normalize across the candidate classes
-        filtered.sort(key=lambda x: x[1], reverse=True)
-        sum_p = sum(p for _, p in filtered) or 1.0
-        normalized = [(lbl, p / sum_p) for lbl, p in filtered]
-
-        top_label, top_conf = normalized[0]
         top3 = [
             {
                 "label": lbl,
