@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { addPatient, addConsultation, addScreeningResult, addConsultationSymptoms } from '../db/database'
+import { addPatient, addConsultation, addScreeningResult, addConsultationSymptoms, logAuditEvent } from '../db/database'
 import {
   loadVetLinkModel,
   predict,
@@ -508,8 +508,44 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         isComorbid: comorb.isComorbid,
       }
 
+      await logAuditEvent({
+        action: 'PATIENT_ADMITTED',
+        user: currentUser || { name: 'Clinic Staff' },
+        targetEntity: 'patients',
+        targetId: patient.id,
+        details: `Admitted patient ${patient.name} (${patient.species}) with diagnosis ${aiResult.displayLabel}${comorb.isComorbid ? ` + ${comorb.secondary}` : ''}. Status: ${assignedStatus}`,
+      })
+
+      // Helper to completely clean up form inputs
+      const resetForm = () => {
+        setName('')
+        setSpecies('Canine')
+        setBreed('')
+        setWeight('')
+        setAge('')
+        setOwnerName('')
+        setOwnerPhone('')
+        setAreaOfConcern('')
+        setSelectedSymptoms([])
+        setOtherSymptoms('')
+        setCustomSymptomInput('')
+        setSelectedFile(null)
+        setAiResult(null)
+        setQualityRejection(null)
+        setLabTestRequired(false)
+        setLabTestReason('')
+        if (previewUrl && previewUrl.startsWith('blob:')) {
+          URL.revokeObjectURL(previewUrl)
+        }
+        setPreviewUrl(null)
+        if (fileInputRef.current) {
+          fileInputRef.current.value = ''
+        }
+      }
+
       // If requested to proceed directly to treatment (e.g. Clinic Admin / Vet direct action)
       if (proceedToTreatment && onCapture) {
+        resetForm()
         onCapture({
           ...fullPayload,
           proceedToTreatment: true,
@@ -518,25 +554,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       }
 
       // Otherwise, clean up form state and show admitted confirmation card
-      setName('')
-      setSpecies('Canine')
-      setBreed('')
-      setWeight('')
-      setAge('')
-      setOwnerName('')
-      setOwnerPhone('')
-      setAreaOfConcern('')
-      setSelectedSymptoms([])
-      setOtherSymptoms('')
-      setCustomSymptomInput('')
-      setSelectedFile(null)
-      setAiResult(null)
-      setQualityRejection(null)
-      setLabTestRequired(false)
-      setLabTestReason('')
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ''
-      }
+      resetForm()
 
       setIntakeSuccess(true)
       setSavedSummary({

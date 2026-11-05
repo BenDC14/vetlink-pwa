@@ -206,7 +206,9 @@ export async function predict(imageElement, species = 'Canine') {
     for (const endpoint of candidateEndpoints) {
       try {
         const controller = new AbortController()
-        const timer = setTimeout(() => controller.abort(), 1500)
+        const isCloudEndpoint = endpoint.startsWith('http') && !endpoint.includes('localhost')
+        const timeoutMs = isCloudEndpoint ? 8000 : 1500
+        const timer = setTimeout(() => controller.abort(), timeoutMs)
         const res = await fetch(endpoint, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
@@ -251,7 +253,16 @@ export async function predict(imageElement, species = 'Canine') {
 
   // 2. FALLBACK PATH: Client-side in-browser WASM inference
   console.warn('[VetLink AI] Backend unreachable; attempting client-side WASM inference...')
-  if (!model) await loadVetLinkModel()
+  if (!model) {
+    try {
+      await loadVetLinkModel()
+    } catch (loadErr) {
+      console.error('[VetLink AI] Could not load offline model weights:', loadErr)
+      throw new Error(
+        'Offline AI Model Not Cached: Local neural weights are not yet cached in this browser. Please connect to the internet once while opening VetLink so the local AI weights (~3.5MB) can download for 100% offline use.'
+      )
+    }
+  }
 
   const tf = window.tf
   const allowedClasses = SPECIES_CLASSES[species] || classLabels
@@ -324,7 +335,12 @@ export async function predict(imageElement, species = 'Canine') {
       }
     }
 
-    const sumProb = Object.values(candidateScores).reduce((a, b) => a + b, 0) || 1
+    const sumProb = Object.values(candidateScores).reduce((a, b) => a + b, 0)
+    if (!sumProb || sumProb < 0.0001 || isNaN(sumProb)) {
+      throw new Error(
+        'AI Inference Inconclusive: On-device neural model returned flat or uncalibrated probabilities for this image. Please retake the photo with clearer focus and direct lesion lighting.'
+      )
+    }
     const classScores = allowedClasses
       .map((lbl) => ({
         label: lbl,

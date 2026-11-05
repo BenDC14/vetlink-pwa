@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { updateConsultation } from '../db/database'
+import { updateConsultation, logAuditEvent } from '../db/database'
 
 export const BASE_TREATMENT_PROTOCOLS = {
   // ── Canine (Aso) Protocols (Exact 11 dataset classes) ─────────
@@ -412,6 +412,15 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   const [newProtocolSteps, setNewProtocolSteps] = useState('')
   const [newProtocolRx, setNewProtocolRx] = useState('')
   const [newProtocolNotes, setNewProtocolNotes] = useState('')
+  const [showSuccessModal, setShowSuccessModal] = useState(false)
+  const [successModalText, setSuccessModalText] = useState('')
+
+  const handleSuccessModalOk = () => {
+    setShowSuccessModal(false)
+    if (onBack) {
+      onBack()
+    }
+  }
 
   const activeProtocolKey = isLibraryMode ? selectedDisease : getSpeciesProtocolKey(rawDiagnosis, patientSpecies)
   const diagnosis         = isLibraryMode ? (protocols[selectedDisease]?.baseCondition || selectedDisease) : rawDiagnosis
@@ -520,7 +529,15 @@ export default function Treatment({ onBack, caseData, currentUser }) {
           treatmentPlan: prescription,
           clinicalNotes: clinicalNotes,
         })
-        setSaveMessage('Treatment plan and customized prescription successfully saved to patient medical record.')
+        await logAuditEvent({
+          action: 'TREATMENT_FINALIZED',
+          user: currentUser || { name: 'Attending Veterinarian' },
+          targetEntity: 'consultations',
+          targetId: consultation.id,
+          details: `Finalized prescription and treatment protocol for patient ${patient?.name || 'Patient'} (${selectedDisease}).`,
+        })
+        setSuccessModalText('Treatment plan and customized prescription successfully saved to patient medical record.')
+        setShowSuccessModal(true)
       } else {
         setSaveMessage('Clinical protocol verified. (Reference mode — ready for clinical execution).')
       }
@@ -1582,6 +1599,44 @@ export default function Treatment({ onBack, caseData, currentUser }) {
                 <span style={{ fontSize: '0.8rem', color: '#475569' }}>PRC License No.: VET-894102</span><br />
                 <span style={{ fontSize: '0.8rem', color: '#475569' }}>PTR No.: 1948201</span>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Treatment Finalize & Save Confirmation Modal Dialog */}
+        {showSuccessModal && (
+          <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="treatment-success-title" style={{ zIndex: 1100 }}>
+            <div className="modal-dialog" style={{ maxWidth: 440, textAlign: 'center', padding: '28px 24px' }}>
+              <div style={{
+                width: 52,
+                height: 52,
+                borderRadius: '50%',
+                background: '#dcfce7',
+                color: '#166534',
+                display: 'grid',
+                placeItems: 'center',
+                margin: '0 auto 16px',
+                fontSize: '1.6rem',
+                fontWeight: 'bold',
+                border: '2px solid #86efac'
+              }}>
+                ✓
+              </div>
+              <h3 id="treatment-success-title" style={{ margin: '0 0 10px', fontSize: '1.18rem', color: '#0f172a' }}>
+                Prescription & Plan Saved
+              </h3>
+              <p style={{ margin: '0 0 22px', color: '#334155', fontSize: '0.92rem', lineHeight: 1.5 }}>
+                {successModalText}
+              </p>
+              <button
+                type="button"
+                className="primary-btn"
+                style={{ minWidth: 120, margin: '0 auto', padding: '10px 28px', fontSize: '0.95rem' }}
+                onClick={handleSuccessModalOk}
+                autoFocus
+              >
+                OK
+              </button>
             </div>
           </div>
         )}

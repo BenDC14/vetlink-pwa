@@ -1,7 +1,7 @@
 import { openDB } from 'idb'
 const DB_NAME = "vetlink_local_db";
-const DB_VERSION = 2;
-const SYNC_STORE_NAMES = ['users', 'patients', 'consultations', 'screeningResults']
+const DB_VERSION = 3;
+const SYNC_STORE_NAMES = ['users', 'patients', 'consultations', 'screeningResults', 'auditLogs']
 
 const schema = {
   patients: {
@@ -93,6 +93,16 @@ const schema = {
       "createdAt"
     ]
   },
+  auditLogs: {
+    keyPath: "id",
+    indexes: [
+      "action",
+      "userId",
+      "targetEntity",
+      "createdAt",
+      "syncStatus"
+    ]
+  },
   idCounters: {
     keyPath: "prefix",
     indexes: []
@@ -154,6 +164,16 @@ function normalizeCloudRecord(storeName, record) {
     normalized.lastVisit = record.last_visit ?? record.lastVisit ?? ''
     normalized.ownerId = record.owner_id ?? record.ownerId
     normalized.createdBy = record.created_by ?? record.createdBy
+    normalized.weight = record.weight ?? record.weight ?? ''
+    normalized.ownerName = record.owner_name ?? record.ownerName ?? ''
+    normalized.ownerPhone = record.owner_phone ?? record.ownerPhone ?? ''
+    normalized.isArchived = Boolean(record.is_archived ?? record.isArchived ?? false)
+  } else if (storeName === 'auditLogs') {
+    normalized.userId = record.user_id ?? record.userId
+    normalized.userName = record.user_name ?? record.userName
+    normalized.userRole = record.user_role ?? record.userRole
+    normalized.targetEntity = record.target_entity ?? record.targetEntity
+    normalized.targetId = record.target_id ?? record.targetId
   } else if (storeName === 'consultations') {
     normalized.patientId = record.patient_id ?? record.patientId
     normalized.handledByUserId = record.handled_by_user_id ?? record.handledByUserId
@@ -212,6 +232,10 @@ export async function addPatient(patient) {
   const record = {
     ...patient,
     id,
+    weight: patient.weight || '',
+    ownerName: patient.ownerName || '',
+    ownerPhone: patient.ownerPhone || '',
+    isArchived: Boolean(patient.isArchived || false),
     updatedAt: now,
     syncStatus: 'pending',
     version: 1,
@@ -228,6 +252,30 @@ export async function getPatients() {
   const db = await initDatabase()
   const list = await db.getAll('patients')
   return (list || []).filter((p) => !p._deletedLocally)
+}
+
+export async function archivePatient(id, user = null) {
+  const updated = await updatePatient(id, { isArchived: true, status: 'Archived' })
+  await logAuditEvent({
+    action: 'PATIENT_ARCHIVED',
+    user: user || { name: 'Staff' },
+    targetEntity: 'patients',
+    targetId: id,
+    details: `Moved patient ${id} (${updated.name}) to recycle bin / archive.`,
+  })
+  return updated
+}
+
+export async function restorePatient(id, user = null) {
+  const updated = await updatePatient(id, { isArchived: false, status: 'Active' })
+  await logAuditEvent({
+    action: 'PATIENT_RESTORED',
+    user: user || { name: 'Staff' },
+    targetEntity: 'patients',
+    targetId: id,
+    details: `Restored patient ${id} (${updated.name}) from archive to active status.`,
+  })
+  return updated
 }
 
 export async function deletePatient(id) {
@@ -287,6 +335,10 @@ export async function cacheCloudPatient(patient) {
     lastVisit: patient.last_visit ?? patient.lastVisit ?? '',
     ownerId: patient.owner_id ?? patient.ownerId,
     createdBy: patient.created_by ?? patient.createdBy,
+    weight: patient.weight ?? '',
+    ownerName: patient.owner_name ?? patient.ownerName ?? '',
+    ownerPhone: patient.owner_phone ?? patient.ownerPhone ?? '',
+    isArchived: Boolean(patient.is_archived ?? patient.isArchived ?? false),
     createdAt: patient.created_at ?? patient.createdAt ?? now,
     updatedAt: patient.updated_at ?? patient.updatedAt ?? now,
     syncStatus: 'synced',
@@ -321,6 +373,10 @@ export async function mergeCloudPatients(cloudPatients) {
       lastVisit: patient.last_visit ?? patient.lastVisit ?? '',
       ownerId: patient.owner_id ?? patient.ownerId,
       createdBy: patient.created_by ?? patient.createdBy,
+      weight: patient.weight ?? '',
+      ownerName: patient.owner_name ?? patient.ownerName ?? '',
+      ownerPhone: patient.owner_phone ?? patient.ownerPhone ?? '',
+      isArchived: Boolean(patient.is_archived ?? patient.isArchived ?? false),
       createdAt: patient.created_at ?? patient.createdAt,
       updatedAt: patient.updated_at ?? patient.updatedAt,
       syncStatus: 'synced',
@@ -1089,4 +1145,49 @@ export async function addConsultationSymptoms(consultationId, symptomIds = [], c
 export async function getConsultationSymptoms(consultationId) {
   const db = await initDatabase()
   return db.getAllFromIndex('consultationSymptoms', 'consultationId', consultationId)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit Logs & System Activity Recording
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function logAuditEvent({ action, user, targetEntity = '', targetId = '', details = '' }) {
+  try {
+    const db = await initDatabase()
+    const now = new Date().toISOString()
+    const logId = `LOG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const entry = {
+      id: logId,
+      action: action || 'SYSTEM_EVENT',
+      userId: user?.id || user?.userId || 'SYSTEM',
+      userName: user?.name || user?.userName || user?.email || 'System User',
+      userRole: user?.role || user?.userRole || 'Staff',
+      targetEntity: targetEntity || '',
+      targetId: targetId || '',
+      details: typeof details === 'object' ? JSON.stringify(details) : String(details || ''),
+      createdAt: now,
+      syncStatus: 'pending',
+      version: 1,
+    }
+
+    const tx = db.transaction(['auditLogs', 'syncQueue'], 'readwrite')
+    await tx.objectStore('auditLogs').put(entry)
+    await tx.objectStore('syncQueue').put(createSyncQueueItem('auditLogs', logId, 'CREATE', entry, now, 0))
+    await tx.done
+    notifyQueueUpdated()
+    return entry
+  } catch (err) {
+    console.warn('[VetLink Audit] Could not record audit log:', err)
+  }
+}
+
+export async function getAuditLogs() {
+  try {
+    const db = await initDatabase()
+    const logs = await db.getAll('auditLogs')
+    return (logs || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  } catch (err) {
+    console.warn('[VetLink Audit] Could not fetch audit logs:', err)
+    return []
+  }
 }

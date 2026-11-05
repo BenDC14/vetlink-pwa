@@ -4,6 +4,9 @@ import {
   mergeCloudPatients,
   updatePatient,
   deletePatient,
+  archivePatient,
+  restorePatient,
+  logAuditEvent,
   addConsultation,
   getConsultationsByPatient,
   updateConsultation,
@@ -76,6 +79,13 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [recheckFileToCrop, setRecheckFileToCrop]       = useState(null)
   const recheckInputRef                                 = useRef(null)
 
+  // Soft-Delete / Recycle Bin & Role-Based Recheck State
+  const [viewTab, setViewTab]                           = useState('active') // 'active' | 'archived'
+  const [staffRecheckWeight, setStaffRecheckWeight]     = useState('')
+  const [staffRecheckVitals, setStaffRecheckVitals]     = useState('')
+  const [vetAdjustedRx, setVetAdjustedRx]               = useState('')
+  const [recheckTab, setRecheckTab]                     = useState('evaluate') // 'evaluate' | 'history'
+
   const refreshPatients = async () => {
     const savedPatients = await getPatients()
     setPatients(savedPatients)
@@ -126,14 +136,22 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     }
   }, [apiBaseUrl, authToken, isOffline])
 
+  const activeCount = patients.filter((p) => !p.isArchived && p.status !== 'Archived').length
+  const archivedCount = patients.filter((p) => p.isArchived || p.status === 'Archived').length
+
   const visiblePatients = patients.filter((patient) => {
+    const isPatientArchived = Boolean(patient.isArchived || patient.status === 'Archived')
+    if (viewTab === 'active' && isPatientArchived) return false
+    if (viewTab === 'archived' && !isPatientArchived) return false
+
     const query = searchTerm.toLowerCase().trim()
     const matchesSearch =
       !query ||
       String(patient.id || '').toLowerCase().includes(query) ||
       String(patient.name || '').toLowerCase().includes(query) ||
       String(patient.species || '').toLowerCase().includes(query) ||
-      String(patient.areaOfConcern || '').toLowerCase().includes(query)
+      String(patient.areaOfConcern || '').toLowerCase().includes(query) ||
+      String(patient.ownerName || '').toLowerCase().includes(query)
 
     const pSpecies = String(patient.species || '').toLowerCase()
     const matchesSpecies =
@@ -182,6 +200,13 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         ownerPhone: (formData.ownerPhone || '').trim(),
         areaOfConcern: (formData.areaOfConcern || '').trim(),
       })
+      await logAuditEvent({
+        action: 'PATIENT_EDITED',
+        user: currentUser,
+        targetEntity: 'patients',
+        targetId: editingPatient.id,
+        details: `Updated demographics for patient ${formData.name.trim()} (${editingPatient.id}).`,
+      })
       await refreshPatients()
       setEditingPatient(null)
       setSuccessMessage(`${formData.name.trim()} was updated and queued for sync.`)
@@ -193,16 +218,48 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     }
   }
 
-  const handleDeletePatient = async (patient) => {
-    if (!window.confirm(`Are you sure you want to delete patient "${patient.name}" (${patient.id})? This will permanently remove the record and its unsubmitted scans.`)) {
+  const handleArchivePatient = async (patient) => {
+    if (!window.confirm(`Move patient "${patient.name}" (${patient.id}) to Recycle Bin / Archive? You can restore this record at any time.`)) {
+      return
+    }
+    try {
+      await archivePatient(patient.id, currentUser)
+      await refreshPatients()
+      setSuccessMessage(`Patient ${patient.id} (${patient.name}) was moved to Recycle Bin.`)
+    } catch (err) {
+      console.error('Failed to archive patient:', err)
+      alert('Could not archive patient: ' + (err.message || 'Unknown error'))
+    }
+  }
+
+  const handleRestorePatient = async (patient) => {
+    try {
+      await restorePatient(patient.id, currentUser)
+      await refreshPatients()
+      setSuccessMessage(`Patient ${patient.id} (${patient.name}) was restored to Active Patients.`)
+    } catch (err) {
+      console.error('Failed to restore patient:', err)
+      alert('Could not restore patient: ' + (err.message || 'Unknown error'))
+    }
+  }
+
+  const handlePermanentDeletePatient = async (patient) => {
+    if (!window.confirm(`PERMANENT DELETION: Are you sure you want to permanently erase patient "${patient.name}" (${patient.id}) from the database? This cannot be undone.`)) {
       return
     }
     try {
       await deletePatient(patient.id)
-      setPatients((prev) => prev.filter((p) => p.id !== patient.id))
-      setSuccessMessage(`Patient ${patient.id} (${patient.name}) was deleted.`)
+      await logAuditEvent({
+        action: 'PATIENT_PERMANENTLY_DELETED',
+        user: currentUser,
+        targetEntity: 'patients',
+        targetId: patient.id,
+        details: `Permanently removed record for ${patient.name} (${patient.id}).`,
+      })
+      await refreshPatients()
+      setSuccessMessage(`Patient ${patient.id} was permanently erased.`)
     } catch (err) {
-      console.error('Failed to delete patient:', err)
+      console.error('Failed to permanently delete patient:', err)
       alert('Could not delete patient record: ' + (err.message || 'Unknown error'))
     }
   }
@@ -327,6 +384,10 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     setRecheckError('')
     setRecheckProgress('improving')
     setRecheckNotes('')
+    setStaffRecheckWeight(patient.weight || '')
+    setStaffRecheckVitals('')
+    setVetAdjustedRx('')
+    setRecheckTab(currentUser?.role === 'Clinic Staff' ? 'evaluate' : 'history')
     setRecheckFile(null)
     setRecheckPreview(null)
     setPastConsult(null)
@@ -357,6 +418,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         setPastVisits(loadedVisits)
         const latest = consults[consults.length - 1]
         setPastConsult(latest)
+        setVetAdjustedRx(latest?.treatmentPlan || '')
         if (loadedVisits.length > 0 && loadedVisits[loadedVisits.length - 1].screening) {
           setPastScreening(loadedVisits[loadedVisits.length - 1].screening)
         }
@@ -405,8 +467,10 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     setIsSavingRecheck(true)
     setRecheckError('')
 
-    // Strict Clinical Validation: Follow-up lesion image is strictly mandatory
-    if (!recheckFile) {
+    const isStaff = currentUser?.role === 'Clinic Staff'
+
+    // Strict Clinical Validation: Follow-up lesion image is required for accurate visual evaluation
+    if (!recheckFile && !isStaff) {
       setRecheckError('Required: Please capture or upload a follow-up lesion image for recheck evaluation.')
       setIsSavingRecheck(false)
       return
@@ -431,41 +495,91 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         new_complication: 'Suspected New Complication',
       }
 
-      // 1. Add follow-up consultation record
-      const newConsult = await addConsultation({
-        patientId: recheckPatient.id,
-        clinicalNotes: `[Recheck Evaluation: ${progressLabels[recheckProgress] || recheckProgress}] ${recheckNotes.trim()}`,
-        diagnosis: recheckProgress === 'resolved'
-          ? 'Healthy (Resolved)'
-          : `Follow-up: ${pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous Lesion'} (${progressLabels[recheckProgress]})`,
-        treatmentPlan: recheckProgress === 'resolved'
-          ? 'Clinical discharge. Lesion resolved; resume routine preventive care.'
-          : `Continued regimen: ${pastConsult?.treatmentPlan || 'Maintain ongoing therapy; recheck in 14 days.'}`,
-      })
-
-      // 2. Add screening result if recheck image provided
-      if (b64Img) {
-        await addScreeningResult({
-          consultationId: newConsult.id,
-          imageData: b64Img,
-          aiLabel: recheckProgress === 'resolved' ? 'Healthy' : (pastConsult?.diagnosis || 'Lesion'),
-          aiDisplayLabel: recheckProgress === 'resolved' ? 'Healthy (Resolved)' : `Recheck: ${progressLabels[recheckProgress]}`,
-          aiConfidence: 0.95,
-          aiPercent: 'Clinical Review',
-          species: recheckPatient.species,
-          reviewStatus: 'approved',
+      if (isStaff) {
+        // ── STAFF INTAKE FLOW ──
+        const staffNotes = `[Staff Intake & Physical Vitals] ${staffRecheckWeight ? `Weight: ${staffRecheckWeight} kg. ` : ''}${staffRecheckVitals.trim() ? `Observations: ${staffRecheckVitals.trim()}` : ''}`
+        const newConsult = await addConsultation({
+          patientId: recheckPatient.id,
+          handledByUserId: currentUser?.id || 'STAFF',
+          clinicalNotes: staffNotes,
+          diagnosis: `Intake Check: ${pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous Check'}`,
+          treatmentPlan: pastConsult?.treatmentPlan || 'Awaiting attending veterinarian review.',
         })
+
+        if (b64Img) {
+          await addScreeningResult({
+            consultationId: newConsult.id,
+            imageData: b64Img,
+            aiLabel: pastConsult?.diagnosis || 'Follow-up Lesion',
+            aiDisplayLabel: `Staff Triage Photo: ${pastConsult?.diagnosis || 'Lesion'}`,
+            aiConfidence: 0.90,
+            aiPercent: 'Staff Intake',
+            species: recheckPatient.species,
+            reviewStatus: 'pending',
+          })
+        }
+
+        await updatePatient(recheckPatient.id, {
+          weight: staffRecheckWeight ? String(staffRecheckWeight).trim() : recheckPatient.weight,
+          lastVisit: today,
+          status: 'Needs Vet Review',
+        })
+
+        await logAuditEvent({
+          action: 'STAFF_TRIAGE_INTAKE',
+          user: currentUser,
+          targetEntity: 'patients',
+          targetId: recheckPatient.id,
+          details: `Staff recorded triage intake for ${recheckPatient.name}. Weight: ${staffRecheckWeight || 'N/A'} kg. Status set to Needs Vet Review.`,
+        })
+
+        await refreshPatients()
+        setSuccessMessage(`Staff follow-up triage and photo intake successfully saved for ${recheckPatient.name}. Ready for veterinarian review.`)
+        setRecheckPatient(null)
+      } else {
+        // ── VETERINARIAN / ADMIN CLINICAL RECHECK FLOW ──
+        const newConsult = await addConsultation({
+          patientId: recheckPatient.id,
+          handledByUserId: currentUser?.id || 'VET',
+          clinicalNotes: `[Doctor Follow-Up: ${progressLabels[recheckProgress] || recheckProgress}] ${recheckNotes.trim()}`,
+          diagnosis: recheckProgress === 'resolved'
+            ? 'Healthy (Resolved)'
+            : `Follow-up: ${pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous Lesion'} (${progressLabels[recheckProgress]})`,
+          treatmentPlan: recheckProgress === 'resolved'
+            ? 'Clinical discharge. Lesion resolved; resume routine preventive care.'
+            : (vetAdjustedRx.trim() || pastConsult?.treatmentPlan || 'Maintain ongoing therapy; recheck in 14 days.'),
+        })
+
+        if (b64Img) {
+          await addScreeningResult({
+            consultationId: newConsult.id,
+            imageData: b64Img,
+            aiLabel: recheckProgress === 'resolved' ? 'Healthy' : (pastConsult?.diagnosis || 'Lesion'),
+            aiDisplayLabel: recheckProgress === 'resolved' ? 'Healthy (Resolved)' : `Recheck: ${progressLabels[recheckProgress]}`,
+            aiConfidence: 0.95,
+            aiPercent: 'Clinical Review',
+            species: recheckPatient.species,
+            reviewStatus: 'approved',
+          })
+        }
+
+        await updatePatient(recheckPatient.id, {
+          lastVisit: today,
+          status: recheckProgress === 'resolved' ? 'Discharged' : 'Active',
+        })
+
+        await logAuditEvent({
+          action: 'VET_RECHECK_SAVED',
+          user: currentUser,
+          targetEntity: 'patients',
+          targetId: recheckPatient.id,
+          details: `Veterinarian recorded follow-up recheck for ${recheckPatient.name}. Evaluation: ${progressLabels[recheckProgress]}.`,
+        })
+
+        await refreshPatients()
+        setSuccessMessage(`Follow-up recheck consultation successfully saved for ${recheckPatient.name}.`)
+        setRecheckPatient(null)
       }
-
-      // 3. Update patient's lastVisit and status
-      await updatePatient(recheckPatient.id, {
-        lastVisit: today,
-        status: recheckProgress === 'resolved' ? 'Discharged' : 'Active',
-      })
-
-      await refreshPatients()
-      setSuccessMessage(`Follow-up recheck consultation successfully saved for ${recheckPatient.name}.`)
-      setRecheckPatient(null)
     } catch (err) {
       console.error('Failed to save recheck:', err)
       setRecheckError(err.message || 'Could not save recheck consultation.')
@@ -476,6 +590,32 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
   return (
     <section className="patients-card">
+      {/* Top Primary Filter Tabs: Active Patients vs Recycle Bin */}
+      <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginBottom: 14, flexWrap: 'wrap' }}>
+        <button
+          type="button"
+          className={`filter-pill ${viewTab === 'active' ? 'active' : ''}`}
+          onClick={() => setViewTab('active')}
+          style={{ fontWeight: 700, padding: '7px 16px' }}
+        >
+          Active Patients ({activeCount})
+        </button>
+        <button
+          type="button"
+          className={`filter-pill ${viewTab === 'archived' ? 'active' : ''}`}
+          onClick={() => setViewTab('archived')}
+          style={{
+            fontWeight: 700,
+            padding: '7px 16px',
+            background: viewTab === 'archived' ? '#fef3c7' : undefined,
+            color: viewTab === 'archived' ? '#92400e' : undefined,
+            borderColor: viewTab === 'archived' ? '#fde68a' : undefined
+          }}
+        >
+          Recycle Bin / Archived ({archivedCount})
+        </button>
+      </div>
+
       <div className="patients-toolbar-wrap">
         <div className="patients-filter-pills" role="tablist" aria-label="Filter patients by species">
           {['All', 'Canine', 'Feline', 'Avian', 'Lagomorph'].map((sp) => (
@@ -612,41 +752,67 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 <td>{renderStatusBadge(patient.status)}</td>
                 <td>
                   <div className="table-actions-row">
-                    {currentUser?.role !== 'Clinic Staff' && (
-                      <button
-                        className="primary-btn table-action-btn view-case-btn"
-                        type="button"
-                        onClick={() => openClinicalReviewModal(patient)}
-                        title="Review Clinical Case"
-                      >
-                        View Case
-                      </button>
+                    {viewTab === 'archived' ? (
+                      <>
+                        <button
+                          className="secondary-btn table-action-btn"
+                          type="button"
+                          onClick={() => handleRestorePatient(patient)}
+                          title="Restore Patient Record"
+                        >
+                          Restore
+                        </button>
+                        {currentUser?.role === 'Clinic Admin' && (
+                          <button
+                            className="small-outline table-action-btn delete-pill-btn"
+                            type="button"
+                            onClick={() => handlePermanentDeletePatient(patient)}
+                            title="Permanently Erase Patient Record"
+                            style={{ color: '#ef4444', borderColor: '#fca5a5' }}
+                          >
+                            Perm. Delete
+                          </button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {currentUser?.role !== 'Clinic Staff' && (
+                          <button
+                            className="primary-btn table-action-btn view-case-btn"
+                            type="button"
+                            onClick={() => openClinicalReviewModal(patient)}
+                            title="Review Clinical Case"
+                          >
+                            View Case
+                          </button>
+                        )}
+                        <button
+                          className="secondary-btn table-action-btn recheck-pill-btn"
+                          type="button"
+                          onClick={() => openRecheckModal(patient)}
+                          title="Follow-up Recheck"
+                        >
+                          Recheck
+                        </button>
+                        <button
+                          className="small-outline table-action-btn edit-pill-btn"
+                          type="button"
+                          onClick={() => openEditPatient(patient)}
+                          title="Edit Patient Details"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          className="small-outline table-action-btn delete-pill-btn"
+                          type="button"
+                          onClick={() => handleArchivePatient(patient)}
+                          title="Move Patient Record to Recycle Bin"
+                          style={{ color: '#f59e0b', borderColor: '#fcd34d' }}
+                        >
+                          Archive
+                        </button>
+                      </>
                     )}
-                    <button
-                      className="secondary-btn table-action-btn recheck-pill-btn"
-                      type="button"
-                      onClick={() => openRecheckModal(patient)}
-                      title="Follow-up Recheck"
-                    >
-                      Recheck
-                    </button>
-                    <button
-                      className="small-outline table-action-btn edit-pill-btn"
-                      type="button"
-                      onClick={() => openEditPatient(patient)}
-                      title="Edit Patient Details"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      className="small-outline table-action-btn delete-pill-btn"
-                      type="button"
-                      onClick={() => handleDeletePatient(patient)}
-                      title="Delete Patient Record"
-                      style={{ color: '#ef4444', borderColor: '#fca5a5' }}
-                    >
-                      Delete
-                    </button>
                   </div>
                 </td>
               </tr>
@@ -1024,67 +1190,184 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
       {recheckPatient && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="recheck-patient-title">
-          <div className="modal-dialog" style={{ maxWidth: 720, maxHeight: '90vh', overflowY: 'auto' }}>
+          <div className="modal-dialog" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto' }}>
             <header className="modal-header">
               <h3 id="recheck-patient-title">
-                Follow-Up Recheck: {recheckPatient.name} ({recheckPatient.species})
+                {currentUser?.role === 'Clinic Staff'
+                  ? `Staff Patient Intake & Triage: ${recheckPatient.name} (${recheckPatient.id})`
+                  : `Clinical Follow-Up & History: ${recheckPatient.name} (${recheckPatient.id})`}
               </h3>
               <button className="modal-close-btn" type="button" onClick={() => setRecheckPatient(null)} aria-label="Close dialog">✕</button>
             </header>
 
-            <form className="modal-form" onSubmit={handleSaveRecheck}>
-              {recheckError && <div className="alert-banner error" role="alert">{recheckError}</div>}
+            {/* Demographics Summary Bar */}
+            <div style={{
+              display: 'flex',
+              gap: 12,
+              padding: '8px 12px',
+              background: '#f1f5f9',
+              borderRadius: 8,
+              fontSize: '0.82rem',
+              color: '#334155',
+              marginBottom: 12,
+              flexWrap: 'wrap'
+            }}>
+              <span><strong>Species:</strong> {recheckPatient.species} ({recheckPatient.breed || 'Mixed'})</span>
+              <span><strong>Age:</strong> {recheckPatient.age || '—'}</span>
+              <span><strong>Last Recorded Weight:</strong> {recheckPatient.weight ? `${recheckPatient.weight} kg` : 'Not recorded'}</span>
+              {recheckPatient.ownerName && (
+                <span><strong>Owner:</strong> {recheckPatient.ownerName} {recheckPatient.ownerPhone ? `(${recheckPatient.ownerPhone})` : ''}</span>
+              )}
+            </div>
 
-              {/* Chronological Visit Healing Progression */}
-              <div style={{
-                display: 'grid',
-                gridTemplateColumns: pastVisits.length > 1 ? 'repeat(auto-fit, minmax(180px, 1fr))' : '1fr 1fr',
-                gap: 14,
-                marginBottom: 14,
-              }}>
-                {/* All Past Visits Sequentially */}
-                {pastVisits.length > 0 ? (
+            {/* If Veterinarian / Admin: Show Sub-Tabs for History Timeline vs Clinical Evaluation */}
+            {currentUser?.role !== 'Clinic Staff' && (
+              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
+                <button
+                  type="button"
+                  className={`filter-pill ${recheckTab === 'history' ? 'active' : ''}`}
+                  onClick={() => setRecheckTab('history')}
+                  style={{ fontWeight: 600, fontSize: '0.82rem' }}
+                >
+                  Medical Record History ({pastVisits.length} visits)
+                </button>
+                <button
+                  type="button"
+                  className={`filter-pill ${recheckTab === 'evaluate' ? 'active' : ''}`}
+                  onClick={() => setRecheckTab('evaluate')}
+                  style={{ fontWeight: 600, fontSize: '0.82rem' }}
+                >
+                  Evaluate Today's Recheck & Prescription
+                </button>
+              </div>
+            )}
+
+            {/* Tab 1: Comprehensive Medical Record History Timeline (Veterinarian View) */}
+            {currentUser?.role !== 'Clinic Staff' && recheckTab === 'history' && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 16 }}>
+                {pastVisits.length === 0 ? (
+                  <div style={{ padding: 24, textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: 8 }}>
+                    No previous consultation records found for this patient.
+                  </div>
+                ) : (
                   pastVisits.map((v) => (
                     <div
                       key={v.visitNum}
                       style={{
                         border: '1px solid #cbd5e1',
-                        borderRadius: 12,
-                        padding: 10,
-                        background: '#f8fafc',
-                        display: 'flex',
-                        flexDirection: 'column',
+                        borderRadius: 10,
+                        padding: 14,
+                        background: '#ffffff',
+                        boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
                       }}
                     >
-                      <div style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
-                        {v.visitNum === 1 ? '1. Baseline (Visit 1)' : `${v.visitNum}. Prior Visit (${v.visitNum})`}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, borderBottom: '1px solid #e2e8f0', paddingBottom: 6 }}>
+                        <span style={{ fontWeight: 800, color: '#0f766e', fontSize: '0.88rem' }}>
+                          Visit #{v.visitNum} &bull; {v.consultation?.createdAt?.slice(0, 10) || 'Recorded Visit'}
+                        </span>
+                        <span style={{ fontSize: '0.78rem', color: '#64748b', background: '#f1f5f9', padding: '2px 8px', borderRadius: 4 }}>
+                          Attending Doctor / Staff: <strong>{v.consultation?.handledByUserId || 'Clinic Staff'}</strong>
+                        </span>
                       </div>
-                      {v.screening?.imageData ? (
-                        <img
-                          src={v.screening.imageData}
-                          alt={`Visit ${v.visitNum} lesion`}
-                          style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1' }}
-                        />
-                      ) : (
-                        <div style={{ width: '100%', height: 140, background: '#e2e8f0', borderRadius: 8, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.78rem' }}>
-                          No photo recorded
+
+                      <div style={{ display: 'grid', gridTemplateColumns: v.screening?.imageData ? '120px 1fr' : '1fr', gap: 12 }}>
+                        {v.screening?.imageData && (
+                          <div>
+                            <img
+                              src={v.screening.imageData}
+                              alt={`Visit ${v.visitNum} lesion`}
+                              style={{ width: 120, height: 110, objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                            />
+                          </div>
+                        )}
+                        <div style={{ fontSize: '0.84rem', lineHeight: 1.45, color: '#1e293b' }}>
+                          <div style={{ marginBottom: 4 }}>
+                            <strong>Diagnosis:</strong> <span style={{ color: '#0369a1', fontWeight: 600 }}>{v.consultation?.diagnosis || 'Cutaneous Check'}</span>
+                            {v.consultation?.secondaryDiagnosis && (
+                              <span style={{ color: '#854d0e', marginLeft: 6 }}>({v.consultation.secondaryDiagnosis})</span>
+                            )}
+                          </div>
+                          {v.consultation?.clinicalNotes && (
+                            <div style={{ marginBottom: 4 }}>
+                              <strong>Clinical Notes:</strong> {v.consultation.clinicalNotes}
+                            </div>
+                          )}
+                          {v.consultation?.treatmentPlan && (
+                            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '6px 10px', borderRadius: 6, marginTop: 4, color: '#166534', fontSize: '0.8rem' }}>
+                              <strong>Prescription / Regimen:</strong> {v.consultation.treatmentPlan}
+                            </div>
+                          )}
                         </div>
-                      )}
-                      <div style={{ marginTop: 8, fontSize: '0.76rem', color: '#334155', lineHeight: 1.35 }}>
-                        <strong>Diagnosis:</strong> {v.consultation?.diagnosis || 'Cutaneous check'}<br />
-                        <strong>Date:</strong> {v.consultation?.createdAt?.slice(0, 10) || 'Recorded Visit'}
                       </div>
                     </div>
                   ))
-                ) : (
+                )}
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={() => setRecheckTab('evaluate')}
+                  style={{ alignSelf: 'flex-end', padding: '8px 18px', fontSize: '0.86rem' }}
+                >
+                  Proceed to Recheck Evaluation &rarr;
+                </button>
+              </div>
+            )}
+
+            {/* Tab 2: Recheck Form (Staff Intake OR Veterinarian Evaluation) */}
+            {(currentUser?.role === 'Clinic Staff' || recheckTab === 'evaluate') && (
+              <form className="modal-form" onSubmit={handleSaveRecheck}>
+                {recheckError && <div className="alert-banner error" role="alert">{recheckError}</div>}
+
+                {/* Staff-Specific Triage Section */}
+                {currentUser?.role === 'Clinic Staff' && (
+                  <div style={{ background: '#eff6ff', border: '1px solid #bfdbfe', padding: 12, borderRadius: 8, marginBottom: 14 }}>
+                    <div style={{ fontWeight: 700, color: '#1e40af', fontSize: '0.88rem', marginBottom: 6 }}>
+                      Clinic Staff Triage Intake
+                    </div>
+                    <p style={{ margin: '0 0 10px', fontSize: '0.8rem', color: '#3b82f6', lineHeight: 1.4 }}>
+                      Record the patient's current physical weight and triage observations. Certified prescription changes and clinical discharge are legally reserved for the veterinarian.
+                    </p>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 10 }}>
+                      <label>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1e293b' }}>Current Weight (kg)</span>
+                        <input
+                          type="text"
+                          value={staffRecheckWeight}
+                          onChange={(e) => setStaffRecheckWeight(e.target.value)}
+                          placeholder="e.g. 5.8"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                        />
+                      </label>
+                      <label>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#1e293b' }}>Triage Physical Observations</span>
+                        <input
+                          type="text"
+                          value={staffRecheckVitals}
+                          onChange={(e) => setStaffRecheckVitals(e.target.value)}
+                          placeholder="e.g. Less itching, eating normally, active demeanor"
+                          style={{ width: '100%', padding: '6px 8px', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                        />
+                      </label>
+                    </div>
+                  </div>
+                )}
+
+                {/* Chronological Photo Comparison */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: pastVisits.length > 1 ? 'repeat(auto-fit, minmax(180px, 1fr))' : '1fr 1fr',
+                  gap: 14,
+                  marginBottom: 14,
+                }}>
+                  {/* Prior Visit Photo */}
                   <div style={{ border: '1px solid #cbd5e1', borderRadius: 12, padding: 10, background: '#f8fafc' }}>
                     <div style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#475569', marginBottom: 6, textTransform: 'uppercase' }}>
-                      1. Baseline (Visit 1)
+                      Prior Visit Lesion
                     </div>
                     {pastScreening?.imageData ? (
                       <img
                         src={pastScreening.imageData}
-                        alt="Baseline lesion"
+                        alt="Prior visit lesion"
                         style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1' }}
                       />
                     ) : (
@@ -1097,242 +1380,201 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       <strong>Date:</strong> {pastConsult?.createdAt?.slice(0, 10) || recheckPatient.lastVisit || 'Initial Visit'}
                     </div>
                   </div>
-                )}
 
-                {/* Recheck (Today's Photo - Visit N+1) */}
-                <div style={{ border: '1px solid #86efac', borderRadius: 12, padding: 10, background: '#f0fdf4', display: 'flex', flexDirection: 'column' }}>
-                  <div style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#166534', marginBottom: 6, textTransform: 'uppercase' }}>
-                    {pastVisits.length + 1}. Today's Photo (Visit {pastVisits.length + 1})
-                  </div>
-                  {recheckPreview ? (
-                    <div>
-                      <img
-                        src={recheckPreview}
-                        alt="Today's recheck lesion"
-                        style={{ width: '100%', height: 160, objectFit: 'cover', borderRadius: 8, border: '1px solid #86efac' }}
-                      />
-                      <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-                        <button
-                          type="button"
-                          className="secondary-btn"
-                          style={{
-                            flex: 1,
-                            padding: '6px 8px',
-                            fontSize: '0.75rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                          }}
-                          onClick={() => setIsRecheckCameraOpen(true)}
-                        >
-                          Retake (Camera)
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary-btn"
-                          style={{
-                            flex: 1,
-                            padding: '6px 8px',
-                            fontSize: '0.75rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                          }}
-                          onClick={() => recheckInputRef.current?.click()}
-                        >
-                          Upload File
-                        </button>
-                      </div>
-                      {recheckFile && (
-                        <button
-                          type="button"
-                          className="secondary-btn"
-                          style={{
-                            width: '100%',
-                            marginTop: 6,
-                            padding: '6px 8px',
-                            fontSize: '0.74rem',
-                            background: '#e0f2fe',
-                            color: '#0369a1',
-                            border: '1px solid #7dd3fc',
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            fontWeight: 600,
-                          }}
-                          onClick={() => {
-                            setRecheckFileToCrop(recheckFile)
-                            setRecheckCropOpen(true)
-                          }}
-                        >
-                          Adjust Crop / Zoom
-                        </button>
-                      )}
+                  {/* Today's Photo */}
+                  <div style={{ border: '1px solid #86efac', borderRadius: 12, padding: 10, background: '#f0fdf4', display: 'flex', flexDirection: 'column' }}>
+                    <div style={{ fontWeight: 'bold', fontSize: '0.8rem', color: '#166534', marginBottom: 6, textTransform: 'uppercase' }}>
+                      Today's Follow-up Photo
                     </div>
-                  ) : (
-                    <div
-                      style={{
-                        width: '100%',
-                        height: 160,
-                        border: '2px dashed #86efac',
-                        borderRadius: 8,
-                        display: 'flex',
-                        flexDirection: 'column',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        gap: 8,
-                        padding: 10,
-                        background: 'white',
-                        boxSizing: 'border-box',
-                      }}
-                    >
-                      <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                        <circle cx="12" cy="13" r="4" />
-                      </svg>
-                      <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#166534', textAlign: 'center' }}>
-                        Snap or Upload Today's Photo
+                    {recheckPreview ? (
+                      <div>
+                        <img
+                          src={recheckPreview}
+                          alt="Today's recheck lesion"
+                          style={{ width: '100%', height: 150, objectFit: 'cover', borderRadius: 8, border: '1px solid #86efac' }}
+                        />
+                        <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            style={{ flex: 1, padding: '5px 8px', fontSize: '0.74rem' }}
+                            onClick={() => setIsRecheckCameraOpen(true)}
+                          >
+                            Retake Camera
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            style={{ flex: 1, padding: '5px 8px', fontSize: '0.74rem' }}
+                            onClick={() => recheckInputRef.current?.click()}
+                          >
+                            Upload File
+                          </button>
+                        </div>
+                      </div>
+                    ) : (
+                      <div
+                        style={{
+                          width: '100%',
+                          height: 150,
+                          border: '2px dashed #86efac',
+                          borderRadius: 8,
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: 8,
+                          padding: 10,
+                          background: 'white',
+                          boxSizing: 'border-box',
+                        }}
+                      >
+                        <span style={{ fontSize: '0.8rem', fontWeight: 600, color: '#166534', textAlign: 'center' }}>
+                          Capture or Upload Today's Photo
+                        </span>
+                        <div style={{ display: 'flex', gap: 6, width: '100%' }}>
+                          <button
+                            type="button"
+                            className="action-btn blue"
+                            style={{ flex: 1, padding: '6px 8px', fontSize: '0.75rem', background: '#16a34a' }}
+                            onClick={() => setIsRecheckCameraOpen(true)}
+                          >
+                            Live Camera
+                          </button>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            style={{ flex: 1, padding: '6px 8px', fontSize: '0.75rem' }}
+                            onClick={() => recheckInputRef.current?.click()}
+                          >
+                            Upload File
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                    <input
+                      type="file"
+                      ref={recheckInputRef}
+                      accept="image/*"
+                      capture="environment"
+                      style={{ display: 'none' }}
+                      onChange={handleRecheckFileChange}
+                    />
+                    <div style={{ marginTop: 8, fontSize: '0.8rem', color: '#166534' }}>
+                      Recheck Date: <strong>{new Date().toISOString().slice(0, 10)}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Veterinarian Healing Stage & Rx Section (Hidden for Staff) */}
+                {currentUser?.role !== 'Clinic Staff' && (
+                  <>
+                    <div style={{ marginBottom: 14 }}>
+                      <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#1e293b', display: 'block', marginBottom: 6 }}>
+                        Attending Veterinarian Healing Stage Evaluation:
                       </span>
-                      <div style={{ display: 'flex', gap: 6, width: '100%' }}>
-                        <button
-                          type="button"
-                          className="action-btn blue"
-                          style={{
-                            flex: 1,
-                            padding: '6px 8px',
-                            fontSize: '0.75rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                            background: '#16a34a',
-                          }}
-                          onClick={() => setIsRecheckCameraOpen(true)}
-                        >
-                          Live Camera
-                        </button>
-                        <button
-                          type="button"
-                          className="secondary-btn"
-                          style={{
-                            flex: 1,
-                            padding: '6px 8px',
-                            fontSize: '0.75rem',
-                            display: 'flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            gap: 4,
-                            background: '#f8fafc',
-                            border: '1px solid #cbd5e1',
-                          }}
-                          onClick={() => recheckInputRef.current?.click()}
-                        >
-                          Upload File
-                        </button>
+                      <div style={{ display: 'grid', gap: 6, fontSize: '0.85rem' }}>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'resolved' ? '#dcfce7' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                          <input
+                            type="radio"
+                            name="progress"
+                            value="resolved"
+                            checked={recheckProgress === 'resolved'}
+                            onChange={(e) => setRecheckProgress(e.target.value)}
+                          />
+                          <span><strong>Resolved / Fully Healed</strong> — Lesion cleared, fur regrown, discharge patient</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'improving' ? '#fef9c3' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                          <input
+                            type="radio"
+                            name="progress"
+                            value="improving"
+                            checked={recheckProgress === 'improving'}
+                            onChange={(e) => setRecheckProgress(e.target.value)}
+                          />
+                          <span><strong>Responding / Improving</strong> — Lesion significantly reduced; continue ongoing therapy</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'unchanged' ? '#fee2e2' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                          <input
+                            type="radio"
+                            name="progress"
+                            value="unchanged"
+                            checked={recheckProgress === 'unchanged'}
+                            onChange={(e) => setRecheckProgress(e.target.value)}
+                          />
+                          <span><strong>Refractory / Unchanged</strong> — No clinical response; adjust prescription/protocol</span>
+                        </label>
+                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'new_complication' ? '#f3e8ff' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                          <input
+                            type="radio"
+                            name="progress"
+                            value="new_complication"
+                            checked={recheckProgress === 'new_complication'}
+                            onChange={(e) => setRecheckProgress(e.target.value)}
+                          />
+                          <span><strong>Suspected New Complication</strong> — Secondary infection or new separate lesion detected</span>
+                        </label>
                       </div>
                     </div>
-                  )}
-                  <input
-                    type="file"
-                    ref={recheckInputRef}
-                    accept="image/*"
-                    capture="environment"
-                    style={{ display: 'none' }}
-                    onChange={handleRecheckFileChange}
-                  />
-                  <div style={{ marginTop: 8, fontSize: '0.82rem', color: '#166534' }}>
-                    Recheck Date: <strong>{new Date().toISOString().slice(0, 10)}</strong>
-                  </div>
-                </div>
-              </div>
 
-              {/* Clinical Progress Selector */}
-              <div style={{ marginBottom: 14 }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                  <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#1e293b' }}>
-                    Veterinarian Healing Stage Evaluation:
-                  </span>
-                  {currentUser?.role === 'Clinic Staff' && (
-                    <span style={{ fontSize: '0.72rem', background: '#fef3c7', color: '#92400e', padding: '2px 8px', borderRadius: 4, fontWeight: 700 }}>
-                      Restricted to Veterinarian
-                    </span>
-                  )}
-                </div>
+                    {/* Adjusted Treatment Plan / Prescription */}
+                    <label style={{ marginBottom: 10, display: 'block' }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Adjusted Prescription / Treatment Plan</span>
+                      <textarea
+                        value={vetAdjustedRx}
+                        onChange={(e) => setVetAdjustedRx(e.target.value)}
+                        rows={2}
+                        placeholder="e.g. Continue Cephalexin 500mg BID for 7 more days. Taper medicated bath to once weekly..."
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: '0.88rem', boxSizing: 'border-box' }}
+                      />
+                    </label>
 
-                {currentUser?.role === 'Clinic Staff' && (
-                  <div style={{ padding: '6px 10px', background: '#fffbeb', border: '1px solid #fde68a', borderRadius: 6, color: '#92400e', fontSize: '0.78rem', marginBottom: 8 }}>
-                    Staff Notice: Healing stage certification is legally restricted to the attending veterinarian. Clinic staff may record follow-up lesion photos and physical vitals.
-                  </div>
+                    {/* Clinical Notes */}
+                    <label style={{ marginBottom: 14, display: 'block' }}>
+                      <span style={{ fontWeight: 600, fontSize: '0.85rem' }}>Doctor's Progression Notes</span>
+                      <textarea
+                        value={recheckNotes}
+                        onChange={(e) => setRecheckNotes(e.target.value)}
+                        rows={2}
+                        placeholder="e.g. Day 14 Follow-up: Significant reduction in erythema. Crusts sloughing off..."
+                        style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: '0.88rem', boxSizing: 'border-box' }}
+                      />
+                    </label>
+                  </>
                 )}
 
-                <div style={{ display: 'grid', gap: 6, fontSize: '0.85rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'resolved' ? '#dcfce7' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
-                    <input
-                      type="radio"
-                      name="progress"
-                      value="resolved"
-                      checked={recheckProgress === 'resolved'}
-                      disabled={currentUser?.role === 'Clinic Staff'}
-                      onChange={(e) => setRecheckProgress(e.target.value)}
-                    />
-                    <span><strong>Resolved / Fully Healed</strong> — Lesion cleared, fur regrown, no active erythema</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'improving' ? '#fef9c3' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
-                    <input
-                      type="radio"
-                      name="progress"
-                      value="improving"
-                      checked={recheckProgress === 'improving'}
-                      disabled={currentUser?.role === 'Clinic Staff'}
-                      onChange={(e) => setRecheckProgress(e.target.value)}
-                    />
-                    <span><strong>Responding / Improving</strong> — Lesion reduced by ~50–80%, healthy scabbing present</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'unchanged' ? '#fee2e2' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
-                    <input
-                      type="radio"
-                      name="progress"
-                      value="unchanged"
-                      checked={recheckProgress === 'unchanged'}
-                      disabled={currentUser?.role === 'Clinic Staff'}
-                      onChange={(e) => setRecheckProgress(e.target.value)}
-                    />
-                    <span><strong>Refractory / Unchanged</strong> — No clinical response; alternative medication indicated</span>
-                  </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: currentUser?.role === 'Clinic Staff' ? 'not-allowed' : 'pointer', padding: '6px 10px', background: recheckProgress === 'new_complication' ? '#f3e8ff' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1', opacity: currentUser?.role === 'Clinic Staff' ? 0.75 : 1 }}>
-                    <input
-                      type="radio"
-                      name="progress"
-                      value="new_complication"
-                      checked={recheckProgress === 'new_complication'}
-                      disabled={currentUser?.role === 'Clinic Staff'}
-                      onChange={(e) => setRecheckProgress(e.target.value)}
-                    />
-                    <span><strong>Suspected New Complication</strong> — Secondary infection or new separate lesion detected</span>
-                  </label>
+                <div className="modal-actions" style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <button className="small-outline" type="button" onClick={() => setRecheckPatient(null)} disabled={isSavingRecheck}>Cancel</button>
+
+                  <div style={{ display: 'flex', gap: 8 }}>
+                    {currentUser?.role !== 'Clinic Staff' && onProceedToTreatment && (
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        onClick={() => {
+                          onProceedToTreatment({
+                            patient: recheckPatient,
+                            consultation: pastConsult,
+                            diagnosis: pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous Lesion',
+                            treatmentPlan: vetAdjustedRx || pastConsult?.treatmentPlan,
+                          })
+                          setRecheckPatient(null)
+                        }}
+                      >
+                        Open Full Rx Protocol Editor
+                      </button>
+                    )}
+                    <button className="primary-btn" type="submit" disabled={isSavingRecheck}>
+                      {isSavingRecheck
+                        ? 'Saving...'
+                        : currentUser?.role === 'Clinic Staff'
+                          ? 'Save Staff Triage & Upload Photo'
+                          : 'Save Follow-Up Consultation'}
+                    </button>
+                  </div>
                 </div>
-              </div>
-
-              {/* Clinical Notes */}
-              <label>
-                <span>Follow-Up Clinical Notes</span>
-                <textarea
-                  value={recheckNotes}
-                  onChange={(e) => setRecheckNotes(e.target.value)}
-                  rows={2}
-                  placeholder="e.g. Day 14 Recheck: Pruritus subsided, 70% hair regrowth on flank. Tapering shampoo to once weekly..."
-                  style={{ width: '100%', padding: '8px 10px', borderRadius: 8, border: '1px solid #cbd5e1', fontSize: '0.9rem', boxSizing: 'border-box' }}
-                />
-              </label>
-
-              <div className="modal-actions" style={{ marginTop: 14 }}>
-                <button className="small-outline" type="button" onClick={() => setRecheckPatient(null)} disabled={isSavingRecheck}>Cancel</button>
-                <button className="primary-btn" type="submit" disabled={isSavingRecheck}>
-                  {isSavingRecheck ? 'Saving...' : 'Save Follow-Up Recheck'}
-                </button>
-              </div>
-            </form>
+              </form>
+            )}
           </div>
         </div>
       )}
