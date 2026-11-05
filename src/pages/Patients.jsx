@@ -174,6 +174,8 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
       age: patient.age || '',
       ownerName: patient.ownerName || '',
       ownerPhone: patient.ownerPhone || '',
+      ownerAddress: patient.ownerAddress || '',
+      ownerEmail: patient.ownerEmail || '',
       areaOfConcern: patient.areaOfConcern || '',
       lastVisit: patient.lastVisit || '',
       status: patient.status || 'Active',
@@ -198,6 +200,8 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         age: (formData.age || '').trim(),
         ownerName: (formData.ownerName || '').trim(),
         ownerPhone: (formData.ownerPhone || '').trim(),
+        ownerAddress: (formData.ownerAddress || '').trim(),
+        ownerEmail: (formData.ownerEmail || '').trim(),
         areaOfConcern: (formData.areaOfConcern || '').trim(),
       })
       await logAuditEvent({
@@ -725,7 +729,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                     </div>
                     {patient.ownerName && (
                       <span style={{ fontSize: '0.78rem', color: '#0284c7', display: 'block', marginTop: '2px' }}>
-                        {patient.ownerName} {patient.ownerPhone ? `• ${patient.ownerPhone}` : ''}
+                        {patient.ownerName} {patient.ownerPhone ? `• ${patient.ownerPhone}` : ''} {patient.ownerAddress ? `• ${patient.ownerAddress}` : ''}
                       </span>
                     )}
                     {(patient.weight || patient.age) && (
@@ -896,6 +900,28 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   />
                 </label>
               </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
+                <label>
+                  <span>Owner Locality / Address</span>
+                  <input
+                    placeholder="e.g. Brgy. San Jose, Quezon City"
+                    value={formData.ownerAddress || ''}
+                    onChange={(event) => setFormData({ ...formData, ownerAddress: event.target.value })}
+                  />
+                  <small style={{ fontSize: '0.71rem', color: '#64748b', display: 'block', marginTop: 2 }}>
+                    City/Barangay level (RA 10173 compliant)
+                  </small>
+                </label>
+                <label>
+                  <span>Owner Email</span>
+                  <input
+                    type="email"
+                    placeholder="e.g. owner@example.com"
+                    value={formData.ownerEmail || ''}
+                    onChange={(event) => setFormData({ ...formData, ownerEmail: event.target.value })}
+                  />
+                </label>
+              </div>
               <label>
                 <span>Area of Concern</span>
                 <input value={formData.areaOfConcern} onChange={(event) => setFormData({ ...formData, areaOfConcern: event.target.value })} />
@@ -973,8 +999,20 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   )}
                   {reviewPatient.ownerName && (
                     <div>
-                      <strong>Owner:</strong> {reviewPatient.ownerName}
-                      {reviewPatient.ownerPhone ? ` (${reviewPatient.ownerPhone})` : ''}
+                      <div>
+                        <strong>Owner:</strong> {reviewPatient.ownerName}
+                        {reviewPatient.ownerPhone ? ` (${reviewPatient.ownerPhone})` : ''}
+                      </div>
+                      {reviewPatient.ownerAddress && (
+                        <div style={{ fontSize: '0.82rem', color: '#475569' }}>
+                          <strong>Locality:</strong> {reviewPatient.ownerAddress}
+                        </div>
+                      )}
+                      {reviewPatient.ownerEmail && (
+                        <div style={{ fontSize: '0.82rem', color: '#475569' }}>
+                          <strong>Email:</strong> {reviewPatient.ownerEmail}
+                        </div>
+                      )}
                     </div>
                   )}
                   <div><strong>Intake Date:</strong> {reviewPatient.lastVisit || 'Today'}</div>

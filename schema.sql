@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS id_counters (
 
 -- --------------------------------------------------------
 -- Pet Owners (matches 'owners' store)
+-- 1:M Entity: 1 Owner -> Many Patients (3NF Normalization)
+-- Note: 'address' is recorded at City/Barangay level (optional)
+-- for veterinary epidemiological surveillance (e.g. Scabies/Ringworm clusters)
+-- in strict compliance with RA 10173 (Data Privacy Act) Data Minimization.
 -- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS owners (
   id VARCHAR(64) PRIMARY KEY,
@@ -120,6 +124,8 @@ CREATE TABLE IF NOT EXISTS patients (
   weight VARCHAR(32),
   owner_name VARCHAR(128),
   owner_phone VARCHAR(32),
+  owner_address TEXT,
+  owner_email VARCHAR(128),
   is_archived BOOLEAN NOT NULL DEFAULT FALSE,
   area_of_concern TEXT,
   last_visit DATE,

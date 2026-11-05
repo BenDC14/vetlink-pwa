@@ -161,6 +161,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [age, setAge] = useState('')
   const [ownerName, setOwnerName] = useState('')
   const [ownerPhone, setOwnerPhone] = useState('')
+  const [ownerAddress, setOwnerAddress] = useState('')
+  const [ownerEmail, setOwnerEmail] = useState('')
   const [areaOfConcern, setAreaOfConcern] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const isSavingRef = useRef(false)
@@ -198,6 +200,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     setAge('')
     setOwnerName('')
     setOwnerPhone('')
+    setOwnerAddress('')
+    setOwnerEmail('')
     setAreaOfConcern('')
     setSelectedSymptoms([])
     setOtherSymptoms('')
@@ -448,6 +452,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         age: age.trim(),
         ownerName: ownerName.trim(),
         ownerPhone: ownerPhone.trim(),
+        ownerAddress: ownerAddress.trim(),
+        ownerEmail: ownerEmail.trim(),
         areaOfConcern: areaOfConcern.trim(),
         lastVisit: new Date().toISOString().slice(0, 10),
         status: assignedStatus,
@@ -525,6 +531,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         setAge('')
         setOwnerName('')
         setOwnerPhone('')
+        setOwnerAddress('')
+        setOwnerEmail('')
         setAreaOfConcern('')
         setSelectedSymptoms([])
         setOtherSymptoms('')
@@ -564,6 +572,9 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         breed: patient.breed,
         weight: patient.weight,
         ownerName: patient.ownerName,
+        ownerPhone: patient.ownerPhone,
+        ownerAddress: patient.ownerAddress,
+        ownerEmail: patient.ownerEmail,
         status: assignedStatus,
         diagnosis: aiResult.displayLabel,
         secondary: comorb.isComorbid ? comorb.secondary : null,
@@ -670,6 +681,15 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
               </div>
             </div>
           </div>
+
+          {savedSummary.ownerName && (
+            <div style={{ marginBottom: 12, padding: '8px 12px', background: '#f8fafc', borderRadius: 6, border: '1px solid #e2e8f0', fontSize: '0.82rem', color: '#334155' }}>
+              <strong>Owner:</strong> {savedSummary.ownerName}
+              {savedSummary.ownerPhone ? ` • ${savedSummary.ownerPhone}` : ''}
+              {savedSummary.ownerAddress ? ` • Locality: ${savedSummary.ownerAddress}` : ''}
+              {savedSummary.ownerEmail ? ` • ${savedSummary.ownerEmail}` : ''}
+            </div>
+          )}
 
           <p style={{ fontSize: '0.85rem', color: '#334155', margin: '0 0 14px', lineHeight: 1.4 }}>
             <strong>Next Step:</strong> Hand off the patient to the Attending Veterinarian. The doctor will review the Grad-CAM heatmap, confirm symptoms, and finalize the prescription.
@@ -942,6 +962,32 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                       value={ownerPhone}
                       onChange={(e) => setOwnerPhone(e.target.value)}
                       placeholder="e.g. 0917-123-4567"
+                      disabled={isSaving}
+                    />
+                  </label>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+                  <label>
+                    <span>OWNER LOCALITY / ADDRESS (OPTIONAL)</span>
+                    <input
+                      value={ownerAddress}
+                      onChange={(e) => setOwnerAddress(e.target.value)}
+                      placeholder="e.g. Brgy. San Jose, Quezon City"
+                      disabled={isSaving}
+                    />
+                    <small style={{ fontSize: '0.71rem', color: '#64748b', display: 'block', marginTop: 2 }}>
+                      City/Barangay level for disease tracking (RA 10173 compliant)
+                    </small>
+                  </label>
+
+                  <label>
+                    <span>OWNER EMAIL (OPTIONAL)</span>
+                    <input
+                      type="email"
+                      value={ownerEmail}
+                      onChange={(e) => setOwnerEmail(e.target.value)}
+                      placeholder="e.g. owner@example.com"
                       disabled={isSaving}
                     />
                   </label>

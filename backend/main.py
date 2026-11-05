@@ -508,6 +508,34 @@ def create_patient(request: CreatePatientRequest, authorization: Optional[str] =
         conn.close()
 
 
+@app.get("/api/owners")
+def list_owners(authorization: Optional[str] = Header(default=None)):
+    get_current_user_from_header(authorization)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM owners ORDER BY name ASC;")
+            rows = cursor.fetchall()
+            return {"success": True, "owners": rows}
+    finally:
+        conn.close()
+
+
+@app.get("/api/owners/{owner_id}")
+def get_owner(owner_id: str, authorization: Optional[str] = Header(default=None)):
+    get_current_user_from_header(authorization)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM owners WHERE id = %s;", (owner_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Owner not found")
+            return {"success": True, "owner": row}
+    finally:
+        conn.close()
+
+
 # -----------------------------------------------------------------------------
 # Main Cloud Sync Handlers
 # -----------------------------------------------------------------------------
@@ -537,6 +565,30 @@ def upsert_user(cursor, payload: dict):
 
 def delete_user(cursor, entity_id: str):
     cursor.execute("DELETE FROM users WHERE id = %s;", (entity_id,))
+
+
+def upsert_owner(cursor, payload: dict):
+    owner_id = payload.get("id")
+    name = payload.get("name") or "Unnamed Owner"
+    phone = payload.get("phone") or ""
+    email = payload.get("email") or ""
+    address = payload.get("address") or ""
+    version = payload.get("version", 1)
+    now = datetime.utcnow()
+
+    sql = """
+        INSERT INTO owners (id, name, phone, email, address, sync_status, version, updated_at)
+        VALUES (%s, %s, %s, %s, %s, 'synced', %s, %s)
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            phone = VALUES(phone),
+            email = VALUES(email),
+            address = VALUES(address),
+            sync_status = 'synced',
+            version = VALUES(version),
+            updated_at = VALUES(updated_at);
+    """
+    cursor.execute(sql, (owner_id, name, phone, email, address, version, now))
 
 
 def upsert_patient(cursor, payload: dict):
@@ -572,6 +624,7 @@ def upsert_patient(cursor, payload: dict):
             area_of_concern = VALUES(area_of_concern),
             last_visit = VALUES(last_visit),
             status = VALUES(status),
+            owner_id = VALUES(owner_id),
             sync_status = 'synced',
             version = VALUES(version),
             updated_at = VALUES(updated_at);
@@ -714,6 +767,7 @@ def upsert_screening_result(cursor, payload: dict):
 
 SYNC_ENTITY_TABLES = {
     "users": "users",
+    "owners": "owners",
     "patients": "patients",
     "consultations": "consultations",
     "screeningResults": "screening_results",
@@ -737,7 +791,7 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
 
     try:
         with conn.cursor() as cursor:
-            entity_priority = {"users": 0, "patients": 1, "consultations": 2, "screeningresults": 3}
+            entity_priority = {"users": 0, "owners": 1, "patients": 2, "consultations": 3, "screeningresults": 4}
             ordered_items = sorted(
                 batch.queue,
                 key=lambda item: (entity_priority.get(item.entityType.lower(), 99), item.createdAt or ""),
@@ -762,6 +816,8 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                             raise ValueError("Payload ID must match the queued entity ID")
                         if entity_type == "users":
                             required_fields = ("username", "name")
+                        elif entity_type == "owners":
+                            required_fields = ("name",)
                         elif entity_type == "patients":
                             required_fields = ("name",)
                         elif entity_type == "consultations":
@@ -857,6 +913,13 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                         elif operation == "DELETE":
                             delete_user(cursor, item.entityId)
 
+                    elif entity_type == "owners":
+                        if operation in ("CREATE", "UPDATE"):
+                            upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
+                            upsert_owner(cursor, upsert_payload)
+                        elif operation == "DELETE":
+                            cursor.execute("DELETE FROM owners WHERE id = %s", (item.entityId,))
+
                     elif entity_type == "patients":
                         if operation in ("CREATE", "UPDATE"):
                             upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
@@ -939,6 +1002,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
             if since:
                 cursor.execute("SELECT * FROM users WHERE updated_at > %s;", (since,))
                 users = cursor.fetchall()
+                cursor.execute("SELECT * FROM owners WHERE updated_at > %s;", (since,))
+                owners = cursor.fetchall()
                 cursor.execute("SELECT * FROM patients WHERE updated_at > %s;", (since,))
                 patients = cursor.fetchall()
                 cursor.execute("SELECT * FROM consultations WHERE updated_at > %s;", (since,))
@@ -948,6 +1013,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
             else:
                 cursor.execute("SELECT * FROM users;")
                 users = cursor.fetchall()
+                cursor.execute("SELECT * FROM owners;")
+                owners = cursor.fetchall()
                 cursor.execute("SELECT * FROM patients;")
                 patients = cursor.fetchall()
                 cursor.execute("SELECT * FROM consultations;")
@@ -969,6 +1036,7 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
 
             return {
                 "users": users,
+                "owners": owners,
                 "patients": patients,
                 "consultations": consultations,
                 "screeningResults": screening_results,
@@ -1042,6 +1110,7 @@ def resolve_sync_conflict(
                     local_record["version"] = next_version
                     upsert_functions = {
                         "users": upsert_user,
+                        "owners": upsert_owner,
                         "patients": upsert_patient,
                         "consultations": upsert_consultation,
                         "screeningResults": upsert_screening_result,
