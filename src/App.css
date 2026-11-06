@@ -996,6 +996,7 @@ input {
   align-items: center;
   z-index: 1000;
   padding: 16px;
+  overflow-y: auto;
 }
 
 .modal-dialog {
@@ -1004,8 +1005,11 @@ input {
   border-radius: 16px;
   width: 100%;
   max-width: 480px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  max-height: min(90vh, 90svh);
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
   animation: modalFadeIn 0.2s ease-out;
 }
 
@@ -1026,6 +1030,7 @@ input {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .modal-header h3 {
@@ -1057,6 +1062,9 @@ input {
   padding: 20px;
   display: grid;
   gap: 14px;
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-form label {
@@ -2283,6 +2291,10 @@ input {
 
 .modal-dialog {
   max-width: 520px;
+  max-height: min(90vh, 90svh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
   border-color: rgba(223, 234, 229, 0.9);
   border-radius: 20px;
   box-shadow: 0 28px 80px rgba(20, 44, 38, 0.22);
@@ -2290,11 +2302,15 @@ input {
 
 .modal-header {
   padding: 18px 22px;
+  flex-shrink: 0;
 }
 
 .modal-form {
   gap: 16px;
   padding: 22px;
+  flex: 1;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .modal-form label {

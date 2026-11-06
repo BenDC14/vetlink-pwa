@@ -827,12 +827,12 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
       {editingPatient && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-patient-title">
-          <div className="modal-dialog">
-            <header className="modal-header">
+          <div className="modal-dialog" style={{ maxWidth: 540, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+            <header className="modal-header" style={{ flexShrink: 0 }}>
               <h3 id="edit-patient-title">Edit Patient Record</h3>
               <button className="modal-close-btn" type="button" onClick={() => setEditingPatient(null)} aria-label="Close edit patient dialog">✕</button>
             </header>
-            <form className="modal-form" onSubmit={handleSavePatient}>
+            <form className="modal-form" style={{ overflowY: 'auto', flex: 1 }} onSubmit={handleSavePatient}>
               {formError && <div className="alert-banner error" role="alert">{formError}</div>}
               <label>
                 <span>Patient ID</span>
@@ -947,7 +947,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   </select>
                 </label>
               </div>
-              <div className="modal-actions">
+              <div className="modal-actions" style={{ position: 'sticky', bottom: 0, background: 'var(--surface, #fff)', zIndex: 2, paddingTop: 12 }}>
                 <button className="small-outline" type="button" onClick={() => setEditingPatient(null)} disabled={isSaving}>Cancel</button>
                 <button className="action-btn blue" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Changes'}</button>
               </div>
