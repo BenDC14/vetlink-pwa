@@ -176,11 +176,13 @@ function normalizeCloudRecord(storeName, record) {
     normalized.ownerEmail = record.owner_email ?? record.ownerEmail ?? ''
     normalized.isArchived = Boolean(record.is_archived ?? record.isArchived ?? false)
   } else if (storeName === 'auditLogs') {
-    normalized.userId = record.user_id ?? record.userId
-    normalized.userName = record.user_name ?? record.userName
-    normalized.userRole = record.user_role ?? record.userRole
-    normalized.targetEntity = record.target_entity ?? record.targetEntity
-    normalized.targetId = record.target_id ?? record.targetId
+    normalized.action = record.action ?? ''
+    normalized.userId = record.user_id ?? record.userId ?? ''
+    normalized.userName = record.user_name ?? record.userName ?? ''
+    normalized.userRole = record.user_role ?? record.userRole ?? ''
+    normalized.targetEntity = record.target_entity ?? record.targetEntity ?? ''
+    normalized.targetId = record.target_id ?? record.targetId ?? ''
+    normalized.details = record.details ?? ''
   } else if (storeName === 'consultations') {
     normalized.patientId = record.patient_id ?? record.patientId
     normalized.handledByUserId = record.handled_by_user_id ?? record.handledByUserId
@@ -1103,6 +1105,7 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     await reconcileStore('patients', cloudSnapshot.patients || [], cloudSnapshot.deleted || [])
     await reconcileStore('consultations', cloudSnapshot.consultations || [], cloudSnapshot.deleted || [])
     await reconcileStore('screeningResults', cloudSnapshot.screeningResults || [], cloudSnapshot.deleted || [])
+    await reconcileStore('auditLogs', cloudSnapshot.auditLogs || [], cloudSnapshot.deleted || [])
 
     const remainingPendingQueue = (await db.getAll('syncQueue')).filter(
       (item) => item.status !== 'conflict' && item.status !== 'failed'
@@ -1121,9 +1124,11 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     }
     const cloudIds = new Set([
       ...(cloudSnapshot.users || []).map((record) => `users:${record.id}`),
+      ...(cloudSnapshot.owners || []).map((record) => `owners:${record.id}`),
       ...(cloudSnapshot.patients || []).map((record) => `patients:${record.id}`),
       ...(cloudSnapshot.consultations || []).map((record) => `consultations:${record.id}`),
       ...(cloudSnapshot.screeningResults || []).map((record) => `screeningResults:${record.id}`),
+      ...(cloudSnapshot.auditLogs || []).map((record) => `auditLogs:${record.id}`),
     ].filter((key) => !pendingKeys.has(key) && !conflictedEntities.has(key)))
 
     const isIncrementalPull = Boolean(lastSyncTimestamp)

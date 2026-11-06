@@ -582,30 +582,28 @@ function App() {
                   </div>
                 </button>
               )}
-              {currentUser?.role === 'Clinic Admin' && (
-                <button
-                  type="button"
-                  className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
-                  onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
-                >
-                  <div className="nav-item-label">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-                    </svg>
-                    <span>Sync</span>
-                  </div>
-                  <div className="nav-sync-meta">
-                    <span className={`nav-sync-badge ${syncBadgeClass}`}>
-                      {syncBadgeText}
+              <button
+                type="button"
+                className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
+                onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
+              >
+                <div className="nav-item-label">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                  </svg>
+                  <span>Sync</span>
+                </div>
+                <div className="nav-sync-meta">
+                  <span className={`nav-sync-badge ${syncBadgeClass}`}>
+                    {syncBadgeText}
+                  </span>
+                  {lastSyncTime && (
+                    <span className="nav-sync-time" title={`Last synchronized: ${lastSyncTime}`}>
+                      Last synced: {lastSyncTime}
                     </span>
-                    {lastSyncTime && (
-                      <span className="nav-sync-time" title={`Last synchronized: ${lastSyncTime}`}>
-                        {lastSyncTime}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              )}
+                  )}
+                </div>
+              </button>
               {currentUser?.role === 'Clinic Admin' && (
                 <button
                   type="button"

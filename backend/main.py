@@ -771,6 +771,7 @@ SYNC_ENTITY_TABLES = {
     "patients": "patients",
     "consultations": "consultations",
     "screeningResults": "screening_results",
+    "auditLogs": "audit_logs",
 }
 
 
@@ -791,7 +792,7 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
 
     try:
         with conn.cursor() as cursor:
-            entity_priority = {"users": 0, "owners": 1, "patients": 2, "consultations": 3, "screeningresults": 4}
+            entity_priority = {"users": 0, "owners": 1, "patients": 2, "consultations": 3, "screeningresults": 4, "auditlogs": 5}
             ordered_items = sorted(
                 batch.queue,
                 key=lambda item: (entity_priority.get(item.entityType.lower(), 99), item.createdAt or ""),
@@ -801,6 +802,8 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                     entity_type = item.entityType.lower()
                     if entity_type == "screeningresults":
                         entity_type = "screeningResults"
+                    elif entity_type in ("auditlogs", "audit_logs"):
+                        entity_type = "auditLogs"
                     operation = item.operation.upper()
                     payload = item.payload or {}
 
@@ -822,6 +825,8 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                             required_fields = ("name",)
                         elif entity_type == "consultations":
                             required_fields = ("patientId",) if not payload.get("patient_id") else ()
+                        elif entity_type == "auditLogs":
+                            required_fields = ("action",)
                         else:
                             required_fields = ("consultationId",) if not payload.get("consultation_id") else ()
                         missing_fields = [field for field in required_fields if not payload.get(field)]
@@ -1010,6 +1015,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 consultations = cursor.fetchall()
                 cursor.execute("SELECT * FROM screening_results WHERE updated_at > %s;", (since,))
                 screening_results = cursor.fetchall()
+                cursor.execute("SELECT * FROM audit_logs WHERE created_at > %s ORDER BY created_at DESC LIMIT 500;", (since,))
+                audit_logs = cursor.fetchall()
             else:
                 cursor.execute("SELECT * FROM users;")
                 users = cursor.fetchall()
@@ -1021,6 +1028,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 consultations = cursor.fetchall()
                 cursor.execute("SELECT * FROM screening_results;")
                 screening_results = cursor.fetchall()
+                cursor.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500;")
+                audit_logs = cursor.fetchall()
             cursor.execute(
                 "SELECT DISTINCT entity_type, entity_id FROM sync_queue "
                 "WHERE status = 'processed' AND operation = 'DELETE';"
@@ -1040,6 +1049,7 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 "patients": patients,
                 "consultations": consultations,
                 "screeningResults": screening_results,
+                "auditLogs": audit_logs,
                 "deleted": deleted,
                 "conflicts": conflicts,
                 "server_time": datetime.utcnow().isoformat(),
