@@ -47,6 +47,10 @@ CREATE TABLE IF NOT EXISTS id_counters (
 
 -- --------------------------------------------------------
 -- Pet Owners (matches 'owners' store)
+-- 1:M Entity: 1 Owner -> Many Patients (3NF Normalization)
+-- Note: 'address' is recorded at City/Barangay level (optional)
+-- for veterinary epidemiological surveillance (e.g. Scabies/Ringworm clusters)
+-- in strict compliance with RA 10173 (Data Privacy Act) Data Minimization.
 -- --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS owners (
   id VARCHAR(64) PRIMARY KEY,
@@ -117,6 +121,12 @@ CREATE TABLE IF NOT EXISTS patients (
   species VARCHAR(64) DEFAULT 'Canine',
   breed VARCHAR(128),
   age VARCHAR(32),
+  weight VARCHAR(32),
+  owner_name VARCHAR(128),
+  owner_phone VARCHAR(32),
+  owner_address TEXT,
+  owner_email VARCHAR(128),
+  is_archived BOOLEAN NOT NULL DEFAULT FALSE,
   area_of_concern TEXT,
   last_visit DATE,
   status VARCHAR(64) DEFAULT 'Active',
@@ -128,6 +138,7 @@ CREATE TABLE IF NOT EXISTS patients (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
   INDEX idx_patients_owner (owner_id),
   INDEX idx_patients_created_by (created_by),
+  INDEX idx_patients_archived (is_archived),
   INDEX idx_patients_sync (sync_status),
   INDEX idx_patients_updated (updated_at)
 ) ENGINE=InnoDB;
@@ -251,6 +262,27 @@ CREATE TABLE IF NOT EXISTS sync_conflicts (
   INDEX idx_sc_entity (entity_type, entity_id),
   INDEX idx_sc_status (resolution_status),
   INDEX idx_sc_created (created_at)
+) ENGINE=InnoDB;
+
+-- --------------------------------------------------------
+-- Audit Logs / System Activity (matches 'auditLogs' store)
+-- --------------------------------------------------------
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id VARCHAR(64) PRIMARY KEY,
+  action VARCHAR(64) NOT NULL,
+  user_id VARCHAR(64),
+  user_name VARCHAR(128),
+  user_role VARCHAR(64),
+  target_entity VARCHAR(64),
+  target_id VARCHAR(64),
+  details TEXT,
+  sync_status VARCHAR(32) DEFAULT 'synced',
+  version INT DEFAULT 1,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  INDEX idx_audit_user (user_id),
+  INDEX idx_audit_action (action),
+  INDEX idx_audit_entity (target_entity, target_id),
+  INDEX idx_audit_created (created_at)
 ) ENGINE=InnoDB;
 
 -- --------------------------------------------------------

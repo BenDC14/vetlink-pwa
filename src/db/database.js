@@ -1,7 +1,7 @@
 import { openDB } from 'idb'
 const DB_NAME = "vetlink_local_db";
-const DB_VERSION = 2;
-const SYNC_STORE_NAMES = ['users', 'patients', 'consultations', 'screeningResults']
+const DB_VERSION = 3;
+const SYNC_STORE_NAMES = ['users', 'owners', 'patients', 'consultations', 'screeningResults', 'auditLogs']
 
 const schema = {
   patients: {
@@ -93,6 +93,16 @@ const schema = {
       "createdAt"
     ]
   },
+  auditLogs: {
+    keyPath: "id",
+    indexes: [
+      "action",
+      "userId",
+      "targetEntity",
+      "createdAt",
+      "syncStatus"
+    ]
+  },
   idCounters: {
     keyPath: "prefix",
     indexes: []
@@ -149,11 +159,28 @@ function normalizeCloudRecord(storeName, record) {
 
   if (storeName === 'users') {
     normalized.deviceStatus = record.device_status ?? record.deviceStatus
+  } else if (storeName === 'owners') {
+    normalized.name = record.name ?? ''
+    normalized.phone = record.phone ?? ''
+    normalized.email = record.email ?? ''
+    normalized.address = record.address ?? ''
   } else if (storeName === 'patients') {
     normalized.areaOfConcern = record.area_of_concern ?? record.areaOfConcern ?? ''
     normalized.lastVisit = record.last_visit ?? record.lastVisit ?? ''
     normalized.ownerId = record.owner_id ?? record.ownerId
     normalized.createdBy = record.created_by ?? record.createdBy
+    normalized.weight = record.weight ?? record.weight ?? ''
+    normalized.ownerName = record.owner_name ?? record.ownerName ?? ''
+    normalized.ownerPhone = record.owner_phone ?? record.ownerPhone ?? ''
+    normalized.ownerAddress = record.owner_address ?? record.ownerAddress ?? ''
+    normalized.ownerEmail = record.owner_email ?? record.ownerEmail ?? ''
+    normalized.isArchived = Boolean(record.is_archived ?? record.isArchived ?? false)
+  } else if (storeName === 'auditLogs') {
+    normalized.userId = record.user_id ?? record.userId
+    normalized.userName = record.user_name ?? record.userName
+    normalized.userRole = record.user_role ?? record.userRole
+    normalized.targetEntity = record.target_entity ?? record.targetEntity
+    normalized.targetId = record.target_id ?? record.targetId
   } else if (storeName === 'consultations') {
     normalized.patientId = record.patient_id ?? record.patientId
     normalized.handledByUserId = record.handled_by_user_id ?? record.handledByUserId
@@ -207,11 +234,75 @@ async function createNextRecordId(tx, storeName, prefix, digits, startAt) {
 export async function addPatient(patient) {
   const db = await initDatabase()
   const now = new Date().toISOString()
-  const tx = db.transaction(['patients', 'syncQueue', 'idCounters'], 'readwrite')
+  const tx = db.transaction(['patients', 'owners', 'syncQueue', 'idCounters'], 'readwrite')
   const id = await createNextRecordId(tx, 'patients', 'PT', 4, 1001)
+
+  // Smart Owner Linking / Auto-populate
+  let ownerId = patient.ownerId || null
+  const cleanOwnerName = (patient.ownerName || '').trim()
+  const cleanOwnerPhone = (patient.ownerPhone || '').trim()
+  const cleanOwnerAddress = (patient.ownerAddress || '').trim()
+  const cleanOwnerEmail = (patient.ownerEmail || '').trim()
+
+  if (cleanOwnerName || cleanOwnerPhone) {
+    const ownerStore = tx.objectStore('owners')
+    const allOwners = await ownerStore.getAll()
+    const existingOwner = allOwners.find((o) => {
+      if (cleanOwnerPhone && o.phone && o.phone.trim() === cleanOwnerPhone) return true
+      if (cleanOwnerName && o.name && o.name.trim().toLowerCase() === cleanOwnerName.toLowerCase()) return true
+      return false
+    })
+
+    if (existingOwner) {
+      ownerId = existingOwner.id
+      let updated = false
+      if (cleanOwnerAddress && !existingOwner.address) {
+        existingOwner.address = cleanOwnerAddress
+        updated = true
+      }
+      if (cleanOwnerPhone && !existingOwner.phone) {
+        existingOwner.phone = cleanOwnerPhone
+        updated = true
+      }
+      if (cleanOwnerEmail && !existingOwner.email) {
+        existingOwner.email = cleanOwnerEmail
+        updated = true
+      }
+      if (updated) {
+        existingOwner.updatedAt = now
+        existingOwner.syncStatus = 'pending'
+        existingOwner.version = (existingOwner.version || 1) + 1
+        await ownerStore.put(existingOwner)
+        await tx.objectStore('syncQueue').put(createSyncQueueItem('owners', existingOwner.id, 'UPDATE', existingOwner, now, existingOwner.version - 1))
+      }
+    } else {
+      ownerId = await createNextRecordId(tx, 'owners', 'OWN', 4, 1001)
+      const newOwner = {
+        id: ownerId,
+        name: cleanOwnerName || 'Pet Owner',
+        phone: cleanOwnerPhone,
+        address: cleanOwnerAddress,
+        email: cleanOwnerEmail,
+        syncStatus: 'pending',
+        version: 1,
+        createdAt: now,
+        updatedAt: now,
+      }
+      await ownerStore.put(newOwner)
+      await tx.objectStore('syncQueue').put(createSyncQueueItem('owners', newOwner.id, 'CREATE', newOwner, now, 0))
+    }
+  }
+
   const record = {
     ...patient,
     id,
+    ownerId,
+    weight: patient.weight || '',
+    ownerName: cleanOwnerName,
+    ownerPhone: cleanOwnerPhone,
+    ownerAddress: cleanOwnerAddress,
+    ownerEmail: cleanOwnerEmail,
+    isArchived: Boolean(patient.isArchived || false),
     updatedAt: now,
     syncStatus: 'pending',
     version: 1,
@@ -228,6 +319,100 @@ export async function getPatients() {
   const db = await initDatabase()
   const list = await db.getAll('patients')
   return (list || []).filter((p) => !p._deletedLocally)
+}
+
+export async function getOwners() {
+  const db = await initDatabase()
+  const list = await db.getAll('owners')
+  return (list || []).filter((o) => !o._deletedLocally)
+}
+
+export async function getOwnerById(id) {
+  if (!id) return null
+  const db = await initDatabase()
+  return await db.get('owners', id)
+}
+
+export async function addOwner(owner) {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const tx = db.transaction(['owners', 'syncQueue', 'idCounters'], 'readwrite')
+  const id = owner.id || await createNextRecordId(tx, 'owners', 'OWN', 4, 1001)
+  const record = {
+    ...owner,
+    id,
+    name: (owner.name || '').trim(),
+    phone: (owner.phone || '').trim(),
+    email: (owner.email || '').trim(),
+    address: (owner.address || '').trim(),
+    syncStatus: 'pending',
+    version: 1,
+    createdAt: now,
+    updatedAt: now,
+  }
+  await tx.objectStore('owners').put(record)
+  await tx.objectStore('syncQueue').put(createSyncQueueItem('owners', record.id, 'CREATE', record, now, 0))
+  await tx.done
+  notifyQueueUpdated()
+  return record
+}
+
+export async function updateOwner(id, updates) {
+  const db = await initDatabase()
+  const now = new Date().toISOString()
+  const tx = db.transaction(['owners', 'syncQueue'], 'readwrite')
+  const store = tx.objectStore('owners')
+  const existing = await store.get(id)
+  if (!existing) throw new Error(`Owner with ID ${id} not found`)
+
+  const queueStore = tx.objectStore('syncQueue')
+  const queuedItems = await queueStore.index('entityId').getAll(id)
+  const matching = queuedItems.filter((item) => item.entityType === 'owners')
+  const baseVersion = matching[0]?.baseVersion ?? existing.version ?? 0
+  const operation = matching.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
+
+  const updatedRecord = {
+    ...existing,
+    ...updates,
+    id,
+    name: updates.name?.trim() || existing.name,
+    phone: updates.phone !== undefined ? updates.phone.trim() : existing.phone,
+    email: updates.email !== undefined ? updates.email.trim() : existing.email,
+    address: updates.address !== undefined ? updates.address.trim() : existing.address,
+    syncStatus: 'pending',
+    version: baseVersion + 1,
+    updatedAt: now,
+  }
+  await store.put(updatedRecord)
+  for (const item of matching) await queueStore.delete(item.id)
+  await queueStore.put(createSyncQueueItem('owners', id, operation, updatedRecord, now, baseVersion))
+  await tx.done
+  notifyQueueUpdated()
+  return updatedRecord
+}
+
+export async function archivePatient(id, user = null) {
+  const updated = await updatePatient(id, { isArchived: true, status: 'Archived' })
+  await logAuditEvent({
+    action: 'PATIENT_ARCHIVED',
+    user: user || { name: 'Staff' },
+    targetEntity: 'patients',
+    targetId: id,
+    details: `Moved patient ${id} (${updated.name}) to recycle bin / archive.`,
+  })
+  return updated
+}
+
+export async function restorePatient(id, user = null) {
+  const updated = await updatePatient(id, { isArchived: false, status: 'Active' })
+  await logAuditEvent({
+    action: 'PATIENT_RESTORED',
+    user: user || { name: 'Staff' },
+    targetEntity: 'patients',
+    targetId: id,
+    details: `Restored patient ${id} (${updated.name}) from archive to active status.`,
+  })
+  return updated
 }
 
 export async function deletePatient(id) {
@@ -287,6 +472,10 @@ export async function cacheCloudPatient(patient) {
     lastVisit: patient.last_visit ?? patient.lastVisit ?? '',
     ownerId: patient.owner_id ?? patient.ownerId,
     createdBy: patient.created_by ?? patient.createdBy,
+    weight: patient.weight ?? '',
+    ownerName: patient.owner_name ?? patient.ownerName ?? '',
+    ownerPhone: patient.owner_phone ?? patient.ownerPhone ?? '',
+    isArchived: Boolean(patient.is_archived ?? patient.isArchived ?? false),
     createdAt: patient.created_at ?? patient.createdAt ?? now,
     updatedAt: patient.updated_at ?? patient.updatedAt ?? now,
     syncStatus: 'synced',
@@ -321,6 +510,10 @@ export async function mergeCloudPatients(cloudPatients) {
       lastVisit: patient.last_visit ?? patient.lastVisit ?? '',
       ownerId: patient.owner_id ?? patient.ownerId,
       createdBy: patient.created_by ?? patient.createdBy,
+      weight: patient.weight ?? '',
+      ownerName: patient.owner_name ?? patient.ownerName ?? '',
+      ownerPhone: patient.owner_phone ?? patient.ownerPhone ?? '',
+      isArchived: Boolean(patient.is_archived ?? patient.isArchived ?? false),
       createdAt: patient.created_at ?? patient.createdAt,
       updatedAt: patient.updated_at ?? patient.updatedAt,
       syncStatus: 'synced',
@@ -365,11 +558,63 @@ export async function mergeCloudStaff(cloudUsers) {
 export async function updatePatient(id, updates) {
   const db = await initDatabase()
   const now = new Date().toISOString()
-  const tx = db.transaction(['patients', 'syncQueue'], 'readwrite')
+  const tx = db.transaction(['patients', 'owners', 'syncQueue', 'idCounters'], 'readwrite')
   const patientStore = tx.objectStore('patients')
+  const ownerStore = tx.objectStore('owners')
   const queueStore = tx.objectStore('syncQueue')
   const existing = await patientStore.get(id)
   if (!existing) throw new Error(`Patient with ID ${id} not found`)
+
+  let ownerId = updates.ownerId ?? existing.ownerId ?? null
+  const cleanOwnerName = updates.ownerName !== undefined ? updates.ownerName.trim() : (existing.ownerName || '')
+  const cleanOwnerPhone = updates.ownerPhone !== undefined ? updates.ownerPhone.trim() : (existing.ownerPhone || '')
+  const cleanOwnerAddress = updates.ownerAddress !== undefined ? updates.ownerAddress.trim() : (existing.ownerAddress || '')
+  const cleanOwnerEmail = updates.ownerEmail !== undefined ? updates.ownerEmail.trim() : (existing.ownerEmail || '')
+
+  if (cleanOwnerName || cleanOwnerPhone) {
+    if (ownerId) {
+      const existingOwner = await ownerStore.get(ownerId)
+      if (existingOwner) {
+        let changed = false
+        if (cleanOwnerName && cleanOwnerName !== existingOwner.name) { existingOwner.name = cleanOwnerName; changed = true }
+        if (cleanOwnerPhone !== undefined && cleanOwnerPhone !== existingOwner.phone) { existingOwner.phone = cleanOwnerPhone; changed = true }
+        if (cleanOwnerAddress !== undefined && cleanOwnerAddress !== existingOwner.address) { existingOwner.address = cleanOwnerAddress; changed = true }
+        if (cleanOwnerEmail !== undefined && cleanOwnerEmail !== existingOwner.email) { existingOwner.email = cleanOwnerEmail; changed = true }
+        if (changed) {
+          existingOwner.updatedAt = now
+          existingOwner.syncStatus = 'pending'
+          existingOwner.version = (existingOwner.version || 1) + 1
+          await ownerStore.put(existingOwner)
+          await queueStore.put(createSyncQueueItem('owners', existingOwner.id, 'UPDATE', existingOwner, now, existingOwner.version - 1))
+        }
+      }
+    } else {
+      const allOwners = await ownerStore.getAll()
+      const match = allOwners.find((o) => {
+        if (cleanOwnerPhone && o.phone && o.phone.trim() === cleanOwnerPhone) return true
+        if (cleanOwnerName && o.name && o.name.trim().toLowerCase() === cleanOwnerName.toLowerCase()) return true
+        return false
+      })
+      if (match) {
+        ownerId = match.id
+      } else {
+        ownerId = await createNextRecordId(tx, 'owners', 'OWN', 4, 1001)
+        const newOwner = {
+          id: ownerId,
+          name: cleanOwnerName || 'Pet Owner',
+          phone: cleanOwnerPhone,
+          address: cleanOwnerAddress,
+          email: cleanOwnerEmail,
+          syncStatus: 'pending',
+          version: 1,
+          createdAt: now,
+          updatedAt: now,
+        }
+        await ownerStore.put(newOwner)
+        await queueStore.put(createSyncQueueItem('owners', newOwner.id, 'CREATE', newOwner, now, 0))
+      }
+    }
+  }
 
   const queuedItems = await queueStore.index('entityId').getAll(id)
   const matchingQueueItems = queuedItems.filter((item) => item.entityType === 'patients')
@@ -380,7 +625,13 @@ export async function updatePatient(id, updates) {
     ...existing,
     ...updates,
     id,
+    ownerId,
     name: updates.name?.trim() || existing.name,
+    weight: updates.weight !== undefined ? updates.weight.trim() : (existing.weight || ''),
+    ownerName: cleanOwnerName,
+    ownerPhone: cleanOwnerPhone,
+    ownerAddress: cleanOwnerAddress,
+    ownerEmail: cleanOwnerEmail,
     areaOfConcern: updates.areaOfConcern?.trim() ?? existing.areaOfConcern ?? '',
     syncStatus: 'pending',
     version: baseVersion + 1,
@@ -848,6 +1099,7 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     }
 
     await reconcileStore('users', cloudSnapshot.users || [], cloudSnapshot.deleted || [])
+    await reconcileStore('owners', cloudSnapshot.owners || [], cloudSnapshot.deleted || [])
     await reconcileStore('patients', cloudSnapshot.patients || [], cloudSnapshot.deleted || [])
     await reconcileStore('consultations', cloudSnapshot.consultations || [], cloudSnapshot.deleted || [])
     await reconcileStore('screeningResults', cloudSnapshot.screeningResults || [], cloudSnapshot.deleted || [])
@@ -1089,4 +1341,49 @@ export async function addConsultationSymptoms(consultationId, symptomIds = [], c
 export async function getConsultationSymptoms(consultationId) {
   const db = await initDatabase()
   return db.getAllFromIndex('consultationSymptoms', 'consultationId', consultationId)
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Audit Logs & System Activity Recording
+// ─────────────────────────────────────────────────────────────────────────────
+
+export async function logAuditEvent({ action, user, targetEntity = '', targetId = '', details = '' }) {
+  try {
+    const db = await initDatabase()
+    const now = new Date().toISOString()
+    const logId = `LOG-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const entry = {
+      id: logId,
+      action: action || 'SYSTEM_EVENT',
+      userId: user?.id || user?.userId || 'SYSTEM',
+      userName: user?.name || user?.userName || user?.email || 'System User',
+      userRole: user?.role || user?.userRole || 'Staff',
+      targetEntity: targetEntity || '',
+      targetId: targetId || '',
+      details: typeof details === 'object' ? JSON.stringify(details) : String(details || ''),
+      createdAt: now,
+      syncStatus: 'pending',
+      version: 1,
+    }
+
+    const tx = db.transaction(['auditLogs', 'syncQueue'], 'readwrite')
+    await tx.objectStore('auditLogs').put(entry)
+    await tx.objectStore('syncQueue').put(createSyncQueueItem('auditLogs', logId, 'CREATE', entry, now, 0))
+    await tx.done
+    notifyQueueUpdated()
+    return entry
+  } catch (err) {
+    console.warn('[VetLink Audit] Could not record audit log:', err)
+  }
+}
+
+export async function getAuditLogs() {
+  try {
+    const db = await initDatabase()
+    const logs = await db.getAll('auditLogs')
+    return (logs || []).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))
+  } catch (err) {
+    console.warn('[VetLink Audit] Could not fetch audit logs:', err)
+    return []
+  }
 }

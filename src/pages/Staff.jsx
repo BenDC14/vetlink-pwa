@@ -5,9 +5,10 @@ import {
   updateStaffUser,
   deleteStaffUser,
   mergeCloudStaff,
+  logAuditEvent,
 } from '../db/database'
 
-export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' }) {
+export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000', currentUser }) {
   const [staffList, setStaffList] = useState([])
   const [isLoading, setIsLoading] = useState(true)
   const [errorMessage, setErrorMessage] = useState('')
@@ -217,9 +218,27 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
 
   const handleExecuteDelete = async () => {
     if (!deleteConfirmStaff) return
+    const isSelf = currentUser && (
+      deleteConfirmStaff.id === currentUser.id ||
+      deleteConfirmStaff.username === currentUser.username ||
+      deleteConfirmStaff.username === currentUser.email
+    )
+    if (isSelf) {
+      setErrorMessage('Security Protection: You cannot delete your own active administrator account.')
+      setDeleteConfirmStaff(null)
+      return
+    }
+
     setIsSaving(true)
     try {
       await deleteStaffUser(deleteConfirmStaff.id)
+      await logAuditEvent({
+        action: 'STAFF_REMOVED',
+        user: currentUser,
+        targetEntity: 'users',
+        targetId: deleteConfirmStaff.id,
+        details: `Administrator removed staff account for ${deleteConfirmStaff.name} (${deleteConfirmStaff.id}).`,
+      })
       await refreshStaff()
       setSuccessMessage(`Removed staff member "${deleteConfirmStaff.name}".`)
       setDeleteConfirmStaff(null)
@@ -362,20 +381,48 @@ export default function Staff({ authToken, apiBaseUrl = 'http://localhost:8000' 
                     </button>
                   </td>
                   <td>
-                    <button
-                      className="small-outline"
-                      type="button"
-                      onClick={() => handleOpenEditModal(staff)}
-                    >
-                      EDIT
-                    </button>
-                    <button
-                      className="small-outline danger"
-                      type="button"
-                      onClick={() => setDeleteConfirmStaff(staff)}
-                    >
-                      REMOVE
-                    </button>
+                    {(() => {
+                      const isSelf = currentUser && (
+                        staff.id === currentUser.id ||
+                        staff.username === currentUser.username ||
+                        staff.username === currentUser.email
+                      )
+                      return (
+                        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                          <button
+                            className="small-outline"
+                            type="button"
+                            onClick={() => handleOpenEditModal(staff)}
+                          >
+                            EDIT
+                          </button>
+                          {isSelf ? (
+                            <span
+                              style={{
+                                fontSize: '0.72rem',
+                                color: '#047857',
+                                background: '#d1fae5',
+                                border: '1px solid #a7f3d0',
+                                padding: '4px 8px',
+                                borderRadius: 4,
+                                fontWeight: 700
+                              }}
+                              title="Current active administrator account (Self-deletion protected)"
+                            >
+                              YOU
+                            </span>
+                          ) : (
+                            <button
+                              className="small-outline danger"
+                              type="button"
+                              onClick={() => setDeleteConfirmStaff(staff)}
+                            >
+                              REMOVE
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })()}
                   </td>
                 </tr>
               ))

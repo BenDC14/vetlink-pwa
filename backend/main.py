@@ -72,9 +72,27 @@ class AdminCreateUserRequest(BaseModel):
 class CreatePatientRequest(BaseModel):
     name: str
     species: str = "Canine"
+    breed: Optional[str] = ""
+    age: Optional[str] = ""
+    weight: Optional[str] = ""
+    owner_name: Optional[str] = ""
+    owner_phone: Optional[str] = ""
+    is_archived: bool = False
     area_of_concern: str = ""
     last_visit: Optional[str] = None
     status: str = "Active"
+
+
+class AuditLogItem(BaseModel):
+    id: Optional[str] = None
+    action: str
+    user_id: Optional[str] = None
+    user_name: Optional[str] = None
+    user_role: Optional[str] = None
+    target_entity: Optional[str] = None
+    target_id: Optional[str] = None
+    details: Optional[str] = None
+    created_at: Optional[str] = None
 
 
 class SyncConflictResolutionRequest(BaseModel):
@@ -342,7 +360,82 @@ def get_all_patients(authorization: Optional[str] = Header(default=None)):
         with conn.cursor() as cursor:
             cursor.execute("SELECT * FROM patients ORDER BY updated_at DESC;")
             rows = cursor.fetchall()
-            return {"patients": rows, "count": len(rows)}
+            normalized_patients = []
+            for patient in rows:
+                normalized_patients.append({
+                    **patient,
+                    "areaOfConcern": patient.get("area_of_concern"),
+                    "lastVisit": patient.get("last_visit").isoformat() if patient.get("last_visit") else None,
+                    "ownerId": patient.get("owner_id"),
+                    "ownerName": patient.get("owner_name") or "",
+                    "ownerPhone": patient.get("owner_phone") or "",
+                    "weight": patient.get("weight") or "",
+                    "isArchived": bool(patient.get("is_archived", False)),
+                    "createdBy": patient.get("created_by"),
+                    "syncStatus": patient.get("sync_status"),
+                    "createdAt": patient.get("created_at").isoformat() if patient.get("created_at") else None,
+                    "updatedAt": patient.get("updated_at").isoformat() if patient.get("updated_at") else None,
+                })
+            return {"patients": normalized_patients, "count": len(normalized_patients)}
+    finally:
+        conn.close()
+
+
+@app.get("/api/audit-logs")
+def get_audit_logs(authorization: Optional[str] = Header(default=None)):
+    """Returns chronological audit logs for clinic administration."""
+    current_user = get_current_user_from_header(authorization)
+    require_admin(current_user)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500;")
+            rows = cursor.fetchall()
+            normalized = []
+            for r in rows:
+                created_at = r.get("created_at")
+                normalized.append({
+                    "id": r["id"],
+                    "action": r["action"],
+                    "userId": r.get("user_id"),
+                    "userName": r.get("user_name"),
+                    "userRole": r.get("user_role"),
+                    "targetEntity": r.get("target_entity"),
+                    "targetId": r.get("target_id"),
+                    "details": r.get("details"),
+                    "createdAt": created_at.isoformat() if hasattr(created_at, "isoformat") else created_at,
+                })
+            return {"logs": normalized, "count": len(normalized)}
+    finally:
+        conn.close()
+
+
+@app.post("/api/audit-logs", status_code=201)
+def record_audit_log(item: AuditLogItem, authorization: Optional[str] = Header(default=None)):
+    """Records an audit log entry into MySQL."""
+    current_user = get_current_user_from_header(authorization)
+    conn = get_connection()
+    try:
+        conn.begin()
+        with conn.cursor() as cursor:
+            log_id = item.id or f"LOG-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+            payload = {
+                "id": log_id,
+                "action": item.action,
+                "userId": item.user_id or current_user.get("id"),
+                "userName": item.user_name or current_user.get("name"),
+                "userRole": item.user_role or current_user.get("role"),
+                "targetEntity": item.target_entity or "",
+                "targetId": item.target_id or "",
+                "details": item.details or "",
+                "createdAt": item.created_at or datetime.utcnow(),
+            }
+            upsert_audit_log(cursor, payload)
+        conn.commit()
+        return {"success": True, "log": payload}
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -377,6 +470,12 @@ def create_patient(request: CreatePatientRequest, authorization: Optional[str] =
                 "id": patient_id,
                 "name": name,
                 "species": request.species,
+                "breed": request.breed or "",
+                "age": request.age or "",
+                "weight": request.weight or "",
+                "ownerName": request.owner_name or "",
+                "ownerPhone": request.owner_phone or "",
+                "isArchived": request.is_archived,
                 "areaOfConcern": request.area_of_concern.strip(),
                 "lastVisit": request.last_visit or datetime.utcnow().date().isoformat(),
                 "status": request.status,
@@ -393,6 +492,10 @@ def create_patient(request: CreatePatientRequest, authorization: Optional[str] =
             "areaOfConcern": patient.get("area_of_concern"),
             "lastVisit": patient.get("last_visit").isoformat() if patient.get("last_visit") else None,
             "ownerId": patient.get("owner_id"),
+            "ownerName": patient.get("owner_name") or "",
+            "ownerPhone": patient.get("owner_phone") or "",
+            "weight": patient.get("weight") or "",
+            "isArchived": bool(patient.get("is_archived", False)),
             "createdBy": patient.get("created_by"),
             "syncStatus": patient.get("sync_status"),
             "createdAt": patient.get("created_at").isoformat() if patient.get("created_at") else None,
@@ -401,6 +504,34 @@ def create_patient(request: CreatePatientRequest, authorization: Optional[str] =
     except Exception:
         conn.rollback()
         raise
+    finally:
+        conn.close()
+
+
+@app.get("/api/owners")
+def list_owners(authorization: Optional[str] = Header(default=None)):
+    get_current_user_from_header(authorization)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM owners ORDER BY name ASC;")
+            rows = cursor.fetchall()
+            return {"success": True, "owners": rows}
+    finally:
+        conn.close()
+
+
+@app.get("/api/owners/{owner_id}")
+def get_owner(owner_id: str, authorization: Optional[str] = Header(default=None)):
+    get_current_user_from_header(authorization)
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute("SELECT * FROM owners WHERE id = %s;", (owner_id,))
+            row = cursor.fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="Owner not found")
+            return {"success": True, "owner": row}
     finally:
         conn.close()
 
@@ -436,12 +567,40 @@ def delete_user(cursor, entity_id: str):
     cursor.execute("DELETE FROM users WHERE id = %s;", (entity_id,))
 
 
+def upsert_owner(cursor, payload: dict):
+    owner_id = payload.get("id")
+    name = payload.get("name") or "Unnamed Owner"
+    phone = payload.get("phone") or ""
+    email = payload.get("email") or ""
+    address = payload.get("address") or ""
+    version = payload.get("version", 1)
+    now = datetime.utcnow()
+
+    sql = """
+        INSERT INTO owners (id, name, phone, email, address, sync_status, version, updated_at)
+        VALUES (%s, %s, %s, %s, %s, 'synced', %s, %s)
+        ON DUPLICATE KEY UPDATE
+            name = VALUES(name),
+            phone = VALUES(phone),
+            email = VALUES(email),
+            address = VALUES(address),
+            sync_status = 'synced',
+            version = VALUES(version),
+            updated_at = VALUES(updated_at);
+    """
+    cursor.execute(sql, (owner_id, name, phone, email, address, version, now))
+
+
 def upsert_patient(cursor, payload: dict):
     patient_id = payload.get("id")
     name = payload.get("name", "Unknown Patient")
     species = payload.get("species", "Canine")
     breed = payload.get("breed", "")
     age = payload.get("age", "")
+    weight = payload.get("weight", "")
+    owner_name = payload.get("ownerName") or payload.get("owner_name", "")
+    owner_phone = payload.get("ownerPhone") or payload.get("owner_phone", "")
+    is_archived = bool(payload.get("isArchived", payload.get("is_archived", False)))
     area_of_concern = payload.get("areaOfConcern") or payload.get("area_of_concern", "")
     last_visit = payload.get("lastVisit") or payload.get("last_visit") or datetime.utcnow().date()
     status = payload.get("status", "Active")
@@ -451,16 +610,21 @@ def upsert_patient(cursor, payload: dict):
     now = datetime.utcnow()
 
     sql = """
-        INSERT INTO patients (id, name, species, breed, age, area_of_concern, last_visit, status, owner_id, created_by, sync_status, version, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
+        INSERT INTO patients (id, name, species, breed, age, weight, owner_name, owner_phone, is_archived, area_of_concern, last_visit, status, owner_id, created_by, sync_status, version, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
             species = VALUES(species),
             breed = VALUES(breed),
             age = VALUES(age),
+            weight = VALUES(weight),
+            owner_name = VALUES(owner_name),
+            owner_phone = VALUES(owner_phone),
+            is_archived = VALUES(is_archived),
             area_of_concern = VALUES(area_of_concern),
             last_visit = VALUES(last_visit),
             status = VALUES(status),
+            owner_id = VALUES(owner_id),
             sync_status = 'synced',
             version = VALUES(version),
             updated_at = VALUES(updated_at);
@@ -473,6 +637,10 @@ def upsert_patient(cursor, payload: dict):
             species,
             breed,
             age,
+            weight,
+            owner_name,
+            owner_phone,
+            is_archived,
             area_of_concern,
             last_visit,
             status,
@@ -485,6 +653,34 @@ def upsert_patient(cursor, payload: dict):
 
 
 def delete_patient(cursor, entity_id: str):
+    cursor.execute("DELETE FROM patients WHERE id = %s;", (entity_id,))
+
+
+def upsert_audit_log(cursor, payload: dict):
+    log_id = payload.get("id") or f"LOG-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+    action = payload.get("action", "SYSTEM_EVENT")
+    user_id = payload.get("userId") or payload.get("user_id", "")
+    user_name = payload.get("userName") or payload.get("user_name", "")
+    user_role = payload.get("userRole") or payload.get("user_role", "")
+    target_entity = payload.get("targetEntity") or payload.get("target_entity", "")
+    target_id = payload.get("targetId") or payload.get("target_id", "")
+    details = payload.get("details", "")
+    created_at = payload.get("createdAt") or payload.get("created_at") or datetime.utcnow()
+
+    sql = """
+        INSERT INTO audit_logs (id, action, user_id, user_name, user_role, target_entity, target_id, details, sync_status, created_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'synced', %s)
+        ON DUPLICATE KEY UPDATE
+            action = VALUES(action),
+            user_id = VALUES(user_id),
+            user_name = VALUES(user_name),
+            user_role = VALUES(user_role),
+            target_entity = VALUES(target_entity),
+            target_id = VALUES(target_id),
+            details = VALUES(details),
+            sync_status = 'synced';
+    """
+    cursor.execute(sql, (log_id, action, user_id, user_name, user_role, target_entity, target_id, details, created_at))
     cursor.execute("DELETE FROM patients WHERE id = %s;", (entity_id,))
 
 
@@ -571,6 +767,7 @@ def upsert_screening_result(cursor, payload: dict):
 
 SYNC_ENTITY_TABLES = {
     "users": "users",
+    "owners": "owners",
     "patients": "patients",
     "consultations": "consultations",
     "screeningResults": "screening_results",
@@ -594,7 +791,7 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
 
     try:
         with conn.cursor() as cursor:
-            entity_priority = {"users": 0, "patients": 1, "consultations": 2, "screeningresults": 3}
+            entity_priority = {"users": 0, "owners": 1, "patients": 2, "consultations": 3, "screeningresults": 4}
             ordered_items = sorted(
                 batch.queue,
                 key=lambda item: (entity_priority.get(item.entityType.lower(), 99), item.createdAt or ""),
@@ -619,6 +816,8 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                             raise ValueError("Payload ID must match the queued entity ID")
                         if entity_type == "users":
                             required_fields = ("username", "name")
+                        elif entity_type == "owners":
+                            required_fields = ("name",)
                         elif entity_type == "patients":
                             required_fields = ("name",)
                         elif entity_type == "consultations":
@@ -714,6 +913,13 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                         elif operation == "DELETE":
                             delete_user(cursor, item.entityId)
 
+                    elif entity_type == "owners":
+                        if operation in ("CREATE", "UPDATE"):
+                            upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
+                            upsert_owner(cursor, upsert_payload)
+                        elif operation == "DELETE":
+                            cursor.execute("DELETE FROM owners WHERE id = %s", (item.entityId,))
+
                     elif entity_type == "patients":
                         if operation in ("CREATE", "UPDATE"):
                             upsert_payload = {**payload, "version": int(cloud_record["version"]) + 1 if cloud_record else 1}
@@ -734,6 +940,12 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                             upsert_screening_result(cursor, upsert_payload)
                         elif operation == "DELETE":
                             cursor.execute("DELETE FROM screening_results WHERE id = %s", (item.entityId,))
+
+                    elif entity_type in ("auditLogs", "audit_logs"):
+                        if operation in ("CREATE", "UPDATE"):
+                            upsert_audit_log(cursor, payload)
+                        elif operation == "DELETE":
+                            cursor.execute("DELETE FROM audit_logs WHERE id = %s", (item.entityId,))
 
                     # Log sync audit trail into MySQL sync_queue table
                     audit_sql = """
@@ -790,6 +1002,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
             if since:
                 cursor.execute("SELECT * FROM users WHERE updated_at > %s;", (since,))
                 users = cursor.fetchall()
+                cursor.execute("SELECT * FROM owners WHERE updated_at > %s;", (since,))
+                owners = cursor.fetchall()
                 cursor.execute("SELECT * FROM patients WHERE updated_at > %s;", (since,))
                 patients = cursor.fetchall()
                 cursor.execute("SELECT * FROM consultations WHERE updated_at > %s;", (since,))
@@ -799,6 +1013,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
             else:
                 cursor.execute("SELECT * FROM users;")
                 users = cursor.fetchall()
+                cursor.execute("SELECT * FROM owners;")
+                owners = cursor.fetchall()
                 cursor.execute("SELECT * FROM patients;")
                 patients = cursor.fetchall()
                 cursor.execute("SELECT * FROM consultations;")
@@ -820,6 +1036,7 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
 
             return {
                 "users": users,
+                "owners": owners,
                 "patients": patients,
                 "consultations": consultations,
                 "screeningResults": screening_results,
@@ -893,6 +1110,7 @@ def resolve_sync_conflict(
                     local_record["version"] = next_version
                     upsert_functions = {
                         "users": upsert_user,
+                        "owners": upsert_owner,
                         "patients": upsert_patient,
                         "consultations": upsert_consultation,
                         "screeningResults": upsert_screening_result,
