@@ -1,5 +1,6 @@
 from datetime import datetime, timedelta
 import json
+import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -656,6 +657,28 @@ def delete_patient(cursor, entity_id: str):
     cursor.execute("DELETE FROM patients WHERE id = %s;", (entity_id,))
 
 
+def parse_db_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        val = value.strip()
+        if val.endswith("Z") or val.endswith("z"):
+            val = val[:-1]
+        if "+" in val:
+            val = val.split("+")[0]
+        val = val.replace("T", " ")
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                pass
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+        except Exception:
+            pass
+    return datetime.utcnow()
+
+
 def upsert_audit_log(cursor, payload: dict):
     log_id = payload.get("id") or f"LOG-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
     action = payload.get("action", "SYSTEM_EVENT")
@@ -665,7 +688,7 @@ def upsert_audit_log(cursor, payload: dict):
     target_entity = payload.get("targetEntity") or payload.get("target_entity", "")
     target_id = payload.get("targetId") or payload.get("target_id", "")
     details = payload.get("details", "")
-    created_at = payload.get("createdAt") or payload.get("created_at") or datetime.utcnow()
+    created_at = parse_db_datetime(payload.get("createdAt") or payload.get("created_at"))
 
     sql = """
         INSERT INTO audit_logs (id, action, user_id, user_name, user_role, target_entity, target_id, details, sync_status, created_at)
@@ -681,7 +704,6 @@ def upsert_audit_log(cursor, payload: dict):
             sync_status = 'synced';
     """
     cursor.execute(sql, (log_id, action, user_id, user_name, user_role, target_entity, target_id, details, created_at))
-    cursor.execute("DELETE FROM patients WHERE id = %s;", (entity_id,))
 
 
 def upsert_consultation(cursor, payload: dict):
