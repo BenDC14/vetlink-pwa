@@ -783,7 +783,7 @@ function App() {
                     currentUser={currentUser}
                     authToken={authToken}
                     apiBaseUrl={API_BASE_URL}
-                    isOffline={isOffline}
+                    isOffline={currentUser?.isOffline}
                   />
                 )}
               </>
