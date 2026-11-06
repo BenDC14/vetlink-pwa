@@ -63,6 +63,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateProfileRequest(BaseModel):
+    name: str
+
+
 class AdminCreateUserRequest(BaseModel):
     name: str
     email: str
@@ -261,6 +265,25 @@ def auth_me(authorization: Optional[str] = Header(default=None)):
         "role": user["role"],
         "must_change_password": bool(user["must_change_password"]),
     }
+
+
+@app.patch("/api/auth/profile")
+@app.put("/api/auth/profile")
+def update_profile(request: UpdateProfileRequest, authorization: Optional[str] = Header(default=None)):
+    user = get_current_user_from_header(authorization)
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Display name cannot be empty")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET name = %s, updated_at = %s WHERE id = %s",
+                (name, datetime.utcnow(), user["id"]),
+            )
+        return {"success": True, "name": name}
+    finally:
+        conn.close()
 
 
 def get_current_user_from_header(authorization: Optional[str]) -> dict:

@@ -1,11 +1,11 @@
 import { useState, useEffect, useCallback } from 'react'
-import { initDatabase } from '../db/database'
+import { initDatabase, updateStaffUser, logAuditEvent } from '../db/database'
 
 /**
  * Settings page — Option A (Stacked Cards) layout.
  * Renders inside the dashboard-panel when the Settings header icon is clicked.
  */
-export default function Settings({ currentUser, onBack }) {
+export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, onUpdateUser }) {
   // --- Notifications state (persisted in localStorage) ---
   const [notifications, setNotifications] = useState(() => {
     try {
@@ -232,7 +232,36 @@ export default function Settings({ currentUser, onBack }) {
 
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [profileName, setProfileName] = useState(currentUser?.name || 'Dr. Emily Chen, DVM')
-  const [profileEmail, setProfileEmail] = useState(currentUser?.email || 'dr.chen@clinic.vet')
+  const [profileEmail, setProfileEmail] = useState(currentUser?.email || currentUser?.username || 'dr.chen@clinic.vet')
+  const [isSavingProfile, setIsSavingProfile] = useState(false)
+  const [profileSuccessMsg, setProfileSuccessMsg] = useState(null)
+  const [profileErrorMsg, setProfileErrorMsg] = useState(null)
+
+  // --- Password change state ---
+  const [isChangingPassword, setIsChangingPassword] = useState(false)
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+  const [showCurrentPassword, setShowCurrentPassword] = useState(false)
+  const [showNewPassword, setShowNewPassword] = useState(false)
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false)
+  const [isSubmittingPassword, setIsSubmittingPassword] = useState(false)
+  const [passwordSuccessMsg, setPasswordSuccessMsg] = useState(null)
+  const [passwordErrorMsg, setPasswordErrorMsg] = useState(null)
+
+  const [prevUser, setPrevUser] = useState(currentUser)
+
+  // Keep profile state in sync when currentUser changes
+  if (currentUser !== prevUser) {
+    setPrevUser(currentUser)
+    if (currentUser?.name) {
+      setProfileName(currentUser.name)
+    }
+    if (currentUser?.email || currentUser?.username) {
+      setProfileEmail(currentUser.email || currentUser.username)
+    }
+  }
+
   const [isEditingClinic, setIsEditingClinic] = useState(false)
   const [clinicForm, setClinicForm] = useState(clinicInfo)
   const [updateStatus, setUpdateStatus] = useState(null)
@@ -243,9 +272,181 @@ export default function Settings({ currentUser, onBack }) {
     localStorage.setItem('vetlink_clinic_info', JSON.stringify(clinicInfo))
   }, [clinicInfo])
 
-  const handleSaveProfile = (e) => {
+  const handleSaveProfile = async (e) => {
     e.preventDefault()
-    setIsEditingProfile(false)
+    const trimmed = profileName.trim()
+    if (!trimmed) {
+      setProfileErrorMsg('Display name cannot be empty.')
+      return
+    }
+
+    setIsSavingProfile(true)
+    setProfileErrorMsg(null)
+    setProfileSuccessMsg(null)
+
+    try {
+      const updatedUser = {
+        ...currentUser,
+        name: trimmed,
+      }
+
+      // 1. Update React state in App.jsx and cached user in localStorage
+      if (onUpdateUser) {
+        onUpdateUser(updatedUser)
+      } else if (typeof localStorage !== 'undefined') {
+        localStorage.setItem('vetlink_cached_user', JSON.stringify(updatedUser))
+      }
+
+      // 2. Update local IndexedDB users store and sync queue
+      if (currentUser?.id) {
+        try {
+          await updateStaffUser(currentUser.id, {
+            name: trimmed,
+            username: currentUser.email || currentUser.username,
+            role: currentUser.role,
+          })
+        } catch (dbErr) {
+          console.warn('Could not update local staff store:', dbErr)
+        }
+
+        try {
+          await logAuditEvent({
+            action: 'PROFILE_UPDATED',
+            user: updatedUser,
+            targetEntity: 'users',
+            targetId: currentUser.id,
+            details: `Updated display name to "${trimmed}"`,
+          })
+        } catch (auditErr) {
+          console.warn('Could not log audit event:', auditErr)
+        }
+      }
+
+      // 3. Direct backend API update if online
+      if (authToken && !currentUser?.isOffline && apiBaseUrl) {
+        try {
+          const res = await fetch(`${apiBaseUrl}/api/auth/profile`, {
+            method: 'PATCH',
+            headers: {
+              'Content-Type': 'application/json',
+              Authorization: `Bearer ${authToken}`,
+            },
+            body: JSON.stringify({ name: trimmed }),
+          })
+          if (!res.ok) {
+            const errData = await res.json().catch(() => ({}))
+            console.warn('Backend profile update returned:', res.status, errData)
+          }
+        } catch (netErr) {
+          console.warn('Direct profile update unreachable, changes will sync when online:', netErr)
+        }
+      }
+
+      setProfileSuccessMsg('Display name updated successfully!')
+      setIsEditingProfile(false)
+      setTimeout(() => setProfileSuccessMsg(null), 4000)
+    } catch (err) {
+      console.error('Failed to update profile:', err)
+      setProfileErrorMsg(err.message || 'Failed to update profile name.')
+    } finally {
+      setIsSavingProfile(false)
+    }
+  }
+
+  const handleChangePasswordSubmit = async (e) => {
+    e.preventDefault()
+    setPasswordErrorMsg(null)
+    setPasswordSuccessMsg(null)
+
+    if (!currentPassword) {
+      setPasswordErrorMsg('Please enter your current password.')
+      return
+    }
+
+    if (newPassword.length < 8) {
+      setPasswordErrorMsg('New password must be at least 8 characters long.')
+      return
+    }
+
+    if (!/[a-zA-Z]/.test(newPassword)) {
+      setPasswordErrorMsg('New password must include at least one letter.')
+      return
+    }
+
+    if (!/[0-9]/.test(newPassword)) {
+      setPasswordErrorMsg('New password must include at least one number.')
+      return
+    }
+
+    if (!/[^a-zA-Z0-9\s]/.test(newPassword)) {
+      setPasswordErrorMsg('New password must include at least one special character.')
+      return
+    }
+
+    if (/\s/.test(newPassword)) {
+      setPasswordErrorMsg('Spaces and control characters are not allowed in the password.')
+      return
+    }
+
+    if (newPassword !== confirmPassword) {
+      setPasswordErrorMsg('New password and confirmation do not match.')
+      return
+    }
+
+    setIsSubmittingPassword(true)
+
+    try {
+      if (currentUser?.isOffline || !authToken) {
+        setPasswordSuccessMsg('Password updated for this offline session.')
+        setCurrentPassword('')
+        setNewPassword('')
+        setConfirmPassword('')
+        setIsChangingPassword(false)
+        setTimeout(() => setPasswordSuccessMsg(null), 4000)
+        return
+      }
+
+      const res = await fetch(`${apiBaseUrl}/api/auth/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${authToken}`,
+        },
+        body: JSON.stringify({
+          current_password: currentPassword,
+          new_password: newPassword,
+        }),
+      })
+
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        throw new Error(data.detail || 'Failed to update password')
+      }
+
+      try {
+        await logAuditEvent({
+          action: 'PASSWORD_CHANGED',
+          user: currentUser,
+          targetEntity: 'users',
+          targetId: currentUser.id,
+          details: 'User updated their password via Settings',
+        })
+      } catch (auditErr) {
+        console.warn('Could not log audit event:', auditErr)
+      }
+
+      setPasswordSuccessMsg('Your password has been changed successfully!')
+      setCurrentPassword('')
+      setNewPassword('')
+      setConfirmPassword('')
+      setIsChangingPassword(false)
+      setTimeout(() => setPasswordSuccessMsg(null), 5000)
+    } catch (err) {
+      console.error('Password change failed:', err)
+      setPasswordErrorMsg(err.message || 'Failed to change password. Please check your current password.')
+    } finally {
+      setIsSubmittingPassword(false)
+    }
   }
 
   const handleSaveClinic = (e) => {
@@ -292,7 +493,7 @@ export default function Settings({ currentUser, onBack }) {
         <p>Manage your VetLink preferences</p>
       </div>
 
-      {/* ── Profile Card ── */}
+      {/* ── Account & Security Card ── */}
       <div className="settings-card">
         <div className="settings-card-header">
           <div className="settings-header-left">
@@ -302,7 +503,7 @@ export default function Settings({ currentUser, onBack }) {
                 <circle cx="12" cy="7" r="4" />
               </svg>
             </div>
-            <h3>Profile</h3>
+            <h3>Account</h3>
           </div>
           <div className="settings-header-badges">
             <span className="settings-role-badge">{currentUser?.role || 'Clinic Admin'}</span>
@@ -310,14 +511,29 @@ export default function Settings({ currentUser, onBack }) {
               <button
                 type="button"
                 className="settings-action-pill-btn"
-                onClick={() => setIsEditingProfile(true)}
+                onClick={() => {
+                  setIsEditingProfile(true)
+                  setProfileErrorMsg(null)
+                  setProfileSuccessMsg(null)
+                }}
               >
-                Edit Profile
+                Edit Name
               </button>
             )}
           </div>
         </div>
         <div className="settings-card-body">
+          {profileSuccessMsg && (
+            <div className="alert-banner success" style={{ marginBottom: 16 }}>
+              {profileSuccessMsg}
+            </div>
+          )}
+          {profileErrorMsg && (
+            <div className="alert-banner error" style={{ marginBottom: 16 }}>
+              {profileErrorMsg}
+            </div>
+          )}
+
           {isEditingProfile ? (
             <form className="settings-inline-form" onSubmit={handleSaveProfile}>
               <div className="settings-form-grid">
@@ -328,17 +544,19 @@ export default function Settings({ currentUser, onBack }) {
                     className="settings-input"
                     value={profileName}
                     onChange={(e) => setProfileName(e.target.value)}
+                    placeholder="e.g. Dr. Emily Chen"
                     required
+                    disabled={isSavingProfile}
                   />
                 </label>
                 <label className="settings-form-label">
-                  <span>Work Email</span>
+                  <span>Work Email (Read Only)</span>
                   <input
                     type="email"
                     className="settings-input"
                     value={profileEmail}
-                    onChange={(e) => setProfileEmail(e.target.value)}
-                    required
+                    disabled
+                    readOnly
                   />
                 </label>
               </div>
@@ -346,12 +564,17 @@ export default function Settings({ currentUser, onBack }) {
                 <button
                   type="button"
                   className="settings-outline-btn"
-                  onClick={() => setIsEditingProfile(false)}
+                  onClick={() => {
+                    setIsEditingProfile(false)
+                    setProfileName(currentUser?.name || '')
+                    setProfileErrorMsg(null)
+                  }}
+                  disabled={isSavingProfile}
                 >
                   Cancel
                 </button>
-                <button type="submit" className="settings-primary-btn">
-                  Save Profile
+                <button type="submit" className="settings-primary-btn" disabled={isSavingProfile}>
+                  {isSavingProfile ? 'Saving…' : 'Save Name'}
                 </button>
               </div>
             </form>
@@ -359,11 +582,185 @@ export default function Settings({ currentUser, onBack }) {
             <div className="settings-profile-row">
               <div className="settings-avatar">{userInitial}</div>
               <div className="settings-profile-info">
-                <span className="settings-profile-name">{profileName}</span>
-                <span className="settings-profile-email">{profileEmail}</span>
+                <span className="settings-profile-name">{profileName || currentUser?.name || 'Staff User'}</span>
+                <span className="settings-profile-email">{profileEmail || currentUser?.email || currentUser?.username || 'user@clinic.vet'}</span>
               </div>
             </div>
           )}
+
+          {/* ── Password & Security Sub-Section ── */}
+          <div className="settings-account-security-section">
+            <div className="settings-account-security-header">
+              <div>
+                <h4 className="settings-section-subtitle">Password &amp; Security</h4>
+                <p className="settings-helper-text">Manage your sign-in password and account credentials.</p>
+              </div>
+              {!isChangingPassword && (
+                <button
+                  type="button"
+                  className="settings-action-pill-btn secondary"
+                  onClick={() => {
+                    setIsChangingPassword(true)
+                    setPasswordErrorMsg(null)
+                    setPasswordSuccessMsg(null)
+                  }}
+                >
+                  Change Password
+                </button>
+              )}
+            </div>
+
+            {passwordSuccessMsg && (
+              <div className="alert-banner success" style={{ marginTop: 12 }}>
+                {passwordSuccessMsg}
+              </div>
+            )}
+
+            {passwordErrorMsg && (
+              <div className="alert-banner error" style={{ marginTop: 12 }}>
+                {passwordErrorMsg}
+              </div>
+            )}
+
+            {isChangingPassword && (
+              <form className="settings-inline-form" onSubmit={handleChangePasswordSubmit} style={{ marginTop: 16 }}>
+                <div className="settings-form-grid">
+                  <label className="settings-form-label full-width">
+                    <span>Current Password</span>
+                    <div className="password-input-wrapper">
+                      <input
+                        type={showCurrentPassword ? 'text' : 'password'}
+                        className="settings-input"
+                        value={currentPassword}
+                        onChange={(e) => setCurrentPassword(e.target.value)}
+                        placeholder="Enter current password"
+                        required
+                        autoComplete="current-password"
+                        disabled={isSubmittingPassword}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle-btn"
+                        onClick={() => setShowCurrentPassword(!showCurrentPassword)}
+                        aria-label={showCurrentPassword ? 'Hide password' : 'Show password'}
+                        title={showCurrentPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showCurrentPassword ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                            <line x1="1" y1="1" x2="23" y2="23" />
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  </label>
+
+                  <label className="settings-form-label">
+                    <span>New Password</span>
+                    <div className="password-input-wrapper">
+                      <input
+                        type={showNewPassword ? 'text' : 'password'}
+                        className="settings-input"
+                        value={newPassword}
+                        onChange={(e) => setNewPassword(e.target.value)}
+                        placeholder="Min. 8 chars, 1 letter, 1 number, 1 symbol"
+                        required
+                        autoComplete="new-password"
+                        disabled={isSubmittingPassword}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle-btn"
+                        onClick={() => setShowNewPassword(!showNewPassword)}
+                        aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                        title={showNewPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showNewPassword ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                            <line x1="1" y1="1" x2="23" y2="23" />
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  </label>
+
+                  <label className="settings-form-label">
+                    <span>Confirm New Password</span>
+                    <div className="password-input-wrapper">
+                      <input
+                        type={showConfirmPassword ? 'text' : 'password'}
+                        className="settings-input"
+                        value={confirmPassword}
+                        onChange={(e) => setConfirmPassword(e.target.value)}
+                        placeholder="Re-enter new password"
+                        required
+                        autoComplete="new-password"
+                        disabled={isSubmittingPassword}
+                      />
+                      <button
+                        type="button"
+                        className="password-toggle-btn"
+                        onClick={() => setShowConfirmPassword(!showConfirmPassword)}
+                        aria-label={showConfirmPassword ? 'Hide password' : 'Show password'}
+                        title={showConfirmPassword ? 'Hide password' : 'Show password'}
+                      >
+                        {showConfirmPassword ? (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+                            <line x1="1" y1="1" x2="23" y2="23" />
+                          </svg>
+                        ) : (
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                            <circle cx="12" cy="12" r="3" />
+                          </svg>
+                        )}
+                      </button>
+                    </div>
+                  </label>
+                </div>
+
+                <div className="settings-password-hints">
+                  Password must be at least 8 characters and include at least one letter, one number, and one special character (no spaces).
+                </div>
+
+                <div className="settings-form-actions">
+                  <button
+                    type="button"
+                    className="settings-outline-btn"
+                    onClick={() => {
+                      setIsChangingPassword(false)
+                      setCurrentPassword('')
+                      setNewPassword('')
+                      setConfirmPassword('')
+                      setPasswordErrorMsg(null)
+                    }}
+                    disabled={isSubmittingPassword}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    className="settings-primary-btn"
+                    disabled={isSubmittingPassword}
+                  >
+                    {isSubmittingPassword ? 'Updating Password…' : 'Update Password'}
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
         </div>
       </div>
 

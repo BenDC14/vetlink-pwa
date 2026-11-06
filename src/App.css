@@ -4117,6 +4117,34 @@ html[data-theme="dark"] .dashboard-panel {
   max-width: 620px;
 }
 
+.settings-account-security-section {
+  margin-top: 24px;
+  padding-top: 20px;
+  border-top: 1px solid var(--border);
+}
+
+.settings-account-security-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 16px;
+  margin-bottom: 8px;
+}
+
+.settings-section-subtitle {
+  margin: 0 0 4px;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--text-h);
+}
+
+.settings-password-hints {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
 /* Mobile & Tablet Responsiveness */
 @media (max-width: 768px) {
   .settings-form-grid,
@@ -4143,6 +4171,12 @@ html[data-theme="dark"] .dashboard-panel {
   .settings-clinic-row {
     flex-direction: column;
     align-items: flex-start;
+  }
+
+  .settings-account-security-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 12px;
   }
 }
 

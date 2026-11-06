@@ -715,6 +715,14 @@ function App() {
               <Settings
                 currentUser={currentUser}
                 onBack={() => setShowSettings(false)}
+                authToken={authToken}
+                apiBaseUrl={API_BASE_URL}
+                onUpdateUser={(updatedUser) => {
+                  setCurrentUser(updatedUser)
+                  if (typeof localStorage !== 'undefined') {
+                    localStorage.setItem('vetlink_cached_user', JSON.stringify(updatedUser))
+                  }
+                }}
               />
             ) : showNewPatient ? (
               <NewPatient

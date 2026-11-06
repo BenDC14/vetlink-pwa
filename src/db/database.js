@@ -723,24 +723,31 @@ export async function updateStaffUser(id, updates) {
 
   const tx = db.transaction(['users', 'syncQueue'], 'readwrite')
   const existing = await tx.objectStore('users').get(id)
-  if (!existing) {
-    throw new Error(`Staff member with ID ${id} not found`)
-  }
 
   const queueStore = tx.objectStore('syncQueue')
   const existingQueueItems = await queueStore.index('entityId').getAll(id)
   const matchingQueueItems = existingQueueItems.filter((item) => item.entityType === 'users')
   const originalQueueItem = matchingQueueItems[0]
-  const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
-  const operation = matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
+  const baseRecord = existing || {
+    id,
+    username: updates.username?.trim() || `${id.toLowerCase()}@clinic.vet`,
+    name: updates.name?.trim() || 'Staff Member',
+    role: updates.role || 'Clinic Staff',
+    deviceStatus: updates.deviceStatus || 'Online',
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+  const baseVersion = originalQueueItem?.baseVersion ?? baseRecord.version ?? 0
+  const operation = !existing || matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
   const updatedRecord = {
-    ...existing,
+    ...baseRecord,
     ...updates,
     id,
-    username: updates.username?.trim() || existing.username,
-    name: updates.name ? updates.name.trim() : existing.name,
-    role: updates.role || existing.role,
-    deviceStatus: updates.deviceStatus || existing.deviceStatus,
+    username: updates.username?.trim() || baseRecord.username,
+    name: updates.name ? updates.name.trim() : baseRecord.name,
+    role: updates.role || baseRecord.role,
+    deviceStatus: updates.deviceStatus || baseRecord.deviceStatus,
     syncStatus: 'pending',
     version: baseVersion + 1,
     updatedAt: now,
