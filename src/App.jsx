@@ -734,16 +734,10 @@ function App() {
                 isOffline={currentUser?.isOffline}
                 onCapture={(payload) => {
                   setShowNewPatient(false)
-                  if (currentUser?.role === 'Clinic Staff') {
-                    // Clinic Staff returns to Patient Records table (cannot prescribe or view treatment directly)
-                    setTreatmentCaseData(null)
-                    setActiveView('patients')
-                  } else if (payload?.proceedToTreatment) {
-                    // Veterinarian / Admin who specifically opts into treatment
+                  if (payload?.proceedToTreatment) {
                     setTreatmentCaseData(payload)
                     setActiveView('treatment')
                   } else {
-                    // Default safe workflow: route to Patient Records
                     setTreatmentCaseData(null)
                     setActiveView('patients')
                   }

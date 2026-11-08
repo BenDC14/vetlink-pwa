@@ -189,6 +189,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   // Role-based Assistant Flow State
   const [intakeSuccess, setIntakeSuccess] = useState(false)
   const [savedSummary, setSavedSummary] = useState(null)
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState('')
 
   const fileInputRef = useRef(null)
 
@@ -205,10 +206,13 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     setAreaOfConcern('')
     setSelectedSymptoms([])
     setOtherSymptoms('')
-    setCustomSymptomInput('')
     setSelectedFile(null)
-    if (previewUrl) {
-      try { URL.revokeObjectURL(previewUrl) } catch (e) { }
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(previewUrl)
+      } catch {
+        // ignore error
+      }
     }
     setPreviewUrl(null)
     setAiResult(null)
@@ -217,11 +221,27 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     setLabTestReason('')
     setError('')
     setIntakeSuccess(false)
+    setSaveSuccessMessage('')
     setSavedSummary(null)
+    setCropModalOpen(false)
+    setFileToCrop(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
   }
+
+  // Cleanup preview URL on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(previewUrl)
+        } catch {
+          // ignore error
+        }
+      }
+    }
+  }, [previewUrl])
 
   // Pre-load the model in the background as soon as the page mounts
   useEffect(() => {
@@ -265,6 +285,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     setQualityRejection(null)
     setError('')
     setIntakeSuccess(false)
+    setSaveSuccessMessage('')
 
     // Run AI automatically after image is selected
     setIsAnalyzing(true)
@@ -522,65 +543,20 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         details: `Admitted patient ${patient.name} (${patient.species}) with diagnosis ${aiResult.displayLabel}${comorb.isComorbid ? ` + ${comorb.secondary}` : ''}. Status: ${assignedStatus}`,
       })
 
-      // Helper to completely clean up form inputs
-      const resetForm = () => {
-        setName('')
-        setSpecies('Canine')
-        setBreed('')
-        setWeight('')
-        setAge('')
-        setOwnerName('')
-        setOwnerPhone('')
-        setOwnerAddress('')
-        setOwnerEmail('')
-        setAreaOfConcern('')
-        setSelectedSymptoms([])
-        setOtherSymptoms('')
-        setCustomSymptomInput('')
-        setSelectedFile(null)
-        setAiResult(null)
-        setQualityRejection(null)
-        setLabTestRequired(false)
-        setLabTestReason('')
-        if (previewUrl && previewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(previewUrl)
-        }
-        setPreviewUrl(null)
-        if (fileInputRef.current) {
-          fileInputRef.current.value = ''
-        }
-      }
-
-      // If requested to proceed directly to treatment (e.g. Clinic Admin / Vet direct action)
+      // If requested to proceed directly to treatment (Consultation Rx)
       if (proceedToTreatment && onCapture) {
-        resetForm()
         onCapture({
           ...fullPayload,
           proceedToTreatment: true,
         })
+        resetForm()
         return
       }
 
-      // Otherwise, clean up form state and show admitted confirmation card
+      // Otherwise: SAVE & INTAKE NEW PATIENT
+      // Reset the page, completely removing the uploaded picture and all inputs
       resetForm()
-
-      setIntakeSuccess(true)
-      setSavedSummary({
-        patientId: patient.id,
-        name: patient.name,
-        species: patient.species,
-        breed: patient.breed,
-        weight: patient.weight,
-        ownerName: patient.ownerName,
-        ownerPhone: patient.ownerPhone,
-        ownerAddress: patient.ownerAddress,
-        ownerEmail: patient.ownerEmail,
-        status: assignedStatus,
-        diagnosis: aiResult.displayLabel,
-        secondary: comorb.isComorbid ? comorb.secondary : null,
-        labOrdered: labTestRequired,
-        fullPayload,
-      })
+      setSaveSuccessMessage(`Patient "${patient.name}" (${patient.id}) was successfully saved! The intake form has been reset for the next patient.`)
 
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -740,6 +716,49 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
               {modelReady ? 'AI READY' : modelError ? 'AI ERROR' : 'LOADING AI...'}
             </span>
           </div>
+
+          {saveSuccessMessage && (
+            <div
+              style={{
+                background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
+                border: '1.5px solid #86efac',
+                color: '#166534',
+                padding: '12px 18px',
+                borderRadius: 12,
+                margin: '12px 0 16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                boxShadow: '0 2px 8px rgba(22, 101, 52, 0.08)',
+                fontSize: '0.92rem',
+                fontWeight: 600,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span>{saveSuccessMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSaveSuccessMessage('')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#166534',
+                  cursor: 'pointer',
+                  fontSize: '1.2rem',
+                  padding: '2px 6px',
+                  lineHeight: 1,
+                }}
+                aria-label="Dismiss alert"
+              >
+                ✕
+              </button>
+            </div>
+          )}
 
           <div className="new-patient-topbar">
             <div>
@@ -1377,50 +1396,38 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
                   {/* Step 2: Save after AI result is ready */}
                   {aiResult && !qualityRejection && !isAnalyzing && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-                      {currentUser?.role === 'Clinic Admin' ? (
-                        <>
-                          <button
-                            className="capture-btn"
-                            type="button"
-                            onClick={() => handleSave(true)}
-                            disabled={isSaving}
-                            style={{
-                              background: 'linear-gradient(135deg, #0d9488, #0f766e)',
-                              boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
-                              fontWeight: 700
-                            }}
-                          >
-                            {isSaving ? 'SAVING PATIENT & SCAN...' : 'SAVE & PROCEED TO CONSULTATION / RX'}
-                          </button>
-                          <button
-                            className="secondary-btn"
-                            type="button"
-                            onClick={() => handleSave(false)}
-                            disabled={isSaving}
-                            style={{
-                              padding: '11px 16px',
-                              fontSize: '0.88rem',
-                              fontWeight: 600,
-                              background: '#f8fafc',
-                              border: '1px solid #cbd5e1',
-                              color: '#334155'
-                            }}
-                          >
-                            SAVE & INTAKE NEXT PATIENT
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          className="capture-btn"
-                          type="button"
-                          onClick={() => handleSave(false)}
-                          disabled={isSaving}
-                          style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
-                        >
-                          {isSaving ? 'SAVING INTAKE & SCAN...' : 'SAVE INTAKE & QUEUE FOR VET REVIEW'}
-                        </button>
-                      )}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+                      <button
+                        className="capture-btn"
+                        type="button"
+                        onClick={() => handleSave(true)}
+                        disabled={isSaving}
+                        style={{
+                          background: 'linear-gradient(135deg, #0d9488, #0f766e)',
+                          boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
+                          fontWeight: 700,
+                          padding: '12px 18px',
+                          fontSize: '0.92rem'
+                        }}
+                      >
+                        {isSaving ? 'SAVING PATIENT & SCAN...' : 'SAVE AND PROCEED TO CONSULTATION RX'}
+                      </button>
+                      <button
+                        className="secondary-btn"
+                        type="button"
+                        onClick={() => handleSave(false)}
+                        disabled={isSaving}
+                        style={{
+                          padding: '12px 18px',
+                          fontSize: '0.88rem',
+                          fontWeight: 600,
+                          background: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                          color: '#334155'
+                        }}
+                      >
+                        SAVE & INTAKE NEW PATIENT
+                      </button>
                     </div>
                   )}
                 </div>
