@@ -97,11 +97,20 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
  * Max dimension 1024px, JPEG quality 85% (~150KB - 200KB).
  * Preserves full dermatological detail while eliminating 5-10 second network lag.
  */
-function downscaleImage(fileOrBlob, maxDim = 1024, quality = 0.85) {
+function downscaleImage(fileOrBlob, maxDim = 1024, quality = 0.85, onProgress = null) {
   return new Promise((resolve) => {
     const img = new Image()
     const reader = new FileReader()
+    if (onProgress) {
+      reader.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) {
+          const pct = Math.min(30, Math.round((e.loaded / e.total) * 30))
+          onProgress(pct, 'Reading image file from device...')
+        }
+      }
+    }
     reader.onload = (e) => {
+      if (onProgress) onProgress(35, 'Decoding image resolution...')
       img.onload = () => {
         let { width, height } = img
         if (width > maxDim || height > maxDim) {
@@ -120,6 +129,7 @@ function downscaleImage(fileOrBlob, maxDim = 1024, quality = 0.85) {
         ctx.imageSmoothingEnabled = true
         ctx.imageSmoothingQuality = 'high'
         ctx.drawImage(img, 0, 0, width, height)
+        if (onProgress) onProgress(45, 'Optimizing lesion resolution...')
         canvas.toBlob((blob) => {
           if (blob) {
             const downscaledFile = new File([blob], fileOrBlob.name || 'lesion_optimized.jpg', {
@@ -172,6 +182,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [selectedFile, setSelectedFile] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(null)
+  const [uploadStage, setUploadStage] = useState('')
   const [aiResult, setAiResult] = useState(null)
   const [qualityRejection, setQualityRejection] = useState(null)
   const [modelReady, setModelReady] = useState(false)
@@ -215,6 +227,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       }
     }
     setPreviewUrl(null)
+    setUploadProgress(null)
+    setUploadStage('')
     setAiResult(null)
     setQualityRejection(null)
     setLabTestRequired(false)
@@ -263,38 +277,56 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       return
     }
 
+    setUploadProgress(15)
+    setUploadStage('Reading file from device...')
+    setIsAnalyzing(true)
+    setError('')
+    setAiResult(null)
+    setQualityRejection(null)
+
     // Downscale locally in browser canvas to max 1024px @ 85% JPEG (~150KB)
     // Instantaneous upload on Render/Vercel with 0% accuracy loss for 224x224 MobileNetV3
     let file = rawFile
     let downscaledDataUrl = null
     try {
-      const downscaled = await downscaleImage(rawFile, 1024, 0.85)
+      const downscaled = await downscaleImage(rawFile, 1024, 0.85, (pct, stage) => {
+        setUploadProgress(pct)
+        if (stage) setUploadStage(stage)
+      })
       file = downscaled.file
       downscaledDataUrl = downscaled.dataUrl
     } catch (downscaleErr) {
       console.warn('Downscaling fallback to raw file:', downscaleErr)
     }
 
+    setUploadProgress(50)
+    setUploadStage('Preparing preview & quality verification...')
+
     // Revoke previous preview URL to avoid memory leaks
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(previewUrl)
+      } catch {
+        // ignore
+      }
+    }
 
     const url = downscaledDataUrl || URL.createObjectURL(file)
     setSelectedFile(file)
     setPreviewUrl(url)
-    setAiResult(null)
-    setQualityRejection(null)
-    setError('')
     setIntakeSuccess(false)
     setSaveSuccessMessage('')
 
-    // Run AI automatically after image is selected
-    setIsAnalyzing(true)
     try {
+      setUploadProgress(65)
+      setUploadStage('Verifying dermatological image sharpness...')
       const imgElement = await loadImageFromFile(file)
 
       // Step 1: Client-Side Clinical Image Quality & Anti-Blur Gate
       const quality = validateClinicalImageQuality(imgElement)
       if (!quality.isValid) {
+        setUploadProgress(null)
+        setUploadStage('')
         setQualityRejection({
           title: quality.title || 'Image Rejected: Quality Gate Failed',
           reason: quality.reason || 'LOW_QUALITY',
@@ -307,10 +339,17 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       }
 
       // Step 2: Animal Verification & Disease Classification (Backend TFLite / WASM)
+      setUploadProgress(80)
+      setUploadStage('Running AI lesion disease screening...')
       const result = await predict(imgElement, species)
+
+      setUploadProgress(95)
+      setUploadStage('Generating Grad-CAM attention heatmap...')
 
       // Step 2b: Server-Side Inanimate / Non-Animal Gate Check
       if (result.rejected) {
+        setUploadProgress(null)
+        setUploadStage('')
         setQualityRejection({
           title: 'Image Rejected: Non-Animal Subject Detected',
           reason: result.reason || 'NON_ANIMAL',
@@ -322,6 +361,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         return // HARD STOP - Do not accept non-animal images!
       }
 
+      setUploadProgress(100)
+      setUploadStage('Upload & screening complete!')
       setAiResult(result)
 
       // Intelligent Symptom Pre-selection & Lab Test Auto-evaluation
@@ -352,6 +393,10 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       setError(`AI could not analyze this image: ${err.message || err}`)
     } finally {
       setIsAnalyzing(false)
+      setTimeout(() => {
+        setUploadProgress(null)
+        setUploadStage('')
+      }, 400)
     }
   }
 
@@ -408,7 +453,9 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             message: result.message,
             instructions: 'Please take or upload a photo showing an animal patient.',
           })
-          setAiResult(null)
+          setUploadProgress(null)
+    setUploadStage('')
+    setAiResult(null)
         } else {
           setAiResult(result)
         }
@@ -777,7 +824,73 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
             {/* ── Left: Image Preview ─────────────────────────────── */}
             <div className="new-patient-preview">
-              {previewUrl ? (
+              {uploadProgress !== null ? (
+                <div
+                  className="upload-progress-card"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 12,
+                    padding: '24px 16px',
+                    textAlign: 'center',
+                    background: '#f8fafc',
+                    borderRadius: 12,
+                    border: '2px dashed #0284c7',
+                    minHeight: 220,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: '50%',
+                      background: '#e0f2fe',
+                      color: '#0284c7',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                    <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0369a1' }}>
+                      {uploadProgress}%
+                    </span>
+                    <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 600 }}>
+                      uploaded
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      width: '85%',
+                      height: 8,
+                      background: '#e2e8f0',
+                      borderRadius: 999,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${uploadProgress}%`,
+                        height: '100%',
+                        background: 'linear-gradient(90deg, #0284c7, #10b981)',
+                        borderRadius: 999,
+                        transition: 'width 0.25s ease-out',
+                      }}
+                    />
+                  </div>
+                  <span style={{ fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>
+                    {uploadStage || 'Uploading picture...'}
+                  </span>
+                </div>
+              ) : previewUrl ? (
                 <img
                   src={previewUrl}
                   alt="Pet photo preview"
@@ -1030,12 +1143,43 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
                 {error && <p role="alert" style={{ color: '#ef4444', fontSize: '0.85rem', margin: '4px 0' }}>{error}</p>}
 
-                {/* AI Analysis Result */}
-                {isAnalyzing && (
+                {/* AI Analysis Result & Upload Progress */}
+                {uploadProgress !== null ? (
+                  <div
+                    style={{
+                      padding: '14px 18px',
+                      background: 'linear-gradient(135deg, #f0fdf4, #f0f9ff)',
+                      border: '1.5px solid #7dd3fc',
+                      borderRadius: 12,
+                      marginTop: 12,
+                      boxShadow: '0 2px 8px rgba(2, 132, 199, 0.08)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0369a1', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="ai-spinner">⏳</span> {uploadStage || 'Uploading & processing picture...'}
+                      </span>
+                      <span style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0284c7' }}>
+                        {uploadProgress}%
+                      </span>
+                    </div>
+                    <div style={{ width: '100%', height: 8, background: '#e0f2fe', borderRadius: 999, overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${uploadProgress}%`,
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #0284c7, #10b981)',
+                          borderRadius: 999,
+                          transition: 'width 0.25s ease-out',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : isAnalyzing ? (
                   <div className="ai-result-box analyzing">
                     <span className="ai-spinner">⏳</span> Analyzing image with Edge WASM & Grad-CAM...
                   </div>
-                )}
+                ) : null}
 
                 {/* Clinical Image Rejection Card */}
                 {qualityRejection && !isAnalyzing && (
