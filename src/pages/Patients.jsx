@@ -1494,7 +1494,6 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       type="file"
                       ref={recheckInputRef}
                       accept="image/*"
-                      capture="environment"
                       style={{ display: 'none' }}
                       onChange={handleRecheckFileChange}
                     />

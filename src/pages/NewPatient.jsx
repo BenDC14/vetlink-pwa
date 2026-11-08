@@ -587,15 +587,14 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
   return (
     <section className="new-patient-card">
-      {/* Hidden file input — opens camera on mobile, file picker on desktop */}
+      {/* Hidden file input — opens device file picker / photo gallery */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         style={{ display: 'none' }}
         onChange={handleFileChange}
-        aria-label="Capture or upload a pet photo"
+        aria-label="Upload a pet photo from device"
       />
 
       {/* Assistant Intake Success Confirmation Card */}
