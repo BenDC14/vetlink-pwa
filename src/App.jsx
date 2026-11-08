@@ -798,6 +798,8 @@ function App() {
                   <Treatment
                     currentUser={currentUser}
                     caseData={treatmentCaseData}
+                    authToken={authToken}
+                    apiBaseUrl={API_BASE_URL}
                     onBack={() => {
                       setTreatmentCaseData(null)
                       setActiveView('patients')

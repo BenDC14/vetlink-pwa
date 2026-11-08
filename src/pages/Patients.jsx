@@ -17,6 +17,7 @@ import {
 import CameraCaptureModal from '../components/CameraCaptureModal'
 import ImageCropModal from '../components/ImageCropModal'
 import ImageViewerModal from '../components/ImageViewerModal'
+import EmailPrescriptionModal from '../components/EmailPrescriptionModal'
 
 const CLINICAL_DIAGNOSES = [
   'Mange',
@@ -87,6 +88,33 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [vetAdjustedRx, setVetAdjustedRx]               = useState('')
   const [recheckTab, setRecheckTab]                     = useState('evaluate') // 'evaluate' | 'history'
   const [activeViewerImage, setActiveViewerImage]       = useState(null)
+  const [emailRxModalData, setEmailRxModalData]         = useState(null)
+
+  const handleOpenEmailRx = async (patient, specificConsult = null) => {
+    try {
+      let consult = specificConsult
+      if (!consult) {
+        const consults = await getConsultationsByPatient(patient.id)
+        consult = consults && consults.length > 0 ? consults[consults.length - 1] : null
+      }
+      setEmailRxModalData({
+        patient,
+        consultation: consult,
+        prescription: consult?.treatmentPlan || '',
+        clinicalNotes: consult?.clinicalNotes || '',
+        diagnosis: consult?.diagnosis || patient?.areaOfConcern || 'Cutaneous Dermatological Condition',
+      })
+    } catch (err) {
+      console.warn('Could not load consultation for email:', err)
+      setEmailRxModalData({
+        patient,
+        consultation: null,
+        prescription: '',
+        clinicalNotes: '',
+        diagnosis: patient?.areaOfConcern || 'Cutaneous Dermatological Condition',
+      })
+    }
+  }
 
   const refreshPatients = async () => {
     const savedPatients = await getPatients()
@@ -801,6 +829,20 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                           Recheck
                         </button>
                         <button
+                          className="secondary-btn table-action-btn email-rx-pill-btn"
+                          type="button"
+                          onClick={() => handleOpenEmailRx(patient)}
+                          title="Email Prescription to Pet Owner"
+                          style={{
+                            background: '#f0f9ff',
+                            color: '#0369a1',
+                            borderColor: '#bae6fd',
+                            fontWeight: 600,
+                          }}
+                        >
+                          ✉️ Email Rx
+                        </button>
+                        <button
                           className="small-outline table-action-btn edit-pill-btn"
                           type="button"
                           onClick={() => openEditPatient(patient)}
@@ -1195,7 +1237,29 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 <button className="small-outline" type="button" onClick={() => setReviewPatient(null)} disabled={isSavingReview}>
                   Cancel
                 </button>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {reviewConsult?.treatmentPlan && (
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{ padding: '8px 14px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                      onClick={() => {
+                        const rawDiag = overrideDiag === 'OTHER'
+                          ? (customDiag.trim() || 'Custom Dermatological Condition')
+                          : (overrideDiag || reviewConsult?.diagnosis || reviewPatient.areaOfConcern || 'Clinical Dermatological Case')
+                        setEmailRxModalData({
+                          patient: reviewPatient,
+                          consultation: reviewConsult,
+                          prescription: reviewConsult.treatmentPlan,
+                          clinicalNotes: reviewConsult.clinicalNotes || '',
+                          diagnosis: rawDiag,
+                        })
+                      }}
+                      title="Email official prescription to pet owner"
+                    >
+                      ✉️ Email Rx
+                    </button>
+                  )}
                   {onProceedToTreatment && (
                     <button
                       type="button"
@@ -1386,7 +1450,28 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                           )}
                           {v.consultation?.treatmentPlan && (
                             <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '6px 10px', borderRadius: 6, marginTop: 4, color: '#166534', fontSize: '0.8rem' }}>
-                              <strong>Prescription / Regimen:</strong> {v.consultation.treatmentPlan}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
+                                <div style={{ flex: 1 }}>
+                                  <strong>Prescription / Regimen:</strong> {v.consultation.treatmentPlan}
+                                </div>
+                                <button
+                                  type="button"
+                                  className="secondary-btn"
+                                  style={{ padding: '3px 8px', fontSize: '0.72rem', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                  onClick={() => {
+                                    setEmailRxModalData({
+                                      patient: recheckPatient,
+                                      consultation: v.consultation,
+                                      prescription: v.consultation.treatmentPlan,
+                                      clinicalNotes: v.consultation.clinicalNotes || '',
+                                      diagnosis: v.consultation.diagnosis || recheckPatient?.areaOfConcern || 'Follow-up Recheck',
+                                    })
+                                  }}
+                                  title="Email this visit's prescription to owner"
+                                >
+                                  ✉️ Email Rx
+                                </button>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1688,10 +1773,29 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   </>
                 )}
 
-                <div className="modal-actions" style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="modal-actions" style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                   <button className="small-outline" type="button" onClick={() => setRecheckPatient(null)} disabled={isSavingRecheck}>Cancel</button>
 
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {(vetAdjustedRx || pastConsult?.treatmentPlan) && (
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ padding: '8px 12px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                        onClick={() => {
+                          setEmailRxModalData({
+                            patient: recheckPatient,
+                            consultation: pastConsult,
+                            prescription: vetAdjustedRx || pastConsult?.treatmentPlan || '',
+                            clinicalNotes: recheckNotes || pastConsult?.clinicalNotes || '',
+                            diagnosis: `Follow-up: ${pastConsult?.diagnosis || recheckPatient?.areaOfConcern || 'Cutaneous Check'}`,
+                          })
+                        }}
+                        title="Email adjusted prescription to pet owner"
+                      >
+                        ✉️ Email Rx
+                      </button>
+                    )}
                     {currentUser?.role !== 'Clinic Staff' && onProceedToTreatment && (
                       <button
                         type="button"
@@ -1752,6 +1856,27 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         subtitle={activeViewerImage?.subtitle}
         onClose={() => setActiveViewerImage(null)}
       />
+
+      {/* Send Prescription to Pet Owner Modal */}
+      {emailRxModalData && (
+        <EmailPrescriptionModal
+          isOpen={Boolean(emailRxModalData)}
+          onClose={() => setEmailRxModalData(null)}
+          patient={emailRxModalData.patient}
+          consultation={emailRxModalData.consultation}
+          prescription={emailRxModalData.prescription}
+          clinicalNotes={emailRxModalData.clinicalNotes}
+          diagnosis={emailRxModalData.diagnosis}
+          doctorName={currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM'}
+          currentUser={currentUser}
+          authToken={authToken}
+          apiBaseUrl={apiBaseUrl}
+          onPrescriptionSent={(newEmail) => {
+            refreshPatients()
+            setSuccessMessage(`Prescription successfully emailed to ${newEmail} for ${emailRxModalData.patient?.name || 'patient'}.`)
+          }}
+        />
+      )}
     </section>
   )
 }

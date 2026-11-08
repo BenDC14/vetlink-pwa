@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { updateConsultation, logAuditEvent } from '../db/database'
+import EmailPrescriptionModal from '../components/EmailPrescriptionModal'
 
 export const BASE_TREATMENT_PROTOCOLS = {
   // ── Canine (Aso) Protocols (Exact 11 dataset classes) ─────────
@@ -364,12 +365,13 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Docu
   }, 250)
 }
 
-export default function Treatment({ onBack, caseData, currentUser }) {
+export default function Treatment({ onBack, caseData, currentUser, authToken, apiBaseUrl = 'http://localhost:8000' }) {
   const [protocols, setProtocols] = useState(loadSavedProtocols)
   const isLibraryMode = !caseData?.patient
   const patient       = caseData?.patient
   const consultation  = caseData?.consultation
   const aiResult      = caseData?.aiResult
+  const [currentOwnerEmail, setCurrentOwnerEmail] = useState(patient?.ownerEmail || '')
 
   // Check if case is flagged as awaiting lab test
   const isAwaitingLab = Boolean(
@@ -409,6 +411,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   // Show "Add Custom Protocol" modal state
   const [showAddModal, setShowAddModal] = useState(false)
   const [showRxPreviewModal, setShowRxPreviewModal] = useState(false)
+  const [showEmailModal, setShowEmailModal] = useState(false)
   const [showLabSlipPreviewModal, setShowLabSlipPreviewModal] = useState(false)
   const [newProtocolName, setNewProtocolName] = useState('')
   const [newProtocolCategory, setNewProtocolCategory] = useState('Canine Protocols (Aso)')
@@ -1115,6 +1118,17 @@ export default function Treatment({ onBack, caseData, currentUser }) {
             >
               {isAwaitingLab ? 'View Laboratory Requisition Slip' : 'Preview & Print Prescription (Rx)'}
             </button>
+            {!isLibraryMode && !isAwaitingLab && (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setShowEmailModal(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                title="Send prescription directly to pet owner's email address"
+              >
+                ✉️ Email Rx to Owner
+              </button>
+            )}
             {!isLibraryMode && (
               <button
                 type="button"
@@ -1317,7 +1331,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 onClick={() => setShowRxPreviewModal(false)}
@@ -1326,6 +1340,31 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               >
                 Close Preview
               </button>
+              {!isLibraryMode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRxPreviewModal(false)
+                    setShowEmailModal(true)
+                  }}
+                  className="secondary-btn"
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: '#0369a1',
+                    color: '#ffffff',
+                    border: 'none',
+                  }}
+                  title="Send this prescription to owner's email address"
+                >
+                  ✉️ Email to Owner
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handlePrintRx}
@@ -1645,6 +1684,26 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               </button>
             </div>
           </div>
+        )}
+
+        {/* ── Email Prescription to Pet Owner Modal ──────────────── */}
+        {showEmailModal && (
+          <EmailPrescriptionModal
+            isOpen={showEmailModal}
+            onClose={() => setShowEmailModal(false)}
+            patient={patient ? { ...patient, ownerEmail: currentOwnerEmail || patient.ownerEmail } : caseData}
+            consultation={consultation || caseData?.consultation}
+            prescription={prescription}
+            clinicalNotes={clinicalNotes}
+            diagnosis={cleanDiagnosisDisplay}
+            doctorName={currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM'}
+            currentUser={currentUser}
+            authToken={authToken}
+            apiBaseUrl={apiBaseUrl}
+            onPrescriptionSent={(newEmail) => {
+              setCurrentOwnerEmail(newEmail)
+            }}
+          />
         )}
       </div>
     </>
