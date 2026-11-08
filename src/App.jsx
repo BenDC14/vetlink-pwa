@@ -365,25 +365,31 @@ function App() {
   }
 
   const handleLogout = async () => {
-    try {
-      await fetch(`${API_BASE_URL}/api/auth/logout`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-    } catch {
-      // Clear the local session even when the server cannot be reached.
-    } finally {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('vetlink_auth_token')
-        localStorage.removeItem('vetlink_cached_user')
+    // Only attempt server-side token invalidation if there is an active cloud session
+    if (authToken && !currentUser?.isOffline) {
+      try {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authToken}` },
+        })
+      } catch {
+        // Clear local session even when server is unreachable
       }
-      setAuthToken('')
-      setCurrentUser(null)
-      setLoggedIn(false)
-      setActiveView('clinic')
-      setShowNewPatient(false)
-      setShowSettings(false)
     }
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('vetlink_auth_token')
+      localStorage.removeItem('vetlink_cached_user')
+    }
+    setAuthToken('')
+    setCurrentUser(null)
+    setLoggedIn(false)
+    setActiveView('clinic')
+    setShowNewPatient(false)
+    setShowSettings(false)
+    setTreatmentCaseData(null)
+    setImage(null)
+    setPreviewUrl(null)
   }
 
   // --- Global Theme Engine (applies to body, sidebar, header, and all views) ---
@@ -646,6 +652,23 @@ function App() {
                   Install PWA
                 </button>
               )}
+              {currentUser?.isOffline && (
+                <button
+                  type="button"
+                  className="action-btn secondary"
+                  style={{
+                    borderColor: '#fca5a5',
+                    color: '#dc2626',
+                    background: '#fff',
+                    marginTop: 6,
+                    fontWeight: 600,
+                  }}
+                  onClick={() => setShowLogoutConfirm(true)}
+                  title="Exit Offline Demo Mode"
+                >
+                  Exit Demo Mode
+                </button>
+              )}
             </div>
           </aside>
 
@@ -717,6 +740,7 @@ function App() {
                 onBack={() => setShowSettings(false)}
                 authToken={authToken}
                 apiBaseUrl={API_BASE_URL}
+                onLogout={() => setShowLogoutConfirm(true)}
                 onUpdateUser={(updatedUser) => {
                   setCurrentUser(updatedUser)
                   if (typeof localStorage !== 'undefined') {
@@ -865,7 +889,7 @@ function App() {
             <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="logout-confirm-title">
               <div className="modal-dialog" style={{ maxWidth: '440px' }}>
                 <header className="modal-header">
-                  <h3 id="logout-confirm-title">Confirm Logout</h3>
+                  <h3 id="logout-confirm-title">{currentUser?.isOffline ? 'Exit Demo Session' : 'Confirm Logout'}</h3>
                   <button
                     type="button"
                     className="modal-close-btn"
@@ -877,7 +901,9 @@ function App() {
                 </header>
                 <div className="modal-form">
                   <p style={{ margin: 0, fontSize: '0.96rem', color: 'var(--text-h)', fontWeight: 600 }}>
-                    Are you sure you want to log out?
+                    {currentUser?.isOffline
+                      ? 'Exit offline demo mode and return to sign in?'
+                      : 'Are you sure you want to log out?'}
                   </p>
                   <div className="modal-actions" style={{ marginTop: '8px' }}>
                     <button
@@ -895,7 +921,7 @@ function App() {
                         handleLogout()
                       }}
                     >
-                      Log Out
+                      {currentUser?.isOffline ? 'Exit Demo' : 'Log Out'}
                     </button>
                   </div>
                 </div>

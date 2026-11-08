@@ -5,7 +5,7 @@ import { initDatabase, updateStaffUser, logAuditEvent } from '../db/database'
  * Settings page — Option A (Stacked Cards) layout.
  * Renders inside the dashboard-panel when the Settings header icon is clicked.
  */
-export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, onUpdateUser }) {
+export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, onUpdateUser, onLogout }) {
   // --- Notifications state (persisted in localStorage) ---
   const [notifications, setNotifications] = useState(() => {
     try {
@@ -595,19 +595,35 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                 <h4 className="settings-section-subtitle">Password &amp; Security</h4>
                 <p className="settings-helper-text">Manage your sign-in password and account credentials.</p>
               </div>
-              {!isChangingPassword && (
-                <button
-                  type="button"
-                  className="settings-action-pill-btn secondary"
-                  onClick={() => {
-                    setIsChangingPassword(true)
-                    setPasswordErrorMsg(null)
-                    setPasswordSuccessMsg(null)
-                  }}
-                >
-                  Change Password
-                </button>
-              )}
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                {!isChangingPassword && (
+                  <button
+                    type="button"
+                    className="settings-action-pill-btn secondary"
+                    onClick={() => {
+                      setIsChangingPassword(true)
+                      setPasswordErrorMsg(null)
+                      setPasswordSuccessMsg(null)
+                    }}
+                  >
+                    Change Password
+                  </button>
+                )}
+                {onLogout && (
+                  <button
+                    type="button"
+                    className="settings-action-pill-btn"
+                    style={{
+                      background: '#fef2f2',
+                      borderColor: '#fca5a5',
+                      color: '#dc2626',
+                    }}
+                    onClick={onLogout}
+                  >
+                    {currentUser?.isOffline ? 'Exit Demo Session' : 'Log Out'}
+                  </button>
+                )}
+              </div>
             </div>
 
             {passwordSuccessMsg && (
