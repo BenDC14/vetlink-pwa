@@ -16,6 +16,7 @@ import {
 } from '../db/database'
 import CameraCaptureModal from '../components/CameraCaptureModal'
 import ImageCropModal from '../components/ImageCropModal'
+import ImageViewerModal from '../components/ImageViewerModal'
 
 const CLINICAL_DIAGNOSES = [
   'Mange',
@@ -85,6 +86,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [staffRecheckVitals, setStaffRecheckVitals]     = useState('')
   const [vetAdjustedRx, setVetAdjustedRx]               = useState('')
   const [recheckTab, setRecheckTab]                     = useState('evaluate') // 'evaluate' | 'history'
+  const [activeViewerImage, setActiveViewerImage]       = useState(null)
 
   const refreshPatients = async () => {
     const savedPatients = await getPatients()
@@ -976,11 +978,38 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
               <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 14, padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #cbd5e1' }}>
                 <div>
                   {reviewScreening?.imageData ? (
-                    <img
-                      src={reviewScreening.imageData}
-                      alt="Lesion Photo"
-                      style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 6, border: '1px solid #94a3b8' }}
-                    />
+                    <div
+                      style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 6 }}
+                      onClick={() => setActiveViewerImage({
+                        src: reviewScreening.imageData,
+                        title: `${reviewPatient.name} — Baseline Lesion Scan`,
+                        subtitle: `${reviewScreening.aiDisplayLabel || reviewConsult?.diagnosis || 'Clinical Scan'} • ${reviewPatient.species || 'Animal'} • Tap to inspect / zoom`,
+                      })}
+                      title="Click to inspect lesion image (Zoom & Pan)"
+                    >
+                      <img
+                        src={reviewScreening.imageData}
+                        alt="Lesion Photo"
+                        style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 6, border: '1px solid #94a3b8', display: 'block', transition: 'transform 0.2s ease' }}
+                      />
+                      <div style={{
+                        position: 'absolute',
+                        bottom: 4,
+                        right: 4,
+                        background: 'rgba(15, 23, 42, 0.8)',
+                        color: '#f8fafc',
+                        fontSize: '0.68rem',
+                        padding: '3px 7px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontWeight: 600,
+                        backdropFilter: 'blur(4px)',
+                      }}>
+                        🔍 View / Zoom
+                      </div>
+                    </div>
                   ) : (
                     <div style={{ width: '100%', height: 140, background: '#e2e8f0', borderRadius: 6, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.78rem' }}>
                       No Photo
@@ -1310,12 +1339,37 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
                       <div style={{ display: 'grid', gridTemplateColumns: v.screening?.imageData ? '120px 1fr' : '1fr', gap: 12 }}>
                         {v.screening?.imageData && (
-                          <div>
+                          <div
+                            style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 6, width: 120, height: 110 }}
+                            onClick={() => setActiveViewerImage({
+                              src: v.screening.imageData,
+                              title: `${recheckPatient?.name || 'Patient'} — Visit #${v.visitNum} Lesion Scan`,
+                              subtitle: `Diagnosis: ${v.consultation?.diagnosis || 'Clinical Check'} • ${v.consultation?.createdAt?.slice(0, 10) || 'Past Visit'}`,
+                            })}
+                            title="Click to view & zoom visit lesion"
+                          >
                             <img
                               src={v.screening.imageData}
                               alt={`Visit ${v.visitNum} lesion`}
-                              style={{ width: 120, height: 110, objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                              style={{ width: 120, height: 110, objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1', display: 'block' }}
                             />
+                            <div style={{
+                              position: 'absolute',
+                              bottom: 3,
+                              right: 3,
+                              background: 'rgba(15, 23, 42, 0.8)',
+                              color: '#f8fafc',
+                              fontSize: '0.62rem',
+                              padding: '2px 5px',
+                              borderRadius: 4,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 2,
+                              fontWeight: 600,
+                              backdropFilter: 'blur(4px)',
+                            }}>
+                              🔍 Zoom
+                            </div>
                           </div>
                         )}
                         <div style={{ fontSize: '0.84rem', lineHeight: 1.45, color: '#1e293b' }}>
@@ -1403,11 +1457,38 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       Prior Visit Lesion
                     </div>
                     {pastScreening?.imageData ? (
-                      <img
-                        src={pastScreening.imageData}
-                        alt="Prior visit lesion"
-                        style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1' }}
-                      />
+                      <div
+                        style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 8 }}
+                        onClick={() => setActiveViewerImage({
+                          src: pastScreening.imageData,
+                          title: `${recheckPatient.name} — Prior Visit Lesion`,
+                          subtitle: `Prior Diagnosis: ${pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous check'} • Date: ${pastConsult?.createdAt?.slice(0, 10) || recheckPatient.lastVisit || 'Initial Visit'}`,
+                        })}
+                        title="Click to inspect prior visit lesion (Zoom & Pan)"
+                      >
+                        <img
+                          src={pastScreening.imageData}
+                          alt="Prior visit lesion"
+                          style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1', display: 'block' }}
+                        />
+                        <div style={{
+                          position: 'absolute',
+                          bottom: 4,
+                          right: 4,
+                          background: 'rgba(15, 23, 42, 0.8)',
+                          color: '#f8fafc',
+                          fontSize: '0.68rem',
+                          padding: '3px 7px',
+                          borderRadius: 4,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          fontWeight: 600,
+                          backdropFilter: 'blur(4px)',
+                        }}>
+                          🔍 View / Zoom
+                        </div>
+                      </div>
                     ) : (
                       <div style={{ width: '100%', height: 140, background: '#e2e8f0', borderRadius: 8, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.78rem' }}>
                         No prior photo saved
@@ -1426,11 +1507,38 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                     </div>
                     {recheckPreview ? (
                       <div>
-                        <img
-                          src={recheckPreview}
-                          alt="Today's recheck lesion"
-                          style={{ width: '100%', height: 150, objectFit: 'cover', borderRadius: 8, border: '1px solid #86efac' }}
-                        />
+                        <div
+                          style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 8 }}
+                          onClick={() => setActiveViewerImage({
+                            src: recheckPreview,
+                            title: `${recheckPatient.name} — Today's Follow-up Lesion`,
+                            subtitle: `Recheck Date: ${new Date().toISOString().slice(0, 10)} • Progress: ${recheckProgress}`,
+                          })}
+                          title="Click to inspect today's photo (Zoom & Pan)"
+                        >
+                          <img
+                            src={recheckPreview}
+                            alt="Today's recheck lesion"
+                            style={{ width: '100%', height: 150, objectFit: 'cover', borderRadius: 8, border: '1px solid #86efac', display: 'block' }}
+                          />
+                          <div style={{
+                            position: 'absolute',
+                            bottom: 4,
+                            right: 4,
+                            background: 'rgba(15, 23, 42, 0.8)',
+                            color: '#f8fafc',
+                            fontSize: '0.68rem',
+                            padding: '3px 7px',
+                            borderRadius: 4,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontWeight: 600,
+                            backdropFilter: 'blur(4px)',
+                          }}>
+                            🔍 View / Zoom
+                          </div>
+                        </div>
                         <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                           <button
                             type="button"
@@ -1634,6 +1742,15 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         }}
         onConfirmCrop={handleConfirmRecheckCrop}
         onUseFullImage={handleUseFullRecheckImage}
+      />
+
+      {/* Clinical High-Resolution Lesion Image Zoom & Pan Inspection Lightbox */}
+      <ImageViewerModal
+        isOpen={Boolean(activeViewerImage)}
+        src={activeViewerImage?.src}
+        title={activeViewerImage?.title}
+        subtitle={activeViewerImage?.subtitle}
+        onClose={() => setActiveViewerImage(null)}
       />
     </section>
   )
