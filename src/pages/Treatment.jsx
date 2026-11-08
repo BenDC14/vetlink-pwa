@@ -380,8 +380,11 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   )
 
   const patientSpecies = patient?.species || caseData?.species || 'Canine'
-  let parsedPrimary = caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange'
+  let parsedPrimary = String(caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange')
   let parsedSecondary = caseData?.approvedSecondary || caseData?.secondaryDiagnosis || null
+  if (typeof parsedSecondary !== 'string' && parsedSecondary) {
+    parsedSecondary = String(parsedSecondary)
+  }
 
   // Cleanly parse dual conditions like "Mange with Pyoderma" or "Mange + Pyoderma"
   if (parsedPrimary.toLowerCase().includes(' with ')) {
@@ -458,23 +461,26 @@ export default function Treatment({ onBack, caseData, currentUser }) {
     }
   ) : null
 
+  const safeDiagnosis = String(diagnosis || '')
+  const safeSecondaryDiagnosis = typeof secondaryDiagnosis === 'string' ? secondaryDiagnosis : ''
+
   // FR7: 60% Confidence Decision Boundary Rule (Thesis pp. 11, 41, 46, 56)
   const isSubThreshold = (aiResult?.confidence !== undefined && aiResult.confidence < 0.60) &&
-                         !diagnosis.toLowerCase().includes('healthy') && !isOverridden
+                         !safeDiagnosis.toLowerCase().includes('healthy') && !isOverridden
 
-  let treatmentSteps = [...(primaryProtocol.treatment || [])]
+  let treatmentSteps = [...(primaryProtocol?.treatment || [])]
 
   // Comorbidity steps merging
-  if (isComorbid && secondaryProtocol) {
-    treatmentSteps.push(`[CONCURRENT PROTOCOL: ${secondaryDiagnosis.toUpperCase()}] ${secondaryProtocol.treatment[0]}`)
+  if (isComorbid && secondaryProtocol && Array.isArray(secondaryProtocol.treatment) && secondaryProtocol.treatment.length > 0) {
+    treatmentSteps.push(`[CONCURRENT PROTOCOL: ${safeSecondaryDiagnosis.toUpperCase()}] ${secondaryProtocol.treatment[0]}`)
     if (secondaryProtocol.treatment[1]) {
       treatmentSteps.push(`[ADJUNCT STEP] ${secondaryProtocol.treatment[1]}`)
     }
   }
 
   // Pharmacological contraindication alert if hot spots + ringworm
-  const isHotSpotAndRingworm = (diagnosis.toLowerCase().includes('hot') && secondaryDiagnosis?.toLowerCase().includes('ringworm')) ||
-                               (diagnosis.toLowerCase().includes('ringworm') && secondaryDiagnosis?.toLowerCase().includes('hot'))
+  const isHotSpotAndRingworm = (safeDiagnosis.toLowerCase().includes('hot') && safeSecondaryDiagnosis.toLowerCase().includes('ringworm')) ||
+                               (safeDiagnosis.toLowerCase().includes('ringworm') && safeSecondaryDiagnosis.toLowerCase().includes('hot'))
 
   if (isHotSpotAndRingworm) {
     treatmentSteps.push(`[STEROID CAUTION IN DUAL PRESENTATION] Topical corticosteroids rapidly control acute hot spot pain, but can exacerbate dermatophyte (Ringworm) proliferation. Taper steroid as soon as lesion dries, and maintain continuous antifungal application.`)
@@ -485,18 +491,18 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   }
 
   // Initial combined prescription text
-  let initialPrescription = primaryProtocol.prescription
+  let initialPrescription = primaryProtocol?.prescription || ''
   if (isComorbid && secondaryProtocol) {
-    initialPrescription = `1. PRIMARY (${diagnosis.toUpperCase()}):\n${primaryProtocol.prescription}\n\n2. CONCURRENT (${secondaryDiagnosis.toUpperCase()}):\n${secondaryProtocol.prescription}`
+    initialPrescription = `1. PRIMARY (${safeDiagnosis.toUpperCase()}):\n${primaryProtocol?.prescription || ''}\n\n2. CONCURRENT (${safeSecondaryDiagnosis.toUpperCase()}):\n${secondaryProtocol?.prescription || ''}`
   }
 
   // Initial combined notes text
-  let initialNotes = primaryProtocol.notes
+  let initialNotes = primaryProtocol?.notes || ''
   if (isComorbid && secondaryProtocol) {
-    initialNotes = `[COMORBIDITY MANAGEMENT: ${diagnosis} + ${secondaryDiagnosis}] ${primaryProtocol.notes} ${isHotSpotAndRingworm ? 'Caution with corticosteroid duration due to concurrent fungal infection.' : ''}`
+    initialNotes = `[COMORBIDITY MANAGEMENT: ${safeDiagnosis} + ${safeSecondaryDiagnosis}] ${primaryProtocol?.notes || ''} ${isHotSpotAndRingworm ? 'Caution with corticosteroid duration due to concurrent fungal infection.' : ''}`
   }
   if (isOverridden) {
-    initialNotes = `[VETERINARIAN CLINICAL OVERRIDE]: Attending clinician modified diagnosis to ${diagnosis}${caseData?.overrideNotes ? `: "${caseData.overrideNotes}"` : '.'} ${initialNotes}`
+    initialNotes = `[VETERINARIAN CLINICAL OVERRIDE]: Attending clinician modified diagnosis to ${safeDiagnosis}${caseData?.overrideNotes ? `: "${caseData.overrideNotes}"` : '.'} ${initialNotes}`
   } else if (isSubThreshold) {
     initialNotes = `[FR7 Triage Notice]: AI pre-screening confidence was below the calibrated 60% decision boundary (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${initialNotes}`
   }

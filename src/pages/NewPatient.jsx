@@ -517,8 +517,12 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         reviewStatus: assignedStatus === 'Awaiting Lab Test' ? 'awaiting_lab' : 'pending',
       })
 
-      // 6. Save itemized symptoms into consultationSymptoms store
-      await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
+      // 6. Save itemized symptoms into consultationSymptoms store (safe failure guard)
+      try {
+        await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
+      } catch (sympErr) {
+        console.warn('[NewPatient] Non-critical: Failed to save consultation symptoms:', sympErr)
+      }
 
       const fullPayload = {
         patient,
@@ -535,13 +539,17 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         isComorbid: comorb.isComorbid,
       }
 
-      await logAuditEvent({
-        action: 'PATIENT_ADMITTED',
-        user: currentUser || { name: 'Clinic Staff' },
-        targetEntity: 'patients',
-        targetId: patient.id,
-        details: `Admitted patient ${patient.name} (${patient.species}) with diagnosis ${aiResult.displayLabel}${comorb.isComorbid ? ` + ${comorb.secondary}` : ''}. Status: ${assignedStatus}`,
-      })
+      try {
+        await logAuditEvent({
+          action: 'PATIENT_ADMITTED',
+          user: currentUser || { name: 'Clinic Staff' },
+          targetEntity: 'patients',
+          targetId: patient.id,
+          details: `Admitted patient ${patient.name} (${patient.species}) with diagnosis ${aiResult.displayLabel}${comorb.isComorbid ? ` + ${comorb.secondary}` : ''}. Status: ${assignedStatus}`,
+        })
+      } catch (auditErr) {
+        console.warn('[NewPatient] Non-critical: Failed to record audit log:', auditErr)
+      }
 
       // If requested to proceed directly to treatment (Consultation Rx)
       if (proceedToTreatment && onCapture) {
@@ -549,7 +557,6 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
           ...fullPayload,
           proceedToTreatment: true,
         })
-        resetForm()
         return
       }
 
@@ -564,7 +571,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
     } catch (saveError) {
       console.error('Failed to save patient:', saveError)
-      setError('Unable to save. Please try again.')
+      setError(saveError.message || 'Unable to save patient record. Please check required fields.')
     } finally {
       isSavingRef.current = false
       setIsSaving(false)
@@ -1397,6 +1404,23 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                   {/* Step 2: Save after AI result is ready */}
                   {aiResult && !qualityRejection && !isAnalyzing && (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+                      {error && (
+                        <div
+                          role="alert"
+                          style={{
+                            padding: '10px 14px',
+                            background: '#fef2f2',
+                            border: '1px solid #f87171',
+                            borderRadius: 8,
+                            color: '#b91c1c',
+                            fontSize: '0.85rem',
+                            fontWeight: 600,
+                            lineHeight: 1.4,
+                          }}
+                        >
+                          ⚠️ {error}
+                        </div>
+                      )}
                       <button
                         className="capture-btn"
                         type="button"

@@ -734,6 +734,9 @@ function App() {
                 isOffline={currentUser?.isOffline}
                 onCapture={(payload) => {
                   setShowNewPatient(false)
+                  if (typeof window !== 'undefined') {
+                    window.scrollTo({ top: 0, behavior: 'instant' })
+                  }
                   if (payload?.proceedToTreatment) {
                     setTreatmentCaseData(payload)
                     setActiveView('treatment')
