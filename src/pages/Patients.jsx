@@ -16,6 +16,8 @@ import {
 } from '../db/database'
 import CameraCaptureModal from '../components/CameraCaptureModal'
 import ImageCropModal from '../components/ImageCropModal'
+import ImageViewerModal from '../components/ImageViewerModal'
+import EmailPrescriptionModal from '../components/EmailPrescriptionModal'
 
 const CLINICAL_DIAGNOSES = [
   'Mange',
@@ -85,6 +87,34 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [staffRecheckVitals, setStaffRecheckVitals]     = useState('')
   const [vetAdjustedRx, setVetAdjustedRx]               = useState('')
   const [recheckTab, setRecheckTab]                     = useState('evaluate') // 'evaluate' | 'history'
+  const [activeViewerImage, setActiveViewerImage]       = useState(null)
+  const [emailRxModalData, setEmailRxModalData]         = useState(null)
+
+  const handleOpenEmailRx = async (patient, specificConsult = null) => {
+    try {
+      let consult = specificConsult
+      if (!consult) {
+        const consults = await getConsultationsByPatient(patient.id)
+        consult = consults && consults.length > 0 ? consults[consults.length - 1] : null
+      }
+      setEmailRxModalData({
+        patient,
+        consultation: consult,
+        prescription: consult?.treatmentPlan || '',
+        clinicalNotes: consult?.clinicalNotes || '',
+        diagnosis: consult?.diagnosis || patient?.areaOfConcern || 'Cutaneous Dermatological Condition',
+      })
+    } catch (err) {
+      console.warn('Could not load consultation for email:', err)
+      setEmailRxModalData({
+        patient,
+        consultation: null,
+        prescription: '',
+        clinicalNotes: '',
+        diagnosis: patient?.areaOfConcern || 'Cutaneous Dermatological Condition',
+      })
+    }
+  }
 
   const refreshPatients = async () => {
     const savedPatients = await getPatients()
@@ -799,6 +829,20 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                           Recheck
                         </button>
                         <button
+                          className="secondary-btn table-action-btn email-rx-pill-btn"
+                          type="button"
+                          onClick={() => handleOpenEmailRx(patient)}
+                          title="Email Prescription to Pet Owner"
+                          style={{
+                            background: '#f0f9ff',
+                            color: '#0369a1',
+                            borderColor: '#bae6fd',
+                            fontWeight: 600,
+                          }}
+                        >
+                          ✉️ Email Rx
+                        </button>
+                        <button
                           className="small-outline table-action-btn edit-pill-btn"
                           type="button"
                           onClick={() => openEditPatient(patient)}
@@ -827,12 +871,12 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
       {editingPatient && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-patient-title">
-          <div className="modal-dialog">
-            <header className="modal-header">
+          <div className="modal-dialog" style={{ maxWidth: 540, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
+            <header className="modal-header" style={{ flexShrink: 0 }}>
               <h3 id="edit-patient-title">Edit Patient Record</h3>
               <button className="modal-close-btn" type="button" onClick={() => setEditingPatient(null)} aria-label="Close edit patient dialog">✕</button>
             </header>
-            <form className="modal-form" onSubmit={handleSavePatient}>
+            <form className="modal-form" style={{ overflowY: 'auto', flex: 1 }} onSubmit={handleSavePatient}>
               {formError && <div className="alert-banner error" role="alert">{formError}</div>}
               <label>
                 <span>Patient ID</span>
@@ -947,7 +991,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   </select>
                 </label>
               </div>
-              <div className="modal-actions">
+              <div className="modal-actions" style={{ position: 'sticky', bottom: 0, background: 'var(--surface, #fff)', zIndex: 2, paddingTop: 12 }}>
                 <button className="small-outline" type="button" onClick={() => setEditingPatient(null)} disabled={isSaving}>Cancel</button>
                 <button className="action-btn blue" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Changes'}</button>
               </div>
@@ -976,11 +1020,38 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
               <div style={{ display: 'grid', gridTemplateColumns: '140px 1fr', gap: 14, padding: 12, background: '#f8fafc', borderRadius: 8, border: '1px solid #cbd5e1' }}>
                 <div>
                   {reviewScreening?.imageData ? (
-                    <img
-                      src={reviewScreening.imageData}
-                      alt="Lesion Photo"
-                      style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 6, border: '1px solid #94a3b8' }}
-                    />
+                    <div
+                      style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 6 }}
+                      onClick={() => setActiveViewerImage({
+                        src: reviewScreening.imageData,
+                        title: `${reviewPatient.name} — Baseline Lesion Scan`,
+                        subtitle: `${reviewScreening.aiDisplayLabel || reviewConsult?.diagnosis || 'Clinical Scan'} • ${reviewPatient.species || 'Animal'} • Tap to inspect / zoom`,
+                      })}
+                      title="Click to inspect lesion image (Zoom & Pan)"
+                    >
+                      <img
+                        src={reviewScreening.imageData}
+                        alt="Lesion Photo"
+                        style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 6, border: '1px solid #94a3b8', display: 'block', transition: 'transform 0.2s ease' }}
+                      />
+                      <div style={{
+                        position: 'absolute',
+                        bottom: 4,
+                        right: 4,
+                        background: 'rgba(15, 23, 42, 0.8)',
+                        color: '#f8fafc',
+                        fontSize: '0.68rem',
+                        padding: '3px 7px',
+                        borderRadius: 4,
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: 4,
+                        fontWeight: 600,
+                        backdropFilter: 'blur(4px)',
+                      }}>
+                        🔍 View / Zoom
+                      </div>
+                    </div>
                   ) : (
                     <div style={{ width: '100%', height: 140, background: '#e2e8f0', borderRadius: 6, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.78rem' }}>
                       No Photo
@@ -1166,7 +1237,29 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 <button className="small-outline" type="button" onClick={() => setReviewPatient(null)} disabled={isSavingReview}>
                   Cancel
                 </button>
-                <div style={{ display: 'flex', gap: 8 }}>
+                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                  {reviewConsult?.treatmentPlan && (
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{ padding: '8px 14px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                      onClick={() => {
+                        const rawDiag = overrideDiag === 'OTHER'
+                          ? (customDiag.trim() || 'Custom Dermatological Condition')
+                          : (overrideDiag || reviewConsult?.diagnosis || reviewPatient.areaOfConcern || 'Clinical Dermatological Case')
+                        setEmailRxModalData({
+                          patient: reviewPatient,
+                          consultation: reviewConsult,
+                          prescription: reviewConsult.treatmentPlan,
+                          clinicalNotes: reviewConsult.clinicalNotes || '',
+                          diagnosis: rawDiag,
+                        })
+                      }}
+                      title="Email official prescription to pet owner"
+                    >
+                      ✉️ Email Rx
+                    </button>
+                  )}
                   {onProceedToTreatment && (
                     <button
                       type="button"
@@ -1310,12 +1403,37 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
                       <div style={{ display: 'grid', gridTemplateColumns: v.screening?.imageData ? '120px 1fr' : '1fr', gap: 12 }}>
                         {v.screening?.imageData && (
-                          <div>
+                          <div
+                            style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 6, width: 120, height: 110 }}
+                            onClick={() => setActiveViewerImage({
+                              src: v.screening.imageData,
+                              title: `${recheckPatient?.name || 'Patient'} — Visit #${v.visitNum} Lesion Scan`,
+                              subtitle: `Diagnosis: ${v.consultation?.diagnosis || 'Clinical Check'} • ${v.consultation?.createdAt?.slice(0, 10) || 'Past Visit'}`,
+                            })}
+                            title="Click to view & zoom visit lesion"
+                          >
                             <img
                               src={v.screening.imageData}
                               alt={`Visit ${v.visitNum} lesion`}
-                              style={{ width: 120, height: 110, objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1' }}
+                              style={{ width: 120, height: 110, objectFit: 'cover', borderRadius: 6, border: '1px solid #cbd5e1', display: 'block' }}
                             />
+                            <div style={{
+                              position: 'absolute',
+                              bottom: 3,
+                              right: 3,
+                              background: 'rgba(15, 23, 42, 0.8)',
+                              color: '#f8fafc',
+                              fontSize: '0.62rem',
+                              padding: '2px 5px',
+                              borderRadius: 4,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 2,
+                              fontWeight: 600,
+                              backdropFilter: 'blur(4px)',
+                            }}>
+                              🔍 Zoom
+                            </div>
                           </div>
                         )}
                         <div style={{ fontSize: '0.84rem', lineHeight: 1.45, color: '#1e293b' }}>
@@ -1332,7 +1450,28 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                           )}
                           {v.consultation?.treatmentPlan && (
                             <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', padding: '6px 10px', borderRadius: 6, marginTop: 4, color: '#166534', fontSize: '0.8rem' }}>
-                              <strong>Prescription / Regimen:</strong> {v.consultation.treatmentPlan}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 6, flexWrap: 'wrap' }}>
+                                <div style={{ flex: 1 }}>
+                                  <strong>Prescription / Regimen:</strong> {v.consultation.treatmentPlan}
+                                </div>
+                                <button
+                                  type="button"
+                                  className="secondary-btn"
+                                  style={{ padding: '3px 8px', fontSize: '0.72rem', whiteSpace: 'nowrap', display: 'inline-flex', alignItems: 'center', gap: 4 }}
+                                  onClick={() => {
+                                    setEmailRxModalData({
+                                      patient: recheckPatient,
+                                      consultation: v.consultation,
+                                      prescription: v.consultation.treatmentPlan,
+                                      clinicalNotes: v.consultation.clinicalNotes || '',
+                                      diagnosis: v.consultation.diagnosis || recheckPatient?.areaOfConcern || 'Follow-up Recheck',
+                                    })
+                                  }}
+                                  title="Email this visit's prescription to owner"
+                                >
+                                  ✉️ Email Rx
+                                </button>
+                              </div>
                             </div>
                           )}
                         </div>
@@ -1403,11 +1542,38 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       Prior Visit Lesion
                     </div>
                     {pastScreening?.imageData ? (
-                      <img
-                        src={pastScreening.imageData}
-                        alt="Prior visit lesion"
-                        style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1' }}
-                      />
+                      <div
+                        style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 8 }}
+                        onClick={() => setActiveViewerImage({
+                          src: pastScreening.imageData,
+                          title: `${recheckPatient.name} — Prior Visit Lesion`,
+                          subtitle: `Prior Diagnosis: ${pastConsult?.diagnosis || recheckPatient.areaOfConcern || 'Cutaneous check'} • Date: ${pastConsult?.createdAt?.slice(0, 10) || recheckPatient.lastVisit || 'Initial Visit'}`,
+                        })}
+                        title="Click to inspect prior visit lesion (Zoom & Pan)"
+                      >
+                        <img
+                          src={pastScreening.imageData}
+                          alt="Prior visit lesion"
+                          style={{ width: '100%', height: 140, objectFit: 'cover', borderRadius: 8, border: '1px solid #cbd5e1', display: 'block' }}
+                        />
+                        <div style={{
+                          position: 'absolute',
+                          bottom: 4,
+                          right: 4,
+                          background: 'rgba(15, 23, 42, 0.8)',
+                          color: '#f8fafc',
+                          fontSize: '0.68rem',
+                          padding: '3px 7px',
+                          borderRadius: 4,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 4,
+                          fontWeight: 600,
+                          backdropFilter: 'blur(4px)',
+                        }}>
+                          🔍 View / Zoom
+                        </div>
+                      </div>
                     ) : (
                       <div style={{ width: '100%', height: 140, background: '#e2e8f0', borderRadius: 8, display: 'grid', placeItems: 'center', color: '#64748b', fontSize: '0.78rem' }}>
                         No prior photo saved
@@ -1426,11 +1592,38 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                     </div>
                     {recheckPreview ? (
                       <div>
-                        <img
-                          src={recheckPreview}
-                          alt="Today's recheck lesion"
-                          style={{ width: '100%', height: 150, objectFit: 'cover', borderRadius: 8, border: '1px solid #86efac' }}
-                        />
+                        <div
+                          style={{ position: 'relative', cursor: 'zoom-in', overflow: 'hidden', borderRadius: 8 }}
+                          onClick={() => setActiveViewerImage({
+                            src: recheckPreview,
+                            title: `${recheckPatient.name} — Today's Follow-up Lesion`,
+                            subtitle: `Recheck Date: ${new Date().toISOString().slice(0, 10)} • Progress: ${recheckProgress}`,
+                          })}
+                          title="Click to inspect today's photo (Zoom & Pan)"
+                        >
+                          <img
+                            src={recheckPreview}
+                            alt="Today's recheck lesion"
+                            style={{ width: '100%', height: 150, objectFit: 'cover', borderRadius: 8, border: '1px solid #86efac', display: 'block' }}
+                          />
+                          <div style={{
+                            position: 'absolute',
+                            bottom: 4,
+                            right: 4,
+                            background: 'rgba(15, 23, 42, 0.8)',
+                            color: '#f8fafc',
+                            fontSize: '0.68rem',
+                            padding: '3px 7px',
+                            borderRadius: 4,
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 4,
+                            fontWeight: 600,
+                            backdropFilter: 'blur(4px)',
+                          }}>
+                            🔍 View / Zoom
+                          </div>
+                        </div>
                         <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
                           <button
                             type="button"
@@ -1494,7 +1687,6 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       type="file"
                       ref={recheckInputRef}
                       accept="image/*"
-                      capture="environment"
                       style={{ display: 'none' }}
                       onChange={handleRecheckFileChange}
                     />
@@ -1581,10 +1773,29 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   </>
                 )}
 
-                <div className="modal-actions" style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <div className="modal-actions" style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
                   <button className="small-outline" type="button" onClick={() => setRecheckPatient(null)} disabled={isSavingRecheck}>Cancel</button>
 
-                  <div style={{ display: 'flex', gap: 8 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                    {(vetAdjustedRx || pastConsult?.treatmentPlan) && (
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ padding: '8px 12px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                        onClick={() => {
+                          setEmailRxModalData({
+                            patient: recheckPatient,
+                            consultation: pastConsult,
+                            prescription: vetAdjustedRx || pastConsult?.treatmentPlan || '',
+                            clinicalNotes: recheckNotes || pastConsult?.clinicalNotes || '',
+                            diagnosis: `Follow-up: ${pastConsult?.diagnosis || recheckPatient?.areaOfConcern || 'Cutaneous Check'}`,
+                          })
+                        }}
+                        title="Email adjusted prescription to pet owner"
+                      >
+                        ✉️ Email Rx
+                      </button>
+                    )}
                     {currentUser?.role !== 'Clinic Staff' && onProceedToTreatment && (
                       <button
                         type="button"
@@ -1636,6 +1847,36 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         onConfirmCrop={handleConfirmRecheckCrop}
         onUseFullImage={handleUseFullRecheckImage}
       />
+
+      {/* Clinical High-Resolution Lesion Image Zoom & Pan Inspection Lightbox */}
+      <ImageViewerModal
+        isOpen={Boolean(activeViewerImage)}
+        src={activeViewerImage?.src}
+        title={activeViewerImage?.title}
+        subtitle={activeViewerImage?.subtitle}
+        onClose={() => setActiveViewerImage(null)}
+      />
+
+      {/* Send Prescription to Pet Owner Modal */}
+      {emailRxModalData && (
+        <EmailPrescriptionModal
+          isOpen={Boolean(emailRxModalData)}
+          onClose={() => setEmailRxModalData(null)}
+          patient={emailRxModalData.patient}
+          consultation={emailRxModalData.consultation}
+          prescription={emailRxModalData.prescription}
+          clinicalNotes={emailRxModalData.clinicalNotes}
+          diagnosis={emailRxModalData.diagnosis}
+          doctorName={currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM'}
+          currentUser={currentUser}
+          authToken={authToken}
+          apiBaseUrl={apiBaseUrl}
+          onPrescriptionSent={(newEmail) => {
+            refreshPatients()
+            setSuccessMessage(`Prescription successfully emailed to ${newEmail} for ${emailRxModalData.patient?.name || 'patient'}.`)
+          }}
+        />
+      )}
     </section>
   )
 }

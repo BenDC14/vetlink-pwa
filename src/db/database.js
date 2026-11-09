@@ -1,6 +1,6 @@
 import { openDB } from 'idb'
 const DB_NAME = "vetlink_local_db";
-const DB_VERSION = 3;
+const DB_VERSION = 4;
 const SYNC_STORE_NAMES = ['users', 'owners', 'patients', 'consultations', 'screeningResults', 'auditLogs']
 
 const schema = {
@@ -176,11 +176,13 @@ function normalizeCloudRecord(storeName, record) {
     normalized.ownerEmail = record.owner_email ?? record.ownerEmail ?? ''
     normalized.isArchived = Boolean(record.is_archived ?? record.isArchived ?? false)
   } else if (storeName === 'auditLogs') {
-    normalized.userId = record.user_id ?? record.userId
-    normalized.userName = record.user_name ?? record.userName
-    normalized.userRole = record.user_role ?? record.userRole
-    normalized.targetEntity = record.target_entity ?? record.targetEntity
-    normalized.targetId = record.target_id ?? record.targetId
+    normalized.action = record.action ?? ''
+    normalized.userId = record.user_id ?? record.userId ?? ''
+    normalized.userName = record.user_name ?? record.userName ?? ''
+    normalized.userRole = record.user_role ?? record.userRole ?? ''
+    normalized.targetEntity = record.target_entity ?? record.targetEntity ?? ''
+    normalized.targetId = record.target_id ?? record.targetId ?? ''
+    normalized.details = record.details ?? ''
   } else if (storeName === 'consultations') {
     normalized.patientId = record.patient_id ?? record.patientId
     normalized.handledByUserId = record.handled_by_user_id ?? record.handledByUserId
@@ -721,24 +723,31 @@ export async function updateStaffUser(id, updates) {
 
   const tx = db.transaction(['users', 'syncQueue'], 'readwrite')
   const existing = await tx.objectStore('users').get(id)
-  if (!existing) {
-    throw new Error(`Staff member with ID ${id} not found`)
-  }
 
   const queueStore = tx.objectStore('syncQueue')
   const existingQueueItems = await queueStore.index('entityId').getAll(id)
   const matchingQueueItems = existingQueueItems.filter((item) => item.entityType === 'users')
   const originalQueueItem = matchingQueueItems[0]
-  const baseVersion = originalQueueItem?.baseVersion ?? existing.version ?? 0
-  const operation = matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
+  const baseRecord = existing || {
+    id,
+    username: updates.username?.trim() || `${id.toLowerCase()}@clinic.vet`,
+    name: updates.name?.trim() || 'Staff Member',
+    role: updates.role || 'Clinic Staff',
+    deviceStatus: updates.deviceStatus || 'Online',
+    version: 0,
+    createdAt: now,
+    updatedAt: now,
+  }
+  const baseVersion = originalQueueItem?.baseVersion ?? baseRecord.version ?? 0
+  const operation = !existing || matchingQueueItems.some((item) => item.operation === 'CREATE') ? 'CREATE' : 'UPDATE'
   const updatedRecord = {
-    ...existing,
+    ...baseRecord,
     ...updates,
     id,
-    username: updates.username?.trim() || existing.username,
-    name: updates.name ? updates.name.trim() : existing.name,
-    role: updates.role || existing.role,
-    deviceStatus: updates.deviceStatus || existing.deviceStatus,
+    username: updates.username?.trim() || baseRecord.username,
+    name: updates.name ? updates.name.trim() : baseRecord.name,
+    role: updates.role || baseRecord.role,
+    deviceStatus: updates.deviceStatus || baseRecord.deviceStatus,
     syncStatus: 'pending',
     version: baseVersion + 1,
     updatedAt: now,
@@ -1103,6 +1112,7 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     await reconcileStore('patients', cloudSnapshot.patients || [], cloudSnapshot.deleted || [])
     await reconcileStore('consultations', cloudSnapshot.consultations || [], cloudSnapshot.deleted || [])
     await reconcileStore('screeningResults', cloudSnapshot.screeningResults || [], cloudSnapshot.deleted || [])
+    await reconcileStore('auditLogs', cloudSnapshot.auditLogs || [], cloudSnapshot.deleted || [])
 
     const remainingPendingQueue = (await db.getAll('syncQueue')).filter(
       (item) => item.status !== 'conflict' && item.status !== 'failed'
@@ -1121,9 +1131,11 @@ export async function performCloudSync(apiBaseUrl = 'http://localhost:8000', aut
     }
     const cloudIds = new Set([
       ...(cloudSnapshot.users || []).map((record) => `users:${record.id}`),
+      ...(cloudSnapshot.owners || []).map((record) => `owners:${record.id}`),
       ...(cloudSnapshot.patients || []).map((record) => `patients:${record.id}`),
       ...(cloudSnapshot.consultations || []).map((record) => `consultations:${record.id}`),
       ...(cloudSnapshot.screeningResults || []).map((record) => `screeningResults:${record.id}`),
+      ...(cloudSnapshot.auditLogs || []).map((record) => `auditLogs:${record.id}`),
     ].filter((key) => !pendingKeys.has(key) && !conflictedEntities.has(key)))
 
     const isIncrementalPull = Boolean(lastSyncTimestamp)
@@ -1292,55 +1304,70 @@ export async function updateScreeningResultStatus(id, reviewStatus) {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export async function addConsultationSymptoms(consultationId, symptomIds = [], customNotes = '') {
-  const db = await initDatabase()
-  const now = new Date().toISOString()
-  const tx = db.transaction(['consultationSymptoms'], 'readwrite')
-  const csStore = tx.objectStore('consultationSymptoms')
-
-  const savedRecords = []
-
-  for (let i = 0; i < symptomIds.length; i++) {
-    const symptomId = symptomIds[i]
-    const recId = `CS-${consultationId}-${i + 1}-${Date.now().toString(36)}`
-    const record = {
-      id: recId,
-      consultationId,
-      symptomId,
-      severity: 'moderate',
-      createdAt: now,
-      updatedAt: now,
-      syncStatus: 'local',
-      version: 1,
+  try {
+    const db = await initDatabase()
+    if (!db.objectStoreNames.contains('consultationSymptoms')) {
+      console.warn('[IndexedDB] consultationSymptoms store not found in schema')
+      return []
     }
-    await csStore.put(record)
-    savedRecords.push(record)
-  }
+    const now = new Date().toISOString()
+    const tx = db.transaction(['consultationSymptoms'], 'readwrite')
+    const csStore = tx.objectStore('consultationSymptoms')
 
-  // If custom notes are provided as "Other Symptoms", store as custom symptom record
-  if (customNotes && customNotes.trim()) {
-    const customRecId = `CS-${consultationId}-custom-${Date.now().toString(36)}`
-    const customRecord = {
-      id: customRecId,
-      consultationId,
-      symptomId: 'SYM-CUSTOM',
-      severity: 'clinician-noted',
-      customDescription: customNotes.trim(),
-      createdAt: now,
-      updatedAt: now,
-      syncStatus: 'local',
-      version: 1,
+    const savedRecords = []
+
+    for (let i = 0; i < symptomIds.length; i++) {
+      const symptomId = symptomIds[i]
+      const recId = `CS-${consultationId}-${i + 1}-${Date.now().toString(36)}`
+      const record = {
+        id: recId,
+        consultationId,
+        symptomId,
+        severity: 'moderate',
+        createdAt: now,
+        updatedAt: now,
+        syncStatus: 'local',
+        version: 1,
+      }
+      await csStore.put(record)
+      savedRecords.push(record)
     }
-    await csStore.put(customRecord)
-    savedRecords.push(customRecord)
-  }
 
-  await tx.done
-  return savedRecords
+    // If custom notes are provided as "Other Symptoms", store as custom symptom record
+    if (customNotes && customNotes.trim()) {
+      const customRecId = `CS-${consultationId}-custom-${Date.now().toString(36)}`
+      const customRecord = {
+        id: customRecId,
+        consultationId,
+        symptomId: 'SYM-CUSTOM',
+        severity: 'clinician-noted',
+        customDescription: customNotes.trim(),
+        createdAt: now,
+        updatedAt: now,
+        syncStatus: 'local',
+        version: 1,
+      }
+      await csStore.put(customRecord)
+      savedRecords.push(customRecord)
+    }
+
+    await tx.done
+    return savedRecords
+  } catch (err) {
+    console.warn('[IndexedDB] Could not record consultation symptoms:', err)
+    return []
+  }
 }
 
 export async function getConsultationSymptoms(consultationId) {
-  const db = await initDatabase()
-  return db.getAllFromIndex('consultationSymptoms', 'consultationId', consultationId)
+  try {
+    const db = await initDatabase()
+    if (!db.objectStoreNames.contains('consultationSymptoms')) return []
+    return await db.getAllFromIndex('consultationSymptoms', 'consultationId', consultationId)
+  } catch (err) {
+    console.warn('[IndexedDB] Could not fetch consultation symptoms:', err)
+    return []
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

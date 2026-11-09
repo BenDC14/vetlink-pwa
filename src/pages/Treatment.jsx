@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { updateConsultation, logAuditEvent } from '../db/database'
+import EmailPrescriptionModal from '../components/EmailPrescriptionModal'
 
 export const BASE_TREATMENT_PROTOCOLS = {
   // ── Canine (Aso) Protocols (Exact 11 dataset classes) ─────────
@@ -364,12 +365,13 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Docu
   }, 250)
 }
 
-export default function Treatment({ onBack, caseData, currentUser }) {
+export default function Treatment({ onBack, caseData, currentUser, authToken, apiBaseUrl = 'http://localhost:8000' }) {
   const [protocols, setProtocols] = useState(loadSavedProtocols)
   const isLibraryMode = !caseData?.patient
   const patient       = caseData?.patient
   const consultation  = caseData?.consultation
   const aiResult      = caseData?.aiResult
+  const [currentOwnerEmail, setCurrentOwnerEmail] = useState(patient?.ownerEmail || '')
 
   // Check if case is flagged as awaiting lab test
   const isAwaitingLab = Boolean(
@@ -380,8 +382,11 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   )
 
   const patientSpecies = patient?.species || caseData?.species || 'Canine'
-  let parsedPrimary = caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange'
+  let parsedPrimary = String(caseData?.approvedDiagnosis || caseData?.diagnosis || aiResult?.displayLabel || 'Mange')
   let parsedSecondary = caseData?.approvedSecondary || caseData?.secondaryDiagnosis || null
+  if (typeof parsedSecondary !== 'string' && parsedSecondary) {
+    parsedSecondary = String(parsedSecondary)
+  }
 
   // Cleanly parse dual conditions like "Mange with Pyoderma" or "Mange + Pyoderma"
   if (parsedPrimary.toLowerCase().includes(' with ')) {
@@ -406,6 +411,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   // Show "Add Custom Protocol" modal state
   const [showAddModal, setShowAddModal] = useState(false)
   const [showRxPreviewModal, setShowRxPreviewModal] = useState(false)
+  const [showEmailModal, setShowEmailModal] = useState(false)
   const [showLabSlipPreviewModal, setShowLabSlipPreviewModal] = useState(false)
   const [newProtocolName, setNewProtocolName] = useState('')
   const [newProtocolCategory, setNewProtocolCategory] = useState('Canine Protocols (Aso)')
@@ -458,23 +464,26 @@ export default function Treatment({ onBack, caseData, currentUser }) {
     }
   ) : null
 
+  const safeDiagnosis = String(diagnosis || '')
+  const safeSecondaryDiagnosis = typeof secondaryDiagnosis === 'string' ? secondaryDiagnosis : ''
+
   // FR7: 60% Confidence Decision Boundary Rule (Thesis pp. 11, 41, 46, 56)
   const isSubThreshold = (aiResult?.confidence !== undefined && aiResult.confidence < 0.60) &&
-                         !diagnosis.toLowerCase().includes('healthy') && !isOverridden
+                         !safeDiagnosis.toLowerCase().includes('healthy') && !isOverridden
 
-  let treatmentSteps = [...(primaryProtocol.treatment || [])]
+  let treatmentSteps = [...(primaryProtocol?.treatment || [])]
 
   // Comorbidity steps merging
-  if (isComorbid && secondaryProtocol) {
-    treatmentSteps.push(`[CONCURRENT PROTOCOL: ${secondaryDiagnosis.toUpperCase()}] ${secondaryProtocol.treatment[0]}`)
+  if (isComorbid && secondaryProtocol && Array.isArray(secondaryProtocol.treatment) && secondaryProtocol.treatment.length > 0) {
+    treatmentSteps.push(`[CONCURRENT PROTOCOL: ${safeSecondaryDiagnosis.toUpperCase()}] ${secondaryProtocol.treatment[0]}`)
     if (secondaryProtocol.treatment[1]) {
       treatmentSteps.push(`[ADJUNCT STEP] ${secondaryProtocol.treatment[1]}`)
     }
   }
 
   // Pharmacological contraindication alert if hot spots + ringworm
-  const isHotSpotAndRingworm = (diagnosis.toLowerCase().includes('hot') && secondaryDiagnosis?.toLowerCase().includes('ringworm')) ||
-                               (diagnosis.toLowerCase().includes('ringworm') && secondaryDiagnosis?.toLowerCase().includes('hot'))
+  const isHotSpotAndRingworm = (safeDiagnosis.toLowerCase().includes('hot') && safeSecondaryDiagnosis.toLowerCase().includes('ringworm')) ||
+                               (safeDiagnosis.toLowerCase().includes('ringworm') && safeSecondaryDiagnosis.toLowerCase().includes('hot'))
 
   if (isHotSpotAndRingworm) {
     treatmentSteps.push(`[STEROID CAUTION IN DUAL PRESENTATION] Topical corticosteroids rapidly control acute hot spot pain, but can exacerbate dermatophyte (Ringworm) proliferation. Taper steroid as soon as lesion dries, and maintain continuous antifungal application.`)
@@ -485,18 +494,18 @@ export default function Treatment({ onBack, caseData, currentUser }) {
   }
 
   // Initial combined prescription text
-  let initialPrescription = primaryProtocol.prescription
+  let initialPrescription = primaryProtocol?.prescription || ''
   if (isComorbid && secondaryProtocol) {
-    initialPrescription = `1. PRIMARY (${diagnosis.toUpperCase()}):\n${primaryProtocol.prescription}\n\n2. CONCURRENT (${secondaryDiagnosis.toUpperCase()}):\n${secondaryProtocol.prescription}`
+    initialPrescription = `1. PRIMARY (${safeDiagnosis.toUpperCase()}):\n${primaryProtocol?.prescription || ''}\n\n2. CONCURRENT (${safeSecondaryDiagnosis.toUpperCase()}):\n${secondaryProtocol?.prescription || ''}`
   }
 
   // Initial combined notes text
-  let initialNotes = primaryProtocol.notes
+  let initialNotes = primaryProtocol?.notes || ''
   if (isComorbid && secondaryProtocol) {
-    initialNotes = `[COMORBIDITY MANAGEMENT: ${diagnosis} + ${secondaryDiagnosis}] ${primaryProtocol.notes} ${isHotSpotAndRingworm ? 'Caution with corticosteroid duration due to concurrent fungal infection.' : ''}`
+    initialNotes = `[COMORBIDITY MANAGEMENT: ${safeDiagnosis} + ${safeSecondaryDiagnosis}] ${primaryProtocol?.notes || ''} ${isHotSpotAndRingworm ? 'Caution with corticosteroid duration due to concurrent fungal infection.' : ''}`
   }
   if (isOverridden) {
-    initialNotes = `[VETERINARIAN CLINICAL OVERRIDE]: Attending clinician modified diagnosis to ${diagnosis}${caseData?.overrideNotes ? `: "${caseData.overrideNotes}"` : '.'} ${initialNotes}`
+    initialNotes = `[VETERINARIAN CLINICAL OVERRIDE]: Attending clinician modified diagnosis to ${safeDiagnosis}${caseData?.overrideNotes ? `: "${caseData.overrideNotes}"` : '.'} ${initialNotes}`
   } else if (isSubThreshold) {
     initialNotes = `[FR7 Triage Notice]: AI pre-screening confidence was below the calibrated 60% decision boundary (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${initialNotes}`
   }
@@ -1109,6 +1118,17 @@ export default function Treatment({ onBack, caseData, currentUser }) {
             >
               {isAwaitingLab ? 'View Laboratory Requisition Slip' : 'Preview & Print Prescription (Rx)'}
             </button>
+            {!isLibraryMode && !isAwaitingLab && (
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setShowEmailModal(true)}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
+                title="Send prescription directly to pet owner's email address"
+              >
+                ✉️ Email Rx to Owner
+              </button>
+            )}
             {!isLibraryMode && (
               <button
                 type="button"
@@ -1311,7 +1331,7 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16, flexWrap: 'wrap' }}>
               <button
                 type="button"
                 onClick={() => setShowRxPreviewModal(false)}
@@ -1320,6 +1340,31 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               >
                 Close Preview
               </button>
+              {!isLibraryMode && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowRxPreviewModal(false)
+                    setShowEmailModal(true)
+                  }}
+                  className="secondary-btn"
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 6,
+                    cursor: 'pointer',
+                    fontWeight: 700,
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    background: '#0369a1',
+                    color: '#ffffff',
+                    border: 'none',
+                  }}
+                  title="Send this prescription to owner's email address"
+                >
+                  ✉️ Email to Owner
+                </button>
+              )}
               <button
                 type="button"
                 onClick={handlePrintRx}
@@ -1639,6 +1684,26 @@ export default function Treatment({ onBack, caseData, currentUser }) {
               </button>
             </div>
           </div>
+        )}
+
+        {/* ── Email Prescription to Pet Owner Modal ──────────────── */}
+        {showEmailModal && (
+          <EmailPrescriptionModal
+            isOpen={showEmailModal}
+            onClose={() => setShowEmailModal(false)}
+            patient={patient ? { ...patient, ownerEmail: currentOwnerEmail || patient.ownerEmail } : caseData}
+            consultation={consultation || caseData?.consultation}
+            prescription={prescription}
+            clinicalNotes={clinicalNotes}
+            diagnosis={cleanDiagnosisDisplay}
+            doctorName={currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM'}
+            currentUser={currentUser}
+            authToken={authToken}
+            apiBaseUrl={apiBaseUrl}
+            onPrescriptionSent={(newEmail) => {
+              setCurrentOwnerEmail(newEmail)
+            }}
+          />
         )}
       </div>
     </>

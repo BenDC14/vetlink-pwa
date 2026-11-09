@@ -97,6 +97,14 @@ def auto_initialize_schema():
                 cursor.execute("ALTER TABLE sync_conflicts ADD COLUMN resolution VARCHAR(16) NULL")
 
             migrations = {
+                "patients": {
+                    "weight": "ALTER TABLE patients ADD COLUMN weight VARCHAR(32) NULL",
+                    "owner_name": "ALTER TABLE patients ADD COLUMN owner_name VARCHAR(128) NULL",
+                    "owner_phone": "ALTER TABLE patients ADD COLUMN owner_phone VARCHAR(32) NULL",
+                    "owner_address": "ALTER TABLE patients ADD COLUMN owner_address TEXT NULL",
+                    "owner_email": "ALTER TABLE patients ADD COLUMN owner_email VARCHAR(128) NULL",
+                    "is_archived": "ALTER TABLE patients ADD COLUMN is_archived BOOLEAN NOT NULL DEFAULT FALSE",
+                },
                 "consultations": {
                     "secondary_diagnosis": "ALTER TABLE consultations ADD COLUMN secondary_diagnosis TEXT NULL",
                     "is_comorbid": "ALTER TABLE consultations ADD COLUMN is_comorbid BOOLEAN NOT NULL DEFAULT FALSE",

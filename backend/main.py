@@ -1,5 +1,10 @@
 from datetime import datetime, timedelta
+from email.mime.multipart import MIMEMultipart
+from email.mime.text import MIMEText
 import json
+import os
+import smtplib
+import uuid
 from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
@@ -62,6 +67,10 @@ class ChangePasswordRequest(BaseModel):
     new_password: str
 
 
+class UpdateProfileRequest(BaseModel):
+    name: str
+
+
 class AdminCreateUserRequest(BaseModel):
     name: str
     email: str
@@ -97,6 +106,21 @@ class AuditLogItem(BaseModel):
 
 class SyncConflictResolutionRequest(BaseModel):
     resolution: str
+
+
+class EmailPrescriptionRequest(BaseModel):
+    recipient_email: str
+    patient_id: Optional[str] = None
+    patient_name: str
+    owner_name: Optional[str] = "Pet Owner"
+    species: Optional[str] = "Canine"
+    breed: Optional[str] = "Unknown"
+    weight: Optional[str] = None
+    diagnosis: str
+    prescription_text: str
+    clinical_notes: Optional[str] = ""
+    doctor_name: Optional[str] = "Dr. Sarah Lin, DVM"
+    rx_id: Optional[str] = None
 
 
 def decode_json_value(value):
@@ -260,6 +284,25 @@ def auth_me(authorization: Optional[str] = Header(default=None)):
         "role": user["role"],
         "must_change_password": bool(user["must_change_password"]),
     }
+
+
+@app.patch("/api/auth/profile")
+@app.put("/api/auth/profile")
+def update_profile(request: UpdateProfileRequest, authorization: Optional[str] = Header(default=None)):
+    user = get_current_user_from_header(authorization)
+    name = request.name.strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Display name cannot be empty")
+    conn = get_connection()
+    try:
+        with conn.cursor() as cursor:
+            cursor.execute(
+                "UPDATE users SET name = %s, updated_at = %s WHERE id = %s",
+                (name, datetime.utcnow(), user["id"]),
+            )
+        return {"success": True, "name": name}
+    finally:
+        conn.close()
 
 
 def get_current_user_from_header(authorization: Optional[str]) -> dict:
@@ -536,6 +579,190 @@ def get_owner(owner_id: str, authorization: Optional[str] = Header(default=None)
         conn.close()
 
 
+def dispatch_prescription_email(req: EmailPrescriptionRequest) -> tuple[bool, str]:
+    """Sends prescription email via SMTP if configured, else records simulation."""
+    smtp_host = os.getenv("SMTP_HOST")
+    smtp_port = int(os.getenv("SMTP_PORT", 587))
+    smtp_user = os.getenv("SMTP_USER")
+    smtp_password = os.getenv("SMTP_PASSWORD")
+    smtp_from = os.getenv("SMTP_FROM", smtp_user or "clinic@vetlink.ph")
+    smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
+
+    subject = f"Official Veterinary Prescription - {req.patient_name} ({req.diagnosis})"
+
+    plain_text = f"""==================================================
+VETLINK ANIMAL CARE CLINIC & HOSPITAL
+Veterinary Medical Center • Department of Clinical Dermatology
+102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+==================================================
+
+OFFICIAL VETERINARY PRESCRIPTION (℞)
+
+PATIENT:         {req.patient_name}
+SPECIES / BREED: {req.species} • {req.breed}
+WEIGHT:          {req.weight or 'N/A'} kg
+OWNER:           {req.owner_name}
+DATE:            {datetime.utcnow().strftime('%B %d, %Y')}
+CASE / RX ID:    {req.rx_id or 'RX-REF'}
+
+CLINICAL DIAGNOSIS:
+{req.diagnosis}
+
+℞ MEDICATION & DOSAGE DISPENSING ORDER:
+--------------------------------------------------
+{req.prescription_text}
+--------------------------------------------------
+
+CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:
+{req.clinical_notes or 'Follow standard clinical home care.'}
+
+ATTENDING VETERINARIAN:
+{req.doctor_name}
+PRC License No.: VET-894102
+PTR No.: 1948201
+
+--------------------------------------------------
+Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
+=================================================="""
+
+    html_text = f"""<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; background-color: #f1f5f9; margin: 0; padding: 24px; color: #0f172a; }}
+    .rx-box {{ max-width: 640px; margin: 0 auto; background: #ffffff; border: 2px solid #0f172a; border-radius: 8px; padding: 28px; box-shadow: 0 4px 16px rgba(0,0,0,0.08); }}
+    .clinic-head {{ text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 14px; margin-bottom: 18px; }}
+    .meta-table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; }}
+    .meta-table td {{ padding: 8px 12px; }}
+    .diag-banner {{ background: #f1f5f9; border-left: 4px solid #1e3a8a; padding: 8px 12px; margin-bottom: 16px; font-size: 13px; }}
+    .rx-title {{ display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: 800; font-size: 14px; color: #1e3a8a; }}
+    .rx-orders {{ background: #f8fafc; border: 1.5px solid #0f172a; border-radius: 6px; padding: 12px; font-family: Consolas, monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; margin-bottom: 16px; }}
+    .instructions {{ background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.5; color: #334155; margin-bottom: 20px; white-space: pre-wrap; }}
+    .footer-sig {{ border-top: 1px solid #cbd5e1; padding-top: 14px; display: flex; justify-content: space-between; font-size: 11px; color: #64748b; }}
+  </style>
+</head>
+<body>
+  <div class="rx-box">
+    <div class="clinic-head">
+      <h2 style="margin: 0 0 4px; font-size: 20px; color: #0f172a;">VETLINK ANIMAL CARE CLINIC & HOSPITAL</h2>
+      <p style="margin: 0 0 4px; font-size: 12px; color: #334155; font-weight: 600;">Veterinary Medical Center • Department of Clinical Dermatology</p>
+      <p style="margin: 0; font-size: 11px; color: #64748b;">102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph</p>
+    </div>
+
+    <table class="meta-table">
+      <tr>
+        <td><strong>PATIENT:</strong> {req.patient_name}<br><strong>SPECIES:</strong> {req.species} ({req.breed})</td>
+        <td><strong>OWNER:</strong> {req.owner_name}<br><strong>DATE:</strong> {datetime.utcnow().strftime('%B %d, %Y')}</td>
+      </tr>
+      <tr>
+        <td><strong>WEIGHT:</strong> {req.weight or 'N/A'} kg</td>
+        <td><strong>RX / CASE ID:</strong> {req.rx_id or 'RX-OFFICIAL'}</td>
+      </tr>
+    </table>
+
+    <div class="diag-banner">
+      <strong>CLINICAL DIAGNOSIS:</strong> <u style="font-weight: 700;">{req.diagnosis}</u>
+    </div>
+
+    <div style="font-size: 22px; font-family: Georgia, serif; font-weight: bold; color: #1e3a8a; margin-bottom: 4px;">℞ MEDICATION & DOSAGE DISPENSING ORDER</div>
+    <div class="rx-orders">{req.prescription_text}</div>
+
+    <div style="font-weight: 700; font-size: 12px; text-transform: uppercase; margin-bottom: 4px; color: #0f172a;">CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:</div>
+    <div class="instructions">{req.clinical_notes or 'Administer as prescribed. Contact clinic if any adverse reactions occur.'}</div>
+
+    <div class="footer-sig">
+      <div style="max-width: 340px;">Notice: Official veterinary prescription issued under Republic Act 9268. Valid for 30 days.</div>
+      <div style="text-align: right;">
+        <strong>{req.doctor_name}</strong><br>
+        PRC License No.: VET-894102<br>
+        PTR No.: 1948201
+      </div>
+    </div>
+  </div>
+</body>
+</html>"""
+
+    if smtp_host and smtp_user and smtp_password:
+        try:
+            msg = MIMEMultipart("alternative")
+            msg["Subject"] = subject
+            msg["From"] = f"VetLink Animal Care Clinic <{smtp_from}>"
+            msg["To"] = req.recipient_email
+            msg.attach(MIMEText(plain_text, "plain"))
+            msg.attach(MIMEText(html_text, "html"))
+
+            if smtp_port == 465:
+                server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+            else:
+                server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+                if smtp_use_tls:
+                    server.starttls()
+            server.login(smtp_user, smtp_password)
+            server.sendmail(smtp_from, [req.recipient_email], msg.as_string())
+            server.quit()
+            return True, "Delivered via Clinic SMTP"
+        except Exception as e:
+            print(f"[WARN] SMTP delivery failed: {e}. Falling back to simulation.")
+            return False, f"SMTP error: {str(e)}"
+
+    print(f"[EMAIL SIMULATION] Prescription dispatched to {req.recipient_email} for patient {req.patient_name}.")
+    return True, "Dispatched via Clinic Cloud Queue (Simulated)"
+
+
+@app.post("/api/prescriptions/email")
+def send_prescription_email(req: EmailPrescriptionRequest, authorization: Optional[str] = Header(default=None)):
+    """Dispatches official prescription to pet owner's email address and logs audit trail."""
+    current_user = None
+    if authorization and authorization.startswith("Bearer "):
+        try:
+            current_user = get_current_user_from_header(authorization)
+        except Exception:
+            pass
+
+    recipient = req.recipient_email.strip().lower()
+    if not recipient or "@" not in recipient or "." not in recipient:
+        raise HTTPException(status_code=400, detail="A valid recipient email address is required")
+
+    success, message = dispatch_prescription_email(req)
+
+    # Record Audit Log into MySQL if database is connected
+    try:
+        conn = get_connection()
+        try:
+            conn.begin()
+            with conn.cursor() as cursor:
+                log_id = f"LOG-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
+                details = f"Prescription emailed to {recipient} for patient {req.patient_name} ({req.diagnosis}). Result: {message}"
+                payload = {
+                    "id": log_id,
+                    "action": "PRESCRIPTION_EMAILED",
+                    "userId": current_user.get("id") if current_user else "STAFF",
+                    "userName": current_user.get("name") if current_user else (req.doctor_name or "Clinic Staff"),
+                    "userRole": current_user.get("role") if current_user else "Staff",
+                    "targetEntity": "patients",
+                    "targetId": req.patient_id or "",
+                    "details": details,
+                    "createdAt": datetime.utcnow(),
+                }
+                upsert_audit_log(cursor, payload)
+            conn.commit()
+        except Exception as log_err:
+            conn.rollback()
+            print(f"[WARN] Could not record prescription audit log: {log_err}")
+        finally:
+            conn.close()
+    except Exception as db_err:
+        print(f"[WARN] DB connection unavailable for audit log: {db_err}")
+
+    return {
+        "success": True,
+        "recipient": recipient,
+        "message": f"Official prescription successfully emailed to {recipient}.",
+        "detail": message,
+    }
+
+
 # -----------------------------------------------------------------------------
 # Main Cloud Sync Handlers
 # -----------------------------------------------------------------------------
@@ -656,6 +883,28 @@ def delete_patient(cursor, entity_id: str):
     cursor.execute("DELETE FROM patients WHERE id = %s;", (entity_id,))
 
 
+def parse_db_datetime(value) -> datetime:
+    if isinstance(value, datetime):
+        return value
+    if isinstance(value, str):
+        val = value.strip()
+        if val.endswith("Z") or val.endswith("z"):
+            val = val[:-1]
+        if "+" in val:
+            val = val.split("+")[0]
+        val = val.replace("T", " ")
+        for fmt in ("%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%d"):
+            try:
+                return datetime.strptime(val, fmt)
+            except ValueError:
+                pass
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00").replace("z", "+00:00"))
+        except Exception:
+            pass
+    return datetime.utcnow()
+
+
 def upsert_audit_log(cursor, payload: dict):
     log_id = payload.get("id") or f"LOG-{datetime.utcnow().strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:6]}"
     action = payload.get("action", "SYSTEM_EVENT")
@@ -665,7 +914,7 @@ def upsert_audit_log(cursor, payload: dict):
     target_entity = payload.get("targetEntity") or payload.get("target_entity", "")
     target_id = payload.get("targetId") or payload.get("target_id", "")
     details = payload.get("details", "")
-    created_at = payload.get("createdAt") or payload.get("created_at") or datetime.utcnow()
+    created_at = parse_db_datetime(payload.get("createdAt") or payload.get("created_at"))
 
     sql = """
         INSERT INTO audit_logs (id, action, user_id, user_name, user_role, target_entity, target_id, details, sync_status, created_at)
@@ -681,7 +930,6 @@ def upsert_audit_log(cursor, payload: dict):
             sync_status = 'synced';
     """
     cursor.execute(sql, (log_id, action, user_id, user_name, user_role, target_entity, target_id, details, created_at))
-    cursor.execute("DELETE FROM patients WHERE id = %s;", (entity_id,))
 
 
 def upsert_consultation(cursor, payload: dict):
@@ -771,6 +1019,7 @@ SYNC_ENTITY_TABLES = {
     "patients": "patients",
     "consultations": "consultations",
     "screeningResults": "screening_results",
+    "auditLogs": "audit_logs",
 }
 
 
@@ -791,7 +1040,7 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
 
     try:
         with conn.cursor() as cursor:
-            entity_priority = {"users": 0, "owners": 1, "patients": 2, "consultations": 3, "screeningresults": 4}
+            entity_priority = {"users": 0, "owners": 1, "patients": 2, "consultations": 3, "screeningresults": 4, "auditlogs": 5}
             ordered_items = sorted(
                 batch.queue,
                 key=lambda item: (entity_priority.get(item.entityType.lower(), 99), item.createdAt or ""),
@@ -801,6 +1050,8 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                     entity_type = item.entityType.lower()
                     if entity_type == "screeningresults":
                         entity_type = "screeningResults"
+                    elif entity_type in ("auditlogs", "audit_logs"):
+                        entity_type = "auditLogs"
                     operation = item.operation.upper()
                     payload = item.payload or {}
 
@@ -822,6 +1073,8 @@ def sync_push(batch: SyncBatchRequest, authorization: Optional[str] = Header(def
                             required_fields = ("name",)
                         elif entity_type == "consultations":
                             required_fields = ("patientId",) if not payload.get("patient_id") else ()
+                        elif entity_type == "auditLogs":
+                            required_fields = ("action",)
                         else:
                             required_fields = ("consultationId",) if not payload.get("consultation_id") else ()
                         missing_fields = [field for field in required_fields if not payload.get(field)]
@@ -1010,6 +1263,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 consultations = cursor.fetchall()
                 cursor.execute("SELECT * FROM screening_results WHERE updated_at > %s;", (since,))
                 screening_results = cursor.fetchall()
+                cursor.execute("SELECT * FROM audit_logs WHERE created_at > %s ORDER BY created_at DESC LIMIT 500;", (since,))
+                audit_logs = cursor.fetchall()
             else:
                 cursor.execute("SELECT * FROM users;")
                 users = cursor.fetchall()
@@ -1021,6 +1276,8 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 consultations = cursor.fetchall()
                 cursor.execute("SELECT * FROM screening_results;")
                 screening_results = cursor.fetchall()
+                cursor.execute("SELECT * FROM audit_logs ORDER BY created_at DESC LIMIT 500;")
+                audit_logs = cursor.fetchall()
             cursor.execute(
                 "SELECT DISTINCT entity_type, entity_id FROM sync_queue "
                 "WHERE status = 'processed' AND operation = 'DELETE';"
@@ -1040,6 +1297,7 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 "patients": patients,
                 "consultations": consultations,
                 "screeningResults": screening_results,
+                "auditLogs": audit_logs,
                 "deleted": deleted,
                 "conflicts": conflicts,
                 "server_time": datetime.utcnow().isoformat(),

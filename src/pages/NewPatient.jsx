@@ -97,11 +97,20 @@ export function checkEarlyStageDifferential(aiResult, species, areaOfConcern = '
  * Max dimension 1024px, JPEG quality 85% (~150KB - 200KB).
  * Preserves full dermatological detail while eliminating 5-10 second network lag.
  */
-function downscaleImage(fileOrBlob, maxDim = 1024, quality = 0.85) {
+function downscaleImage(fileOrBlob, maxDim = 1024, quality = 0.85, onProgress = null) {
   return new Promise((resolve) => {
     const img = new Image()
     const reader = new FileReader()
+    if (onProgress) {
+      reader.onprogress = (e) => {
+        if (e.lengthComputable && e.total > 0) {
+          const pct = Math.min(30, Math.round((e.loaded / e.total) * 30))
+          onProgress(pct, 'Reading image file from device...')
+        }
+      }
+    }
     reader.onload = (e) => {
+      if (onProgress) onProgress(35, 'Decoding image resolution...')
       img.onload = () => {
         let { width, height } = img
         if (width > maxDim || height > maxDim) {
@@ -120,6 +129,7 @@ function downscaleImage(fileOrBlob, maxDim = 1024, quality = 0.85) {
         ctx.imageSmoothingEnabled = true
         ctx.imageSmoothingQuality = 'high'
         ctx.drawImage(img, 0, 0, width, height)
+        if (onProgress) onProgress(45, 'Optimizing lesion resolution...')
         canvas.toBlob((blob) => {
           if (blob) {
             const downscaledFile = new File([blob], fileOrBlob.name || 'lesion_optimized.jpg', {
@@ -172,6 +182,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [selectedFile, setSelectedFile] = useState(null)
   const [previewUrl, setPreviewUrl] = useState(null)
   const [isAnalyzing, setIsAnalyzing] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState(null)
+  const [uploadStage, setUploadStage] = useState('')
   const [aiResult, setAiResult] = useState(null)
   const [qualityRejection, setQualityRejection] = useState(null)
   const [modelReady, setModelReady] = useState(false)
@@ -189,6 +201,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   // Role-based Assistant Flow State
   const [intakeSuccess, setIntakeSuccess] = useState(false)
   const [savedSummary, setSavedSummary] = useState(null)
+  const [saveSuccessMessage, setSaveSuccessMessage] = useState('')
 
   const fileInputRef = useRef(null)
 
@@ -205,23 +218,44 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
     setAreaOfConcern('')
     setSelectedSymptoms([])
     setOtherSymptoms('')
-    setCustomSymptomInput('')
     setSelectedFile(null)
-    if (previewUrl) {
-      try { URL.revokeObjectURL(previewUrl) } catch (e) { }
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(previewUrl)
+      } catch {
+        // ignore error
+      }
     }
     setPreviewUrl(null)
+    setUploadProgress(null)
+    setUploadStage('')
     setAiResult(null)
     setQualityRejection(null)
     setLabTestRequired(false)
     setLabTestReason('')
     setError('')
     setIntakeSuccess(false)
+    setSaveSuccessMessage('')
     setSavedSummary(null)
+    setCropModalOpen(false)
+    setFileToCrop(null)
     if (fileInputRef.current) {
       fileInputRef.current.value = ''
     }
   }
+
+  // Cleanup preview URL on unmount to prevent memory leaks
+  useEffect(() => {
+    return () => {
+      if (previewUrl && previewUrl.startsWith('blob:')) {
+        try {
+          URL.revokeObjectURL(previewUrl)
+        } catch {
+          // ignore error
+        }
+      }
+    }
+  }, [previewUrl])
 
   // Pre-load the model in the background as soon as the page mounts
   useEffect(() => {
@@ -243,37 +277,56 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       return
     }
 
+    setUploadProgress(15)
+    setUploadStage('Reading file from device...')
+    setIsAnalyzing(true)
+    setError('')
+    setAiResult(null)
+    setQualityRejection(null)
+
     // Downscale locally in browser canvas to max 1024px @ 85% JPEG (~150KB)
     // Instantaneous upload on Render/Vercel with 0% accuracy loss for 224x224 MobileNetV3
     let file = rawFile
     let downscaledDataUrl = null
     try {
-      const downscaled = await downscaleImage(rawFile, 1024, 0.85)
+      const downscaled = await downscaleImage(rawFile, 1024, 0.85, (pct, stage) => {
+        setUploadProgress(pct)
+        if (stage) setUploadStage(stage)
+      })
       file = downscaled.file
       downscaledDataUrl = downscaled.dataUrl
     } catch (downscaleErr) {
       console.warn('Downscaling fallback to raw file:', downscaleErr)
     }
 
+    setUploadProgress(50)
+    setUploadStage('Preparing preview & quality verification...')
+
     // Revoke previous preview URL to avoid memory leaks
-    if (previewUrl) URL.revokeObjectURL(previewUrl)
+    if (previewUrl && previewUrl.startsWith('blob:')) {
+      try {
+        URL.revokeObjectURL(previewUrl)
+      } catch {
+        // ignore
+      }
+    }
 
     const url = downscaledDataUrl || URL.createObjectURL(file)
     setSelectedFile(file)
     setPreviewUrl(url)
-    setAiResult(null)
-    setQualityRejection(null)
-    setError('')
     setIntakeSuccess(false)
+    setSaveSuccessMessage('')
 
-    // Run AI automatically after image is selected
-    setIsAnalyzing(true)
     try {
+      setUploadProgress(65)
+      setUploadStage('Verifying dermatological image sharpness...')
       const imgElement = await loadImageFromFile(file)
 
       // Step 1: Client-Side Clinical Image Quality & Anti-Blur Gate
       const quality = validateClinicalImageQuality(imgElement)
       if (!quality.isValid) {
+        setUploadProgress(null)
+        setUploadStage('')
         setQualityRejection({
           title: quality.title || 'Image Rejected: Quality Gate Failed',
           reason: quality.reason || 'LOW_QUALITY',
@@ -286,10 +339,17 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       }
 
       // Step 2: Animal Verification & Disease Classification (Backend TFLite / WASM)
+      setUploadProgress(80)
+      setUploadStage('Running AI lesion disease screening...')
       const result = await predict(imgElement, species)
+
+      setUploadProgress(95)
+      setUploadStage('Generating Grad-CAM attention heatmap...')
 
       // Step 2b: Server-Side Inanimate / Non-Animal Gate Check
       if (result.rejected) {
+        setUploadProgress(null)
+        setUploadStage('')
         setQualityRejection({
           title: 'Image Rejected: Non-Animal Subject Detected',
           reason: result.reason || 'NON_ANIMAL',
@@ -301,6 +361,8 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         return // HARD STOP - Do not accept non-animal images!
       }
 
+      setUploadProgress(100)
+      setUploadStage('Upload & screening complete!')
       setAiResult(result)
 
       // Intelligent Symptom Pre-selection & Lab Test Auto-evaluation
@@ -331,6 +393,10 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
       setError(`AI could not analyze this image: ${err.message || err}`)
     } finally {
       setIsAnalyzing(false)
+      setTimeout(() => {
+        setUploadProgress(null)
+        setUploadStage('')
+      }, 400)
     }
   }
 
@@ -387,7 +453,9 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             message: result.message,
             instructions: 'Please take or upload a photo showing an animal patient.',
           })
-          setAiResult(null)
+          setUploadProgress(null)
+    setUploadStage('')
+    setAiResult(null)
         } else {
           setAiResult(result)
         }
@@ -496,8 +564,12 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         reviewStatus: assignedStatus === 'Awaiting Lab Test' ? 'awaiting_lab' : 'pending',
       })
 
-      // 6. Save itemized symptoms into consultationSymptoms store
-      await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
+      // 6. Save itemized symptoms into consultationSymptoms store (safe failure guard)
+      try {
+        await addConsultationSymptoms(consultation.id, selectedSymptoms, otherSymptoms)
+      } catch (sympErr) {
+        console.warn('[NewPatient] Non-critical: Failed to save consultation symptoms:', sympErr)
+      }
 
       const fullPayload = {
         patient,
@@ -514,46 +586,20 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         isComorbid: comorb.isComorbid,
       }
 
-      await logAuditEvent({
-        action: 'PATIENT_ADMITTED',
-        user: currentUser || { name: 'Clinic Staff' },
-        targetEntity: 'patients',
-        targetId: patient.id,
-        details: `Admitted patient ${patient.name} (${patient.species}) with diagnosis ${aiResult.displayLabel}${comorb.isComorbid ? ` + ${comorb.secondary}` : ''}. Status: ${assignedStatus}`,
-      })
-
-      // Helper to completely clean up form inputs
-      const resetForm = () => {
-        setName('')
-        setSpecies('Canine')
-        setBreed('')
-        setWeight('')
-        setAge('')
-        setOwnerName('')
-        setOwnerPhone('')
-        setOwnerAddress('')
-        setOwnerEmail('')
-        setAreaOfConcern('')
-        setSelectedSymptoms([])
-        setOtherSymptoms('')
-        setCustomSymptomInput('')
-        setSelectedFile(null)
-        setAiResult(null)
-        setQualityRejection(null)
-        setLabTestRequired(false)
-        setLabTestReason('')
-        if (previewUrl && previewUrl.startsWith('blob:')) {
-          URL.revokeObjectURL(previewUrl)
-        }
-        setPreviewUrl(null)
-        if (fileInputRef.current) {
-          fileInputRef.current.value = ''
-        }
+      try {
+        await logAuditEvent({
+          action: 'PATIENT_ADMITTED',
+          user: currentUser || { name: 'Clinic Staff' },
+          targetEntity: 'patients',
+          targetId: patient.id,
+          details: `Admitted patient ${patient.name} (${patient.species}) with diagnosis ${aiResult.displayLabel}${comorb.isComorbid ? ` + ${comorb.secondary}` : ''}. Status: ${assignedStatus}`,
+        })
+      } catch (auditErr) {
+        console.warn('[NewPatient] Non-critical: Failed to record audit log:', auditErr)
       }
 
-      // If requested to proceed directly to treatment (e.g. Clinic Admin / Vet direct action)
+      // If requested to proceed directly to treatment (Consultation Rx)
       if (proceedToTreatment && onCapture) {
-        resetForm()
         onCapture({
           ...fullPayload,
           proceedToTreatment: true,
@@ -561,26 +607,10 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         return
       }
 
-      // Otherwise, clean up form state and show admitted confirmation card
+      // Otherwise: SAVE & INTAKE NEW PATIENT
+      // Reset the page, completely removing the uploaded picture and all inputs
       resetForm()
-
-      setIntakeSuccess(true)
-      setSavedSummary({
-        patientId: patient.id,
-        name: patient.name,
-        species: patient.species,
-        breed: patient.breed,
-        weight: patient.weight,
-        ownerName: patient.ownerName,
-        ownerPhone: patient.ownerPhone,
-        ownerAddress: patient.ownerAddress,
-        ownerEmail: patient.ownerEmail,
-        status: assignedStatus,
-        diagnosis: aiResult.displayLabel,
-        secondary: comorb.isComorbid ? comorb.secondary : null,
-        labOrdered: labTestRequired,
-        fullPayload,
-      })
+      setSaveSuccessMessage(`Patient "${patient.name}" (${patient.id}) was successfully saved! The intake form has been reset for the next patient.`)
 
       if (typeof window !== 'undefined') {
         window.scrollTo({ top: 0, behavior: 'smooth' })
@@ -588,7 +618,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
     } catch (saveError) {
       console.error('Failed to save patient:', saveError)
-      setError('Unable to save. Please try again.')
+      setError(saveError.message || 'Unable to save patient record. Please check required fields.')
     } finally {
       isSavingRef.current = false
       setIsSaving(false)
@@ -604,15 +634,14 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
   return (
     <section className="new-patient-card">
-      {/* Hidden file input — opens camera on mobile, file picker on desktop */}
+      {/* Hidden file input — opens device file picker / photo gallery */}
       <input
         ref={fileInputRef}
         type="file"
         accept="image/*"
-        capture="environment"
         style={{ display: 'none' }}
         onChange={handleFileChange}
-        aria-label="Capture or upload a pet photo"
+        aria-label="Upload a pet photo from device"
       />
 
       {/* Assistant Intake Success Confirmation Card */}
@@ -741,6 +770,49 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
             </span>
           </div>
 
+          {saveSuccessMessage && (
+            <div
+              style={{
+                background: 'linear-gradient(135deg, #f0fdf4, #dcfce7)',
+                border: '1.5px solid #86efac',
+                color: '#166534',
+                padding: '12px 18px',
+                borderRadius: 12,
+                margin: '12px 0 16px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 12,
+                boxShadow: '0 2px 8px rgba(22, 101, 52, 0.08)',
+                fontSize: '0.92rem',
+                fontWeight: 600,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#16a34a" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                <span>{saveSuccessMessage}</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSaveSuccessMessage('')}
+                style={{
+                  background: 'none',
+                  border: 'none',
+                  color: '#166534',
+                  cursor: 'pointer',
+                  fontSize: '1.2rem',
+                  padding: '2px 6px',
+                  lineHeight: 1,
+                }}
+                aria-label="Dismiss alert"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           <div className="new-patient-topbar">
             <div>
               <div className="brand-badge">NEW CASE</div>
@@ -752,7 +824,73 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
             {/* ── Left: Image Preview ─────────────────────────────── */}
             <div className="new-patient-preview">
-              {previewUrl ? (
+              {uploadProgress !== null ? (
+                <div
+                  className="upload-progress-card"
+                  style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: 12,
+                    padding: '24px 16px',
+                    textAlign: 'center',
+                    background: '#f8fafc',
+                    borderRadius: 12,
+                    border: '2px dashed #0284c7',
+                    minHeight: 220,
+                  }}
+                >
+                  <div
+                    style={{
+                      width: 48,
+                      height: 48,
+                      borderRadius: '50%',
+                      background: '#e0f2fe',
+                      color: '#0284c7',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                    }}
+                  >
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="17 8 12 3 7 8" />
+                      <line x1="12" y1="3" x2="12" y2="15" />
+                    </svg>
+                  </div>
+                  <div style={{ display: 'flex', alignItems: 'baseline', gap: 6 }}>
+                    <span style={{ fontSize: '1.6rem', fontWeight: 800, color: '#0369a1' }}>
+                      {uploadProgress}%
+                    </span>
+                    <span style={{ fontSize: '0.85rem', color: '#64748b', fontWeight: 600 }}>
+                      uploaded
+                    </span>
+                  </div>
+                  <div
+                    style={{
+                      width: '85%',
+                      height: 8,
+                      background: '#e2e8f0',
+                      borderRadius: 999,
+                      overflow: 'hidden',
+                    }}
+                  >
+                    <div
+                      style={{
+                        width: `${uploadProgress}%`,
+                        height: '100%',
+                        background: 'linear-gradient(90deg, #0284c7, #10b981)',
+                        borderRadius: 999,
+                        transition: 'width 0.25s ease-out',
+                      }}
+                    />
+                  </div>
+                  <span style={{ fontSize: '0.82rem', color: '#475569', fontWeight: 600 }}>
+                    {uploadStage || 'Uploading picture...'}
+                  </span>
+                </div>
+              ) : previewUrl ? (
                 <img
                   src={previewUrl}
                   alt="Pet photo preview"
@@ -1005,12 +1143,43 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
                 {error && <p role="alert" style={{ color: '#ef4444', fontSize: '0.85rem', margin: '4px 0' }}>{error}</p>}
 
-                {/* AI Analysis Result */}
-                {isAnalyzing && (
+                {/* AI Analysis Result & Upload Progress */}
+                {uploadProgress !== null ? (
+                  <div
+                    style={{
+                      padding: '14px 18px',
+                      background: 'linear-gradient(135deg, #f0fdf4, #f0f9ff)',
+                      border: '1.5px solid #7dd3fc',
+                      borderRadius: 12,
+                      marginTop: 12,
+                      boxShadow: '0 2px 8px rgba(2, 132, 199, 0.08)',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                      <span style={{ fontSize: '0.88rem', fontWeight: 700, color: '#0369a1', display: 'flex', alignItems: 'center', gap: 6 }}>
+                        <span className="ai-spinner">⏳</span> {uploadStage || 'Uploading & processing picture...'}
+                      </span>
+                      <span style={{ fontSize: '1.05rem', fontWeight: 800, color: '#0284c7' }}>
+                        {uploadProgress}%
+                      </span>
+                    </div>
+                    <div style={{ width: '100%', height: 8, background: '#e0f2fe', borderRadius: 999, overflow: 'hidden' }}>
+                      <div
+                        style={{
+                          width: `${uploadProgress}%`,
+                          height: '100%',
+                          background: 'linear-gradient(90deg, #0284c7, #10b981)',
+                          borderRadius: 999,
+                          transition: 'width 0.25s ease-out',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : isAnalyzing ? (
                   <div className="ai-result-box analyzing">
                     <span className="ai-spinner">⏳</span> Analyzing image with Edge WASM & Grad-CAM...
                   </div>
-                )}
+                ) : null}
 
                 {/* Clinical Image Rejection Card */}
                 {qualityRejection && !isAnalyzing && (
@@ -1377,50 +1546,55 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
 
                   {/* Step 2: Save after AI result is ready */}
                   {aiResult && !qualityRejection && !isAnalyzing && (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 10 }}>
-                      {currentUser?.role === 'Clinic Admin' ? (
-                        <>
-                          <button
-                            className="capture-btn"
-                            type="button"
-                            onClick={() => handleSave(true)}
-                            disabled={isSaving}
-                            style={{
-                              background: 'linear-gradient(135deg, #0d9488, #0f766e)',
-                              boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
-                              fontWeight: 700
-                            }}
-                          >
-                            {isSaving ? 'SAVING PATIENT & SCAN...' : 'SAVE & PROCEED TO CONSULTATION / RX'}
-                          </button>
-                          <button
-                            className="secondary-btn"
-                            type="button"
-                            onClick={() => handleSave(false)}
-                            disabled={isSaving}
-                            style={{
-                              padding: '11px 16px',
-                              fontSize: '0.88rem',
-                              fontWeight: 600,
-                              background: '#f8fafc',
-                              border: '1px solid #cbd5e1',
-                              color: '#334155'
-                            }}
-                          >
-                            SAVE & INTAKE NEXT PATIENT
-                          </button>
-                        </>
-                      ) : (
-                        <button
-                          className="capture-btn"
-                          type="button"
-                          onClick={() => handleSave(false)}
-                          disabled={isSaving}
-                          style={{ background: 'linear-gradient(135deg, #16a34a, #15803d)' }}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginTop: 12 }}>
+                      {error && (
+                        <div
+                          role="alert"
+                          style={{
+                            padding: '10px 14px',
+                            background: '#fef2f2',
+                            border: '1px solid #f87171',
+                            borderRadius: 8,
+                            color: '#b91c1c',
+                            fontSize: '0.85rem',
+                            fontWeight: 600,
+                            lineHeight: 1.4,
+                          }}
                         >
-                          {isSaving ? 'SAVING INTAKE & SCAN...' : 'SAVE INTAKE & QUEUE FOR VET REVIEW'}
-                        </button>
+                          ⚠️ {error}
+                        </div>
                       )}
+                      <button
+                        className="capture-btn"
+                        type="button"
+                        onClick={() => handleSave(true)}
+                        disabled={isSaving}
+                        style={{
+                          background: 'linear-gradient(135deg, #0d9488, #0f766e)',
+                          boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
+                          fontWeight: 700,
+                          padding: '12px 18px',
+                          fontSize: '0.92rem'
+                        }}
+                      >
+                        {isSaving ? 'SAVING PATIENT & SCAN...' : 'SAVE AND PROCEED TO CONSULTATION RX'}
+                      </button>
+                      <button
+                        className="secondary-btn"
+                        type="button"
+                        onClick={() => handleSave(false)}
+                        disabled={isSaving}
+                        style={{
+                          padding: '12px 18px',
+                          fontSize: '0.88rem',
+                          fontWeight: 600,
+                          background: '#f8fafc',
+                          border: '1px solid #cbd5e1',
+                          color: '#334155'
+                        }}
+                      >
+                        SAVE & INTAKE NEW PATIENT
+                      </button>
                     </div>
                   )}
                 </div>

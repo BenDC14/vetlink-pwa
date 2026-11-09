@@ -365,25 +365,31 @@ function App() {
   }
 
   const handleLogout = async () => {
-    try {
-      await fetch(`${API_BASE_URL}/api/auth/logout`, {
-        method: 'POST',
-        headers: { Authorization: `Bearer ${authToken}` },
-      })
-    } catch {
-      // Clear the local session even when the server cannot be reached.
-    } finally {
-      if (typeof localStorage !== 'undefined') {
-        localStorage.removeItem('vetlink_auth_token')
-        localStorage.removeItem('vetlink_cached_user')
+    // Only attempt server-side token invalidation if there is an active cloud session
+    if (authToken && !currentUser?.isOffline) {
+      try {
+        await fetch(`${API_BASE_URL}/api/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${authToken}` },
+        })
+      } catch {
+        // Clear local session even when server is unreachable
       }
-      setAuthToken('')
-      setCurrentUser(null)
-      setLoggedIn(false)
-      setActiveView('clinic')
-      setShowNewPatient(false)
-      setShowSettings(false)
     }
+
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('vetlink_auth_token')
+      localStorage.removeItem('vetlink_cached_user')
+    }
+    setAuthToken('')
+    setCurrentUser(null)
+    setLoggedIn(false)
+    setActiveView('clinic')
+    setShowNewPatient(false)
+    setShowSettings(false)
+    setTreatmentCaseData(null)
+    setImage(null)
+    setPreviewUrl(null)
   }
 
   // --- Global Theme Engine (applies to body, sidebar, header, and all views) ---
@@ -582,30 +588,28 @@ function App() {
                   </div>
                 </button>
               )}
-              {currentUser?.role === 'Clinic Admin' && (
-                <button
-                  type="button"
-                  className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
-                  onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
-                >
-                  <div className="nav-item-label">
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
-                    </svg>
-                    <span>Sync</span>
-                  </div>
-                  <div className="nav-sync-meta">
-                    <span className={`nav-sync-badge ${syncBadgeClass}`}>
-                      {syncBadgeText}
+              <button
+                type="button"
+                className={"nav-item " + (activeView === 'sync' && !showNewPatient ? 'active' : '')}
+                onClick={() => { setActiveView('sync'); setShowNewPatient(false); setShowSettings(false); }}
+              >
+                <div className="nav-item-label">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67" />
+                  </svg>
+                  <span>Sync</span>
+                </div>
+                <div className="nav-sync-meta">
+                  <span className={`nav-sync-badge ${syncBadgeClass}`}>
+                    {syncBadgeText}
+                  </span>
+                  {lastSyncTime && (
+                    <span className="nav-sync-time" title={`Last synchronized: ${lastSyncTime}`}>
+                      Last synced: {lastSyncTime}
                     </span>
-                    {lastSyncTime && (
-                      <span className="nav-sync-time" title={`Last synchronized: ${lastSyncTime}`}>
-                        {lastSyncTime}
-                      </span>
-                    )}
-                  </div>
-                </button>
-              )}
+                  )}
+                </div>
+              </button>
               {currentUser?.role === 'Clinic Admin' && (
                 <button
                   type="button"
@@ -646,6 +650,23 @@ function App() {
                   title="Install VetLink on your device"
                 >
                   Install PWA
+                </button>
+              )}
+              {currentUser?.isOffline && (
+                <button
+                  type="button"
+                  className="action-btn secondary"
+                  style={{
+                    borderColor: '#fca5a5',
+                    color: '#dc2626',
+                    background: '#fff',
+                    marginTop: 6,
+                    fontWeight: 600,
+                  }}
+                  onClick={() => setShowLogoutConfirm(true)}
+                  title="Exit Offline Demo Mode"
+                >
+                  Exit Demo Mode
                 </button>
               )}
             </div>
@@ -717,6 +738,15 @@ function App() {
               <Settings
                 currentUser={currentUser}
                 onBack={() => setShowSettings(false)}
+                authToken={authToken}
+                apiBaseUrl={API_BASE_URL}
+                onLogout={() => setShowLogoutConfirm(true)}
+                onUpdateUser={(updatedUser) => {
+                  setCurrentUser(updatedUser)
+                  if (typeof localStorage !== 'undefined') {
+                    localStorage.setItem('vetlink_cached_user', JSON.stringify(updatedUser))
+                  }
+                }}
               />
             ) : showNewPatient ? (
               <NewPatient
@@ -728,16 +758,13 @@ function App() {
                 isOffline={currentUser?.isOffline}
                 onCapture={(payload) => {
                   setShowNewPatient(false)
-                  if (currentUser?.role === 'Clinic Staff') {
-                    // Clinic Staff returns to Patient Records table (cannot prescribe or view treatment directly)
-                    setTreatmentCaseData(null)
-                    setActiveView('patients')
-                  } else if (payload?.proceedToTreatment) {
-                    // Veterinarian / Admin who specifically opts into treatment
+                  if (typeof window !== 'undefined') {
+                    window.scrollTo({ top: 0, behavior: 'instant' })
+                  }
+                  if (payload?.proceedToTreatment) {
                     setTreatmentCaseData(payload)
                     setActiveView('treatment')
                   } else {
-                    // Default safe workflow: route to Patient Records
                     setTreatmentCaseData(null)
                     setActiveView('patients')
                   }
@@ -771,6 +798,8 @@ function App() {
                   <Treatment
                     currentUser={currentUser}
                     caseData={treatmentCaseData}
+                    authToken={authToken}
+                    apiBaseUrl={API_BASE_URL}
                     onBack={() => {
                       setTreatmentCaseData(null)
                       setActiveView('patients')
@@ -783,7 +812,7 @@ function App() {
                     currentUser={currentUser}
                     authToken={authToken}
                     apiBaseUrl={API_BASE_URL}
-                    isOffline={isOffline}
+                    isOffline={currentUser?.isOffline}
                   />
                 )}
               </>
@@ -862,7 +891,7 @@ function App() {
             <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="logout-confirm-title">
               <div className="modal-dialog" style={{ maxWidth: '440px' }}>
                 <header className="modal-header">
-                  <h3 id="logout-confirm-title">Confirm Logout</h3>
+                  <h3 id="logout-confirm-title">{currentUser?.isOffline ? 'Exit Demo Session' : 'Confirm Logout'}</h3>
                   <button
                     type="button"
                     className="modal-close-btn"
@@ -874,7 +903,9 @@ function App() {
                 </header>
                 <div className="modal-form">
                   <p style={{ margin: 0, fontSize: '0.96rem', color: 'var(--text-h)', fontWeight: 600 }}>
-                    Are you sure you want to log out?
+                    {currentUser?.isOffline
+                      ? 'Exit offline demo mode and return to sign in?'
+                      : 'Are you sure you want to log out?'}
                   </p>
                   <div className="modal-actions" style={{ marginTop: '8px' }}>
                     <button
@@ -892,7 +923,7 @@ function App() {
                         handleLogout()
                       }}
                     >
-                      Log Out
+                      {currentUser?.isOffline ? 'Exit Demo' : 'Log Out'}
                     </button>
                   </div>
                 </div>
