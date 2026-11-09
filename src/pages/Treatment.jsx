@@ -513,6 +513,13 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
   // Interactive Editable State
   const [prescription, setPrescription]   = useState(initialPrescription)
   const [clinicalNotes, setClinicalNotes] = useState(initialNotes)
+  const [editableSteps, setEditableSteps] = useState(treatmentSteps)
+  const [isEditingSteps, setIsEditingSteps] = useState(false)
+
+  // Keep editable steps in sync when disease/case changes
+  useEffect(() => {
+    setEditableSteps(treatmentSteps)
+  }, [selectedDisease, diagnosis, secondaryDiagnosis])
   const [isSaving, setIsSaving]           = useState(false)
   const [saveMessage, setSaveMessage]     = useState('')
   const [saveError, setSaveError]         = useState('')
@@ -1011,20 +1018,120 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
             </div>
 
             <div className="treatment-section">
-              <div className="treatment-section-title">
-                {isComorbid ? 'RECOMMENDED DUAL-CONDITION CARE PROTOCOL' : 'RECOMMENDED TREATMENT PROTOCOL (CLINICAL GUIDELINE)'}
+              <div className="treatment-section-title" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 6 }}>
+                <span>{isComorbid ? 'RECOMMENDED DUAL-CONDITION CARE PROTOCOL' : 'RECOMMENDED TREATMENT PROTOCOL (CLINICAL GUIDELINE)'}</span>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <button
+                    type="button"
+                    onClick={() => setIsEditingSteps(!isEditingSteps)}
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '0.74rem',
+                      borderRadius: 6,
+                      border: '1px solid #cbd5e1',
+                      background: isEditingSteps ? '#eff6ff' : '#ffffff',
+                      color: isEditingSteps ? '#1d4ed8' : '#475569',
+                      cursor: 'pointer',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {isEditingSteps ? 'Done Editing Protocol' : 'Edit Clinical Guidelines'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditableSteps(treatmentSteps)}
+                    title="Reset steps back to peer-reviewed standard clinical guidelines"
+                    style={{
+                      padding: '3px 8px',
+                      fontSize: '0.74rem',
+                      borderRadius: 6,
+                      border: '1px solid #cbd5e1',
+                      background: '#ffffff',
+                      color: '#64748b',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    Reset Guidelines
+                  </button>
+                </div>
               </div>
               <div className="treatment-section-body treatment-list">
-                <ul>
-                  {treatmentSteps.map((step, idx) => {
-                    const isAlert = step.includes('CAUTION') || step.includes('CONFIRMATORY') || step.includes('ALERT')
-                    return (
-                      <li key={idx} style={isAlert ? { color: '#b45309', fontWeight: 600, background: '#fef3c7', padding: '6px 10px', borderRadius: 4, listStyleType: 'none', marginLeft: -20, marginBottom: 8 } : {}}>
-                        {step}
-                      </li>
-                    )
-                  })}
-                </ul>
+                {isEditingSteps ? (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: '4px 0' }}>
+                    {editableSteps.map((step, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: 6, alignItems: 'flex-start' }}>
+                        <span style={{ fontSize: '0.8rem', fontWeight: 700, color: '#64748b', paddingTop: 6, minWidth: 20 }}>
+                          {idx + 1}.
+                        </span>
+                        <textarea
+                          rows={2}
+                          value={step}
+                          onChange={(e) => {
+                            const next = [...editableSteps]
+                            next[idx] = e.target.value
+                            setEditableSteps(next)
+                          }}
+                          style={{
+                            flex: 1,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            border: '1px solid #cbd5e1',
+                            fontSize: '0.84rem',
+                            fontFamily: 'inherit',
+                            lineHeight: 1.4,
+                          }}
+                        />
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const next = editableSteps.filter((_, i) => i !== idx)
+                            setEditableSteps(next)
+                          }}
+                          title="Remove this guideline step"
+                          style={{
+                            padding: '4px 8px',
+                            borderRadius: 4,
+                            border: '1px solid #fca5a5',
+                            background: '#fee2e2',
+                            color: '#b91c1c',
+                            cursor: 'pointer',
+                            fontSize: '0.75rem',
+                          }}
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    ))}
+                    <button
+                      type="button"
+                      onClick={() => setEditableSteps([...editableSteps, ''])}
+                      style={{
+                        alignSelf: 'flex-start',
+                        padding: '4px 10px',
+                        borderRadius: 6,
+                        border: '1px dashed #3b82f6',
+                        background: '#eff6ff',
+                        color: '#1d4ed8',
+                        fontSize: '0.78rem',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                      }}
+                    >
+                      + Add Guideline Step
+                    </button>
+                  </div>
+                ) : (
+                  <ul>
+                    {editableSteps.map((step, idx) => {
+                      const isAlert = step.includes('CAUTION') || step.includes('CONFIRMATORY') || step.includes('ALERT')
+                      return (
+                        <li key={idx} style={isAlert ? { color: '#b45309', fontWeight: 600, background: '#fef3c7', padding: '6px 10px', borderRadius: 4, listStyleType: 'none', marginLeft: -20, marginBottom: 8 } : {}}>
+                          {step}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                )}
               </div>
             </div>
 
@@ -1126,13 +1233,13 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
                 title="Send prescription directly to pet owner's email address"
               >
-                ✉️ Email Rx to Owner
+                Email Prescription
               </button>
             )}
             {!isLibraryMode && (
               <button
                 type="button"
-                className="primary-btn"
+                className="action-btn blue"
                 onClick={handleSaveTreatmentPlan}
                 disabled={isSaving}
                 style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
@@ -1340,31 +1447,6 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               >
                 Close Preview
               </button>
-              {!isLibraryMode && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowRxPreviewModal(false)
-                    setShowEmailModal(true)
-                  }}
-                  className="secondary-btn"
-                  style={{
-                    padding: '8px 16px',
-                    borderRadius: 6,
-                    cursor: 'pointer',
-                    fontWeight: 700,
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: 6,
-                    background: '#0369a1',
-                    color: '#ffffff',
-                    border: 'none',
-                  }}
-                  title="Send this prescription to owner's email address"
-                >
-                  ✉️ Email to Owner
-                </button>
-              )}
               <button
                 type="button"
                 onClick={handlePrintRx}

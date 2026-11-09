@@ -19,22 +19,35 @@ import ImageCropModal from '../components/ImageCropModal'
 import ImageViewerModal from '../components/ImageViewerModal'
 import EmailPrescriptionModal from '../components/EmailPrescriptionModal'
 
-const CLINICAL_DIAGNOSES = [
-  'Mange',
-  'Ringworm',
-  'Pyoderma',
-  'Hot Spots',
-  'Mange with Secondary Pyoderma',
-  'Ringworm with Secondary Pyoderma',
-  'Hot Spots with Secondary Pyoderma',
-  'Healthy',
-  'Avian Fowl Pox',
-  'Scaly Face Scaly Leg Mite',
-  'Healthy (Bird)',
-  'Rabbit Mange',
-  'Rabbit Ringworm',
-  'Healthy (Rabbit)'
-]
+const CLINICAL_DIAGNOSIS_GROUPS = {
+  'Canine Protocols (Aso)': [
+    'Canine Mange',
+    'Canine Ringworm',
+    'Canine Pyoderma',
+    'Canine Hot Spots',
+    'Canine Healthy',
+    'Mange with Secondary Pyoderma',
+    'Ringworm with Secondary Pyoderma',
+    'Hot Spots with Secondary Pyoderma',
+  ],
+  'Feline Protocols (Pusa)': [
+    'Feline Mange',
+    'Feline Ringworm',
+    'Feline Pyoderma',
+    'Feline Hot Spots',
+    'Feline Healthy',
+  ],
+  'Avian Protocols (Ibon)': [
+    'Avian Fowl Pox',
+    'Scaly Face / Leg Mite',
+    'Healthy (Bird)',
+  ],
+  'Rabbit Protocols (Kuneho)': [
+    'Rabbit Mange',
+    'Rabbit Ringworm',
+    'Healthy (Rabbit)',
+  ],
+}
 
 export default function Patients({ authToken, apiBaseUrl = 'http://localhost:8000', isOffline = false, currentUser, onProceedToTreatment }) {
 
@@ -62,6 +75,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [overrideDiag, setOverrideDiag]               = useState('')
   const [customDiag, setCustomDiag]                   = useState('')
   const [labNotes, setLabNotes]                       = useState('')
+  const [reviewTreatmentPlan, setReviewTreatmentPlan] = useState('')
   const [isSavingReview, setIsSavingReview]           = useState(false)
   const [reviewError, setReviewError]                 = useState('')
 
@@ -314,6 +328,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
       if (consults && consults.length > 0) {
         const latest = consults[consults.length - 1]
         setReviewConsult(latest)
+        setReviewTreatmentPlan(latest?.treatmentPlan || '')
         const screenings = await getScreeningResultsByConsultation(latest.id)
         if (screenings && screenings.length > 0) {
           setReviewScreening(screenings[screenings.length - 1])
@@ -363,6 +378,9 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
           updates.clinicalNotes = currentNotes.includes('Lab Findings:')
             ? currentNotes
             : `${currentNotes} | Lab Findings: ${labNotes.trim()}`
+        }
+        if (reviewTreatmentPlan !== undefined) {
+          updates.treatmentPlan = reviewTreatmentPlan.trim()
         }
         if (Object.keys(updates).length > 0) {
           await updateConsultation(reviewConsult.id, updates)
@@ -840,7 +858,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                             fontWeight: 600,
                           }}
                         >
-                          ✉️ Email Rx
+                          Email Rx
                         </button>
                         <button
                           className="small-outline table-action-btn edit-pill-btn"
@@ -1049,7 +1067,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                         fontWeight: 600,
                         backdropFilter: 'blur(4px)',
                       }}>
-                        🔍 View / Zoom
+                        Inspect Photo
                       </div>
                     </div>
                   ) : (
@@ -1133,56 +1151,147 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 )}
               </div>
 
-              {/* 3. Diagnostic Status Selection */}
+              {/* 3. Diagnostic Status Selection (Balanced 2x2 Grid) */}
               <div style={{ marginTop: 12 }}>
                 <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#1e293b', display: 'block', marginBottom: 6 }}>
                   Clinical Triage & Action Status:
                 </span>
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 6, fontSize: '0.82rem' }}>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '8px 10px', background: clinicalStatus.includes('Review') && !clinicalStatus.includes('Needs') ? '#dcfce7' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 8, fontSize: '0.82rem' }}>
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      cursor: 'pointer',
+                      padding: '8px 12px',
+                      background: clinicalStatus === 'Review Results' ? '#dcfce7' : '#f0fdf4',
+                      borderRadius: 6,
+                      border: clinicalStatus === 'Review Results' ? '2px solid #16a34a' : '1px solid #86efac',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
                     <input
                       type="radio"
                       name="clinicalStatus"
                       value="Review Results"
                       checked={clinicalStatus === 'Review Results'}
                       onChange={(e) => setClinicalStatus(e.target.value)}
+                      style={{ display: 'none' }}
                     />
-                    <span><strong>Review Results</strong> (High Confidence)</span>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background: clinicalStatus === 'Review Results' ? '#16a34a' : '#86efac',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span><strong style={{ color: '#166534' }}>Review Results</strong> (High Confidence)</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '8px 10px', background: clinicalStatus.includes('Needs') ? '#fef9c3' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      cursor: 'pointer',
+                      padding: '8px 12px',
+                      background: clinicalStatus === 'Needs Vet Review' ? '#fef9c3' : '#fefce8',
+                      borderRadius: 6,
+                      border: clinicalStatus === 'Needs Vet Review' ? '2px solid #ca8a04' : '1px solid #fde047',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
                     <input
                       type="radio"
                       name="clinicalStatus"
                       value="Needs Vet Review"
                       checked={clinicalStatus === 'Needs Vet Review'}
                       onChange={(e) => setClinicalStatus(e.target.value)}
+                      style={{ display: 'none' }}
                     />
-                    <span><strong>Needs Vet Review</strong> (Comorbid/Borderline)</span>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background: clinicalStatus === 'Needs Vet Review' ? '#ca8a04' : '#fde047',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span><strong style={{ color: '#854d0e' }}>Needs Vet Review</strong> (Borderline)</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '8px 10px', background: clinicalStatus.includes('Lab') ? '#fef3c7' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      cursor: 'pointer',
+                      padding: '8px 12px',
+                      background: clinicalStatus === 'Awaiting Lab Test' ? '#ffedd5' : '#fff7ed',
+                      borderRadius: 6,
+                      border: clinicalStatus === 'Awaiting Lab Test' ? '2px solid #ea580c' : '1px solid #fdba74',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
                     <input
                       type="radio"
                       name="clinicalStatus"
                       value="Awaiting Lab Test"
                       checked={clinicalStatus === 'Awaiting Lab Test'}
                       onChange={(e) => setClinicalStatus(e.target.value)}
+                      style={{ display: 'none' }}
                     />
-                    <span><strong>Awaiting Lab Test</strong> (Skin Scrape / DTM)</span>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background: clinicalStatus === 'Awaiting Lab Test' ? '#ea580c' : '#fdba74',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span><strong style={{ color: '#9a3412' }}>Awaiting Lab Test</strong> (Skin Scrape / DTM)</span>
                   </label>
-                  <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '8px 10px', background: clinicalStatus === 'Completed' ? '#dbeafe' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+
+                  <label
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      cursor: 'pointer',
+                      padding: '8px 12px',
+                      background: clinicalStatus === 'Completed' ? '#dbeafe' : '#eff6ff',
+                      borderRadius: 6,
+                      border: clinicalStatus === 'Completed' ? '2px solid #2563eb' : '1px solid #bfdbfe',
+                      transition: 'all 0.15s ease',
+                    }}
+                  >
                     <input
                       type="radio"
                       name="clinicalStatus"
                       value="Completed"
                       checked={clinicalStatus === 'Completed'}
                       onChange={(e) => setClinicalStatus(e.target.value)}
+                      style={{ display: 'none' }}
                     />
-                    <span><strong>Finalized & Prescribed</strong></span>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: '50%',
+                        background: clinicalStatus === 'Completed' ? '#2563eb' : '#bfdbfe',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span><strong style={{ color: '#1e40af' }}>Finalized & Prescribed</strong></span>
                   </label>
                 </div>
               </div>
 
-              {/* 4. Clinical Diagnosis Override / Lab Confirmation */}
+              {/* 4. Clinical Diagnosis Override / Lab Confirmation (Grouped Optgroups) */}
               <div style={{ marginTop: 12, padding: 12, background: '#fdf4ff', border: '1px solid #f5d0fe', borderRadius: 8 }}>
                 <span style={{ fontWeight: 'bold', fontSize: '0.84rem', color: '#86198f', display: 'block', marginBottom: 4 }}>
                   Verified Diagnosis / Clinical Override:
@@ -1196,8 +1305,12 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   style={{ width: '100%', padding: '7px 10px', borderRadius: 6, border: '1px solid #d946ef', fontSize: '0.85rem' }}
                 >
                   <option value="">-- Keep Current Diagnosis ({reviewConsult?.diagnosis || reviewPatient.areaOfConcern}) --</option>
-                  {CLINICAL_DIAGNOSES.map((d) => (
-                    <option key={d} value={d}>{d}</option>
+                  {Object.entries(CLINICAL_DIAGNOSIS_GROUPS).map(([group, diagnoses]) => (
+                    <optgroup key={group} label={group}>
+                      {diagnoses.map((d) => (
+                        <option key={d} value={d}>{d}</option>
+                      ))}
+                    </optgroup>
                   ))}
                   <option value="OTHER">Other / Custom Dermatological Condition...</option>
                 </select>
@@ -1212,7 +1325,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       required
                       value={customDiag}
                       onChange={(e) => setCustomDiag(e.target.value)}
-                      placeholder="e.g. Canine Papillomavirus / Pemphigus / Deep Abscess"
+                      placeholder="e.g. Feline Chin Acne / Malassezia Yeast / Canine Papillomavirus"
                       style={{ width: '100%', padding: '7px 10px', fontSize: '0.85rem', borderRadius: 6, border: '2px solid #a855f7', marginTop: 4, boxSizing: 'border-box' }}
                     />
                   </div>
@@ -1232,13 +1345,41 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                 </label>
               </div>
 
+              {/* 5. Recommended Treatment Protocol & Prescription (Editable by Attending Veterinarian) */}
+              <div style={{ marginTop: 12, padding: 12, background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 8 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
+                  <span style={{ fontWeight: 'bold', fontSize: '0.84rem', color: '#0f172a' }}>
+                    Recommended Treatment Protocol & Prescription:
+                  </span>
+                  <span style={{ fontSize: '0.72rem', color: '#64748b' }}>
+                    Editable by Attending Veterinarian
+                  </span>
+                </div>
+                <textarea
+                  rows={3}
+                  value={reviewTreatmentPlan}
+                  onChange={(e) => setReviewTreatmentPlan(e.target.value)}
+                  placeholder="Enter customized pharmacological dosage, oral/topical medications, and clinical therapy instructions..."
+                  style={{
+                    width: '100%',
+                    padding: '8px 10px',
+                    borderRadius: 6,
+                    border: '1px solid #cbd5e1',
+                    fontSize: '0.85rem',
+                    fontFamily: 'Consolas, monospace',
+                    boxSizing: 'border-box',
+                    lineHeight: 1.4,
+                  }}
+                />
+              </div>
+
               {/* Modal Actions */}
               <div className="modal-actions" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
                 <button className="small-outline" type="button" onClick={() => setReviewPatient(null)} disabled={isSavingReview}>
                   Cancel
                 </button>
                 <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {reviewConsult?.treatmentPlan && (
+                  {(reviewTreatmentPlan || reviewConsult?.treatmentPlan) && (
                     <button
                       type="button"
                       className="secondary-btn"
@@ -1250,14 +1391,14 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                         setEmailRxModalData({
                           patient: reviewPatient,
                           consultation: reviewConsult,
-                          prescription: reviewConsult.treatmentPlan,
-                          clinicalNotes: reviewConsult.clinicalNotes || '',
+                          prescription: reviewTreatmentPlan || reviewConsult?.treatmentPlan || '',
+                          clinicalNotes: reviewConsult?.clinicalNotes || '',
                           diagnosis: rawDiag,
                         })
                       }}
                       title="Email official prescription to pet owner"
                     >
-                      ✉️ Email Rx
+                      Email Rx
                     </button>
                   )}
                   {onProceedToTreatment && (
@@ -1432,7 +1573,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                               fontWeight: 600,
                               backdropFilter: 'blur(4px)',
                             }}>
-                              🔍 Zoom
+                              Inspect Photo
                             </div>
                           </div>
                         )}
@@ -1469,7 +1610,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                                   }}
                                   title="Email this visit's prescription to owner"
                                 >
-                                  ✉️ Email Rx
+                                  Email Rx
                                 </button>
                               </div>
                             </div>
@@ -1571,7 +1712,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                           fontWeight: 600,
                           backdropFilter: 'blur(4px)',
                         }}>
-                          🔍 View / Zoom
+                          Inspect Photo
                         </div>
                       </div>
                     ) : (
@@ -1621,7 +1762,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                             fontWeight: 600,
                             backdropFilter: 'blur(4px)',
                           }}>
-                            🔍 View / Zoom
+                            Inspect Photo
                           </div>
                         </div>
                         <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
@@ -1703,46 +1844,153 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                       <span style={{ fontWeight: 'bold', fontSize: '0.85rem', color: '#1e293b', display: 'block', marginBottom: 6 }}>
                         Attending Veterinarian Healing Stage Evaluation:
                       </span>
-                      <div style={{ display: 'grid', gap: 6, fontSize: '0.85rem' }}>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'resolved' ? '#dcfce7' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+                      <div style={{ display: 'grid', gap: 8, fontSize: '0.84rem' }}>
+                        {/* 1. Green: Resolved / Healed */}
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            cursor: 'pointer',
+                            padding: '10px 14px',
+                            background: recheckProgress === 'resolved' ? '#dcfce7' : '#f0fdf4',
+                            borderRadius: 8,
+                            border: recheckProgress === 'resolved' ? '2px solid #16a34a' : '1px solid #86efac',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
                           <input
                             type="radio"
                             name="progress"
                             value="resolved"
                             checked={recheckProgress === 'resolved'}
                             onChange={(e) => setRecheckProgress(e.target.value)}
+                            style={{ display: 'none' }}
                           />
-                          <span><strong>Resolved / Fully Healed</strong> — Lesion cleared, fur regrown, discharge patient</span>
+                          <span
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: '50%',
+                              background: recheckProgress === 'resolved' ? '#16a34a' : '#86efac',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <div>
+                            <strong style={{ color: '#15803d', display: 'block' }}>RESOLVED / FULLY HEALED</strong>
+                            <span style={{ color: '#166534', fontSize: '0.78rem' }}>Lesion cleared, fur regrown, discharge patient</span>
+                          </div>
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'improving' ? '#fef9c3' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+
+                        {/* 2. Yellow/Light Green: Responding / Improving */}
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            cursor: 'pointer',
+                            padding: '10px 14px',
+                            background: recheckProgress === 'improving' ? '#fef9c3' : '#fefce8',
+                            borderRadius: 8,
+                            border: recheckProgress === 'improving' ? '2px solid #ca8a04' : '1px solid #fde047',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
                           <input
                             type="radio"
                             name="progress"
                             value="improving"
                             checked={recheckProgress === 'improving'}
                             onChange={(e) => setRecheckProgress(e.target.value)}
+                            style={{ display: 'none' }}
                           />
-                          <span><strong>Responding / Improving</strong> — Lesion significantly reduced; continue ongoing therapy</span>
+                          <span
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: '50%',
+                              background: recheckProgress === 'improving' ? '#ca8a04' : '#fde047',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <div>
+                            <strong style={{ color: '#854d0e', display: 'block' }}>RESPONDING / IMPROVING</strong>
+                            <span style={{ color: '#713f12', fontSize: '0.78rem' }}>Lesion significantly reduced; continue ongoing therapy</span>
+                          </div>
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'unchanged' ? '#fee2e2' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+
+                        {/* 3. Orange: Refractory / Unchanged */}
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            cursor: 'pointer',
+                            padding: '10px 14px',
+                            background: recheckProgress === 'unchanged' ? '#ffedd5' : '#fff7ed',
+                            borderRadius: 8,
+                            border: recheckProgress === 'unchanged' ? '2px solid #ea580c' : '1px solid #fdba74',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
                           <input
                             type="radio"
                             name="progress"
                             value="unchanged"
                             checked={recheckProgress === 'unchanged'}
                             onChange={(e) => setRecheckProgress(e.target.value)}
+                            style={{ display: 'none' }}
                           />
-                          <span><strong>Refractory / Unchanged</strong> — No clinical response; adjust prescription/protocol</span>
+                          <span
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: '50%',
+                              background: recheckProgress === 'unchanged' ? '#ea580c' : '#fdba74',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <div>
+                            <strong style={{ color: '#9a3412', display: 'block' }}>REFRACTORY / UNCHANGED</strong>
+                            <span style={{ color: '#7c2d12', fontSize: '0.78rem' }}>No clinical response; adjust prescription or therapy protocol</span>
+                          </div>
                         </label>
-                        <label style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', padding: '6px 10px', background: recheckProgress === 'new_complication' ? '#f3e8ff' : '#f8fafc', borderRadius: 6, border: '1px solid #cbd5e1' }}>
+
+                        {/* 4. Red: Suspected New Complication */}
+                        <label
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            cursor: 'pointer',
+                            padding: '10px 14px',
+                            background: recheckProgress === 'new_complication' ? '#fee2e2' : '#fef2f2',
+                            borderRadius: 8,
+                            border: recheckProgress === 'new_complication' ? '2px solid #dc2626' : '1px solid #fca5a5',
+                            transition: 'all 0.15s ease',
+                          }}
+                        >
                           <input
                             type="radio"
                             name="progress"
                             value="new_complication"
                             checked={recheckProgress === 'new_complication'}
                             onChange={(e) => setRecheckProgress(e.target.value)}
+                            style={{ display: 'none' }}
                           />
-                          <span><strong>Suspected New Complication</strong> — Secondary infection or new separate lesion detected</span>
+                          <span
+                            style={{
+                              width: 12,
+                              height: 12,
+                              borderRadius: '50%',
+                              background: recheckProgress === 'new_complication' ? '#dc2626' : '#fca5a5',
+                              flexShrink: 0,
+                            }}
+                          />
+                          <div>
+                            <strong style={{ color: '#991b1b', display: 'block' }}>SUSPECTED NEW COMPLICATION</strong>
+                            <span style={{ color: '#7f1d1d', fontSize: '0.78rem' }}>Secondary opportunistic infection or new separate lesion detected</span>
+                          </div>
                         </label>
                       </div>
                     </div>
@@ -1793,7 +2041,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                         }}
                         title="Email adjusted prescription to pet owner"
                       >
-                        ✉️ Email Rx
+                        Email Rx
                       </button>
                     )}
                     {currentUser?.role !== 'Clinic Staff' && onProceedToTreatment && (
