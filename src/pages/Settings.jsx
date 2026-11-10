@@ -342,7 +342,11 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
               'Content-Type': 'application/json',
               Authorization: `Bearer ${authToken}`,
             },
-            body: JSON.stringify({ name: trimmed }),
+            body: JSON.stringify({
+              name: trimmed,
+              prc_license: trimmedPrc,
+              ptr_number: trimmedPtr,
+            }),
           })
           if (!res.ok) {
             const errData = await res.json().catch(() => ({}))
@@ -353,7 +357,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
         }
       }
 
-      setProfileSuccessMsg('Display name updated successfully!')
+      setProfileSuccessMsg('Profile and clinical licensure updated successfully!')
       setIsEditingProfile(false)
       setTimeout(() => setProfileSuccessMsg(null), 4000)
     } catch (err) {

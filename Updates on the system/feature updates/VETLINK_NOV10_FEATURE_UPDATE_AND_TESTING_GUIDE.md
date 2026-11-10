@@ -173,3 +173,4 @@ API_PORT=8000
 | **Attending Veterinarian** | Clinical Evaluator | _______________________ | PRC Lic: ________________ |
 | **Faculty Adviser** | Capstone Project Adviser | _______________________ | College of Computing |
 | **Defense Panel Chair** | Technical Panel Evaluator | _______________________ | [  ] Approved  [  ] Revisions |
+

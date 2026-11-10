@@ -159,6 +159,8 @@ function normalizeCloudRecord(storeName, record) {
 
   if (storeName === 'users') {
     normalized.deviceStatus = record.device_status ?? record.deviceStatus
+    normalized.prcLicense = record.prc_license ?? record.prcLicense ?? 'VET-894102'
+    normalized.ptrNumber = record.ptr_number ?? record.ptrNumber ?? '1948201'
   } else if (storeName === 'owners') {
     normalized.name = record.name ?? ''
     normalized.phone = record.phone ?? ''
@@ -547,6 +549,8 @@ export async function mergeCloudStaff(cloudUsers) {
       username: user.username || `${user.name?.toLowerCase().replace(/\s+/g, '.')}@clinic.vet`,
       name: user.name || 'Unnamed Staff',
       role: user.role || 'Clinic Staff',
+      prcLicense: user.prc_license ?? user.prcLicense ?? 'VET-894102',
+      ptrNumber: user.ptr_number ?? user.ptrNumber ?? '1948201',
       deviceStatus: user.device_status ?? user.deviceStatus ?? 'Online',
       version: user.version || 1,
       createdAt: user.created_at ?? user.createdAt ?? new Date().toISOString(),

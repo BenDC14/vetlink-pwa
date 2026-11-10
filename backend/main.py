@@ -84,6 +84,8 @@ class ChangePasswordRequest(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     name: str
+    prc_license: Optional[str] = None
+    ptr_number: Optional[str] = None
 
 
 class AdminCreateUserRequest(BaseModel):
@@ -213,7 +215,7 @@ def login(request: LoginRequest):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT id, username, name, role, password_hash, must_change_password, is_active "
+                "SELECT id, username, name, role, password_hash, must_change_password, is_active, prc_license, ptr_number "
                 "FROM users WHERE username = %s",
                 (request.email.strip().lower(),),
             )
@@ -242,6 +244,8 @@ def login(request: LoginRequest):
                     "email": user["username"],
                     "name": user["name"],
                     "role": user["role"],
+                    "prcLicense": user.get("prc_license") or "VET-894102",
+                    "ptrNumber": user.get("ptr_number") or "1948201",
                 },
             }
     finally:
@@ -311,14 +315,21 @@ def update_profile(request: UpdateProfileRequest, authorization: Optional[str] =
     name = request.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Display name cannot be empty")
+    prc = request.prc_license.strip() if request.prc_license else None
+    ptr = request.ptr_number.strip() if request.ptr_number else None
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "UPDATE users SET name = %s, updated_at = %s WHERE id = %s",
-                (name, datetime.utcnow(), user["id"]),
+                """UPDATE users 
+                   SET name = %s, 
+                       prc_license = COALESCE(%s, prc_license), 
+                       ptr_number = COALESCE(%s, ptr_number), 
+                       updated_at = %s 
+                   WHERE id = %s""",
+                (name, prc, ptr, datetime.utcnow(), user["id"]),
             )
-        return {"success": True, "name": name}
+        return {"success": True, "name": name, "prc_license": prc, "ptr_number": ptr}
     finally:
         conn.close()
 
@@ -331,7 +342,7 @@ def get_current_user_from_header(authorization: Optional[str]) -> dict:
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                """SELECT u.id, u.username, u.name, u.role, u.must_change_password, u.is_active
+                """SELECT u.id, u.username, u.name, u.role, u.must_change_password, u.is_active, u.prc_license, u.ptr_number
                    FROM auth_sessions s JOIN users u ON u.id = s.user_id
                    WHERE s.token_hash = %s AND s.expires_at > %s""",
                 (hash_session_token(token), datetime.utcnow()),
@@ -405,7 +416,7 @@ def get_all_users(authorization: Optional[str] = Header(default=None)):
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username, name, role, device_status, sync_status, version, created_at, updated_at FROM users ORDER BY created_at ASC;")
+            cursor.execute("SELECT id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, created_at, updated_at FROM users ORDER BY created_at ASC;")
             rows = cursor.fetchall()
             return {"users": rows, "count": len(rows)}
     finally:
@@ -1004,22 +1015,26 @@ def upsert_user(cursor, payload: dict):
     name = payload.get("name") or "Unnamed Staff"
     role = payload.get("role", "Clinic Staff")
     device_status = payload.get("deviceStatus") or payload.get("device_status", "Online")
+    prc_license = payload.get("prcLicense") or payload.get("prc_license") or "VET-894102"
+    ptr_number = payload.get("ptrNumber") or payload.get("ptr_number") or "1948201"
     version = payload.get("version", 1)
     now = datetime.utcnow()
 
     sql = """
-        INSERT INTO users (id, username, name, role, device_status, sync_status, version, updated_at)
-        VALUES (%s, %s, %s, %s, %s, 'synced', %s, %s)
+        INSERT INTO users (id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
             username = VALUES(username),
             role = VALUES(role),
+            prc_license = VALUES(prc_license),
+            ptr_number = VALUES(ptr_number),
             device_status = VALUES(device_status),
             sync_status = 'synced',
             version = VALUES(version),
             updated_at = VALUES(updated_at);
     """
-    cursor.execute(sql, (user_id, username, name, role, device_status, version, now))
+    cursor.execute(sql, (user_id, username, name, role, prc_license, ptr_number, device_status, version, now))
 
 
 def delete_user(cursor, entity_id: str):

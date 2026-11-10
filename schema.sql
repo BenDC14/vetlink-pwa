@@ -20,6 +20,8 @@ CREATE TABLE IF NOT EXISTS users (
   password_hash VARCHAR(255) NULL,
   must_change_password BOOLEAN NOT NULL DEFAULT FALSE,
   is_active BOOLEAN NOT NULL DEFAULT TRUE,
+  prc_license VARCHAR(64) NULL DEFAULT 'VET-894102',
+  ptr_number VARCHAR(64) NULL DEFAULT '1948201',
   device_status VARCHAR(32) DEFAULT 'Online',
   sync_status VARCHAR(32) DEFAULT 'synced',
   version INT DEFAULT 1,
