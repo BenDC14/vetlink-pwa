@@ -233,6 +233,8 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
   const [isEditingProfile, setIsEditingProfile] = useState(false)
   const [profileName, setProfileName] = useState(currentUser?.name || 'Dr. Emily Chen, DVM')
   const [profileEmail, setProfileEmail] = useState(currentUser?.email || currentUser?.username || 'dr.chen@clinic.vet')
+  const [profilePrcLicense, setProfilePrcLicense] = useState(currentUser?.prcLicense || 'VET-894102')
+  const [profilePtrNumber, setProfilePtrNumber] = useState(currentUser?.ptrNumber || '1948201')
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [profileSuccessMsg, setProfileSuccessMsg] = useState(null)
   const [profileErrorMsg, setProfileErrorMsg] = useState(null)
@@ -260,6 +262,8 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
     if (currentUser?.email || currentUser?.username) {
       setProfileEmail(currentUser.email || currentUser.username)
     }
+    setProfilePrcLicense(currentUser?.prcLicense || 'VET-894102')
+    setProfilePtrNumber(currentUser?.ptrNumber || '1948201')
   }
 
   const [isEditingClinic, setIsEditingClinic] = useState(false)
@@ -280,6 +284,9 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
       return
     }
 
+    const trimmedPrc = profilePrcLicense.trim() || 'VET-894102'
+    const trimmedPtr = profilePtrNumber.trim() || '1948201'
+
     setIsSavingProfile(true)
     setProfileErrorMsg(null)
     setProfileSuccessMsg(null)
@@ -288,6 +295,8 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
       const updatedUser = {
         ...currentUser,
         name: trimmed,
+        prcLicense: trimmedPrc,
+        ptrNumber: trimmedPtr,
       }
 
       // 1. Update React state in App.jsx and cached user in localStorage
@@ -304,6 +313,8 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
             name: trimmed,
             username: currentUser.email || currentUser.username,
             role: currentUser.role,
+            prcLicense: trimmedPrc,
+            ptrNumber: trimmedPtr,
           })
         } catch (dbErr) {
           console.warn('Could not update local staff store:', dbErr)
@@ -315,7 +326,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
             user: updatedUser,
             targetEntity: 'users',
             targetId: currentUser.id,
-            details: `Updated display name to "${trimmed}"`,
+            details: `Updated display name to "${trimmed}", PRC Lic: ${trimmedPrc}, PTR: ${trimmedPtr}`,
           })
         } catch (auditErr) {
           console.warn('Could not log audit event:', auditErr)
@@ -559,7 +570,32 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                     readOnly
                   />
                 </label>
+                <label className="settings-form-label">
+                  <span>PRC License Number</span>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={profilePrcLicense}
+                    onChange={(e) => setProfilePrcLicense(e.target.value)}
+                    placeholder="e.g. VET-894102"
+                    disabled={isSavingProfile}
+                  />
+                </label>
+                <label className="settings-form-label">
+                  <span>PTR Number</span>
+                  <input
+                    type="text"
+                    className="settings-input"
+                    value={profilePtrNumber}
+                    onChange={(e) => setProfilePtrNumber(e.target.value)}
+                    placeholder="e.g. 1948201"
+                    disabled={isSavingProfile}
+                  />
+                </label>
               </div>
+              <p style={{ margin: '8px 0 16px', fontSize: '0.78rem', color: '#64748b' }}>
+                PRC License and PTR numbers are required under Republic Act 9268 for official veterinary prescription generation and digital dispatch.
+              </p>
               <div className="settings-form-actions">
                 <button
                   type="button"
@@ -567,6 +603,8 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                   onClick={() => {
                     setIsEditingProfile(false)
                     setProfileName(currentUser?.name || '')
+                    setProfilePrcLicense(currentUser?.prcLicense || 'VET-894102')
+                    setProfilePtrNumber(currentUser?.ptrNumber || '1948201')
                     setProfileErrorMsg(null)
                   }}
                   disabled={isSavingProfile}
@@ -574,7 +612,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                   Cancel
                 </button>
                 <button type="submit" className="settings-primary-btn" disabled={isSavingProfile}>
-                  {isSavingProfile ? 'Saving…' : 'Save Name'}
+                  {isSavingProfile ? 'Saving…' : 'Save Profile'}
                 </button>
               </div>
             </form>
@@ -584,6 +622,14 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
               <div className="settings-profile-info">
                 <span className="settings-profile-name">{profileName || currentUser?.name || 'Staff User'}</span>
                 <span className="settings-profile-email">{profileEmail || currentUser?.email || currentUser?.username || 'user@clinic.vet'}</span>
+                <div style={{ display: 'flex', gap: 8, marginTop: 6, flexWrap: 'wrap' }}>
+                  <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 4, background: 'rgba(56, 189, 248, 0.1)', color: '#0284c7', border: '1px solid rgba(56, 189, 248, 0.3)', fontWeight: 600 }}>
+                    PRC Lic: {profilePrcLicense || currentUser?.prcLicense || 'VET-894102'}
+                  </span>
+                  <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 4, background: 'rgba(100, 116, 139, 0.1)', color: '#64748b', border: '1px solid rgba(100, 116, 139, 0.25)', fontWeight: 600 }}>
+                    PTR: {profilePtrNumber || currentUser?.ptrNumber || '1948201'}
+                  </span>
+                </div>
               </div>
             </div>
           )}

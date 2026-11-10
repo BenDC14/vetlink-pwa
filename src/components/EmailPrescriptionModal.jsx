@@ -10,6 +10,8 @@ export default function EmailPrescriptionModal({
   clinicalNotes = '',
   diagnosis = '',
   doctorName = 'Dr. Sarah Lin, DVM',
+  prcLicense,
+  ptrNumber,
   currentUser,
   authToken,
   apiBaseUrl = 'http://localhost:8000',
@@ -43,6 +45,8 @@ export default function EmailPrescriptionModal({
   const cleanRxId = consultation?.id || (patient?.id ? `RX-${patient.id.replace('PAT-', '')}` : `RX-${Date.now().toString().slice(-6)}`)
   const cleanDiagnosis = diagnosis || consultation?.diagnosis || patient?.areaOfConcern || 'Cutaneous Dermatological Condition'
   const cleanDoctor = doctorName || (currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM')
+  const cleanPrcLicense = prcLicense || currentUser?.prcLicense || 'VET-894102'
+  const cleanPtrNumber = ptrNumber || currentUser?.ptrNumber || '1948201'
 
   // Check 24-Hour Duplicate Dispatch Guard
   useEffect(() => {
@@ -119,8 +123,8 @@ export default function EmailPrescriptionModal({
       personalNote ? `CLINIC STAFF INSTRUCTIONS TO OWNER:\n"${personalNote}"\n` : '',
       'ATTENDING VETERINARIAN:',
       cleanDoctor,
-      'PRC License No.: VET-894102',
-      'PTR No.: 1948201',
+      `PRC License No.: ${cleanPrcLicense}`,
+      `PTR No.: ${cleanPtrNumber}`,
       '',
       '--------------------------------------------------',
       'Notice: Official prescription issued under Republic Act 9268.',
@@ -204,6 +208,8 @@ export default function EmailPrescriptionModal({
         doctor_name: cleanDoctor,
         rx_id: cleanRxId,
         allow_duplicate: allowDuplicate,
+        prc_license: cleanPrcLicense,
+        ptr_number: cleanPtrNumber,
       }
 
       const headers = { 'Content-Type': 'application/json' }
@@ -269,6 +275,8 @@ export default function EmailPrescriptionModal({
         : clinicalNotes,
       doctor_name: cleanDoctor,
       rx_id: cleanRxId,
+      prc_license: cleanPrcLicense,
+      ptr_number: cleanPtrNumber,
     }
 
     try {
@@ -434,7 +442,7 @@ export default function EmailPrescriptionModal({
             aria-label="Close dialog"
             disabled={isSending}
           >
-            ✕
+            &times;
           </button>
         </header>
 
@@ -845,7 +853,7 @@ export default function EmailPrescriptionModal({
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontWeight: 700, color: '#0f172a' }}>{cleanDoctor}</div>
-                <div>PRC Lic: VET-894102 | PTR: 1948201</div>
+                <div>PRC Lic: {cleanPrcLicense} | PTR: {cleanPtrNumber}</div>
               </div>
             </div>
           </div>

@@ -137,6 +137,8 @@ class EmailPrescriptionRequest(BaseModel):
     doctor_name: Optional[str] = "Dr. Sarah Lin, DVM"
     rx_id: Optional[str] = None
     allow_duplicate: Optional[bool] = False
+    prc_license: Optional[str] = "VET-894102"
+    ptr_number: Optional[str] = "1948201"
 
 
 def decode_json_value(value):
@@ -704,8 +706,10 @@ def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
     story.append(Spacer(1, 14))
 
     doc_name = req.doctor_name or 'Dr. Sarah Lin, DVM'
+    prc_lic = req.prc_license or 'VET-894102'
+    ptr_no = req.ptr_number or '1948201'
     sig_left = 'Notice: Official veterinary prescription issued under Republic Act 9268.<br/>Valid for 30 days from date of examination.<br/>Substitution requires attending veterinarian authorization.'
-    sig_right = f"<b>{doc_name}</b><br/>PRC License No.: VET-894102<br/>PTR No.: 1948201"
+    sig_right = f"<b>{doc_name}</b><br/>PRC License No.: {prc_lic}<br/>PTR No.: {ptr_no}"
 
     sig_table = Table([
         [Paragraph(sig_left, sig_text), Paragraph(sig_right, ParagraphStyle('SigR', parent=sig_text, alignment=2))]
@@ -729,8 +733,13 @@ def dispatch_prescription_email(req: EmailPrescriptionRequest) -> tuple[bool, st
     smtp_port = int(os.getenv("SMTP_PORT", 587))
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
+    if smtp_password:
+        smtp_password = smtp_password.replace(" ", "")
     smtp_from = os.getenv("SMTP_FROM", smtp_user or "clinic@vetlink.ph")
     smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
+
+    prc_lic = req.prc_license or "VET-894102"
+    ptr_no = req.ptr_number or "1948201"
 
     subject = f"Official Veterinary Prescription - {req.patient_name} ({req.diagnosis})"
 
@@ -769,8 +778,8 @@ CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:
 
 ATTENDING VETERINARIAN:
 {req.doctor_name}
-PRC License No.: VET-894102
-PTR No.: 1948201
+PRC License No.: {prc_lic}
+PTR No.: {ptr_no}
 
 --------------------------------------------------
 Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
@@ -832,8 +841,8 @@ Please find the official printable PDF prescription attached to this email.
       <div style="max-width: 340px;">Notice: Official veterinary prescription issued under Republic Act 9268. Valid for 30 days.</div>
       <div style="text-align: right;">
         <strong>{req.doctor_name}</strong><br>
-        PRC License No.: VET-894102<br>
-        PTR No.: 1948201
+        PRC License No.: {prc_lic}<br>
+        PTR No.: {ptr_no}
       </div>
     </div>
   </div>
