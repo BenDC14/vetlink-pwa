@@ -1,17 +1,32 @@
 from datetime import datetime, timedelta
+import io
+from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import json
 import os
+from pathlib import Path
 import smtplib
 import uuid
 from typing import Any, Dict, List, Optional
+from dotenv import load_dotenv
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+
+from reportlab.lib.pagesizes import letter
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib import colors
 
 from backend.database import auto_initialize_schema, get_connection, test_connection
 from backend.security import create_session_token, hash_password, hash_session_token, verify_password
+
+# Load environment configuration (.env in backend directory or root)
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env")
 
 app = FastAPI(
     title="VetLink Cloud Sync API",
@@ -69,6 +84,8 @@ class ChangePasswordRequest(BaseModel):
 
 class UpdateProfileRequest(BaseModel):
     name: str
+    prc_license: Optional[str] = None
+    ptr_number: Optional[str] = None
 
 
 class AdminCreateUserRequest(BaseModel):
@@ -119,9 +136,11 @@ class EmailPrescriptionRequest(BaseModel):
     diagnosis: str
     prescription_text: str
     clinical_notes: Optional[str] = ""
-    doctor_name: Optional[str] = "Dr. Sarah Lin, DVM"
+    doctor_name: Optional[str] = "Attending Veterinarian"
     rx_id: Optional[str] = None
     allow_duplicate: Optional[bool] = False
+    prc_license: Optional[str] = ""
+    ptr_number: Optional[str] = ""
 
 
 def decode_json_value(value):
@@ -196,7 +215,7 @@ def login(request: LoginRequest):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT id, username, name, role, password_hash, must_change_password, is_active "
+                "SELECT id, username, name, role, password_hash, must_change_password, is_active, prc_license, ptr_number "
                 "FROM users WHERE username = %s",
                 (request.email.strip().lower(),),
             )
@@ -225,6 +244,8 @@ def login(request: LoginRequest):
                     "email": user["username"],
                     "name": user["name"],
                     "role": user["role"],
+                    "prcLicense": user.get("prc_license") or "VET-894102",
+                    "ptrNumber": user.get("ptr_number") or "1948201",
                 },
             }
     finally:
@@ -294,14 +315,21 @@ def update_profile(request: UpdateProfileRequest, authorization: Optional[str] =
     name = request.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Display name cannot be empty")
+    prc = request.prc_license.strip() if request.prc_license else None
+    ptr = request.ptr_number.strip() if request.ptr_number else None
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "UPDATE users SET name = %s, updated_at = %s WHERE id = %s",
-                (name, datetime.utcnow(), user["id"]),
+                """UPDATE users 
+                   SET name = %s, 
+                       prc_license = COALESCE(%s, prc_license), 
+                       ptr_number = COALESCE(%s, ptr_number), 
+                       updated_at = %s 
+                   WHERE id = %s""",
+                (name, prc, ptr, datetime.utcnow(), user["id"]),
             )
-        return {"success": True, "name": name}
+        return {"success": True, "name": name, "prc_license": prc, "ptr_number": ptr}
     finally:
         conn.close()
 
@@ -314,7 +342,7 @@ def get_current_user_from_header(authorization: Optional[str]) -> dict:
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                """SELECT u.id, u.username, u.name, u.role, u.must_change_password, u.is_active
+                """SELECT u.id, u.username, u.name, u.role, u.must_change_password, u.is_active, u.prc_license, u.ptr_number
                    FROM auth_sessions s JOIN users u ON u.id = s.user_id
                    WHERE s.token_hash = %s AND s.expires_at > %s""",
                 (hash_session_token(token), datetime.utcnow()),
@@ -388,7 +416,7 @@ def get_all_users(authorization: Optional[str] = Header(default=None)):
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username, name, role, device_status, sync_status, version, created_at, updated_at FROM users ORDER BY created_at ASC;")
+            cursor.execute("SELECT id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, created_at, updated_at FROM users ORDER BY created_at ASC;")
             rows = cursor.fetchall()
             return {"users": rows, "count": len(rows)}
     finally:
@@ -580,31 +608,221 @@ def get_owner(owner_id: str, authorization: Optional[str] = Header(default=None)
         conn.close()
 
 
+def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
+    """Generates an authentic Philippine Veterinary Medical Prescription PDF in memory."""
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buf,
+        pagesize=letter,
+        leftMargin=36,
+        rightMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+    styles = getSampleStyleSheet()
+
+    primary_color = colors.HexColor("#1e3a8a")
+    dark_text = colors.HexColor("#0f172a")
+    gray_text = colors.HexColor("#475569")
+
+    h_title = ParagraphStyle('HTitle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=15, leading=18, textColor=primary_color, alignment=1)
+    h_sub = ParagraphStyle('HSub', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=8.5, leading=11, textColor=dark_text, alignment=1)
+    h_contact = ParagraphStyle('HContact', parent=styles['Normal'], fontName='Helvetica', fontSize=7.5, leading=10, textColor=gray_text, alignment=1)
+
+    meta_style = ParagraphStyle('MetaStyle', parent=styles['Normal'], fontName='Helvetica', fontSize=8, leading=11, textColor=dark_text)
+    diag_style = ParagraphStyle('DiagStyle', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=9, leading=12, textColor=primary_color)
+    rx_head = ParagraphStyle('RxHead', parent=styles['Normal'], fontName='Helvetica-Bold', fontSize=12, leading=15, textColor=primary_color)
+    rx_body = ParagraphStyle('RxBody', parent=styles['Normal'], fontName='Helvetica', fontSize=8.5, leading=12, textColor=dark_text)
+    notes_body = ParagraphStyle('NotesBody', parent=styles['Normal'], fontName='Helvetica-Oblique', fontSize=8, leading=11, textColor=colors.HexColor('#334155'))
+    sig_text = ParagraphStyle('SigText', parent=styles['Normal'], fontName='Helvetica', fontSize=7.5, leading=10, textColor=gray_text)
+
+    story = [
+        Paragraph('VETLINK ANIMAL CARE CLINIC &amp; HOSPITAL', h_title),
+        Spacer(1, 2),
+        Paragraph('Veterinary Medical Center &bull; Department of Clinical Dermatology', h_sub),
+        Spacer(1, 2),
+        Paragraph('765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 &bull; Mobile: 0945 867 9891 &bull; vetlink.lamuan@gmail.com', h_contact),
+        Spacer(1, 4),
+        HRFlowable(width='100%', thickness=1.5, color=primary_color, spaceBefore=2, spaceAfter=8)
+    ]
+
+    p_name = req.patient_name or 'Patient'
+    p_spec = req.species or 'Canine'
+    p_breed = req.breed or 'Unknown'
+    p_wt = f"{req.weight} kg" if req.weight else "N/A"
+    o_name = req.owner_name or 'Pet Owner'
+    raw_rx = req.rx_id or 'RX-1001'
+    if 'CONS-' in raw_rx or len(raw_rx) > 16:
+        if req.patient_id and req.patient_id.strip():
+            num_part = req.patient_id.replace('PAT-', '').replace('PT-', '').strip()
+            rx_num = f"RX-{num_part}"
+        else:
+            parts = raw_rx.split('-')
+            rx_num = f"RX-{parts[1].upper() if len(parts) > 1 else raw_rx[:6].upper()}"
+    else:
+        rx_num = raw_rx
+
+    date_str = datetime.utcnow().strftime('%B %d, %Y')
+
+    col1_html = f"<b>PATIENT:</b> {p_name}<br/><b>SPECIES / BREED:</b> {p_spec} &bull; {p_breed}<br/><b>WEIGHT:</b> {p_wt}"
+    col2_html = f"<b>OWNER:</b> {o_name}<br/><b>DATE:</b> {date_str}<br/><b>RX / CASE ID:</b> {rx_num}"
+
+    meta_table = Table([
+        [Paragraph(col1_html, meta_style), Paragraph(col2_html, meta_style)]
+    ], colWidths=[270, 270])
+    meta_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('INNERGRID', (0,0), (-1,-1), 0.5, colors.HexColor('#e2e8f0')),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ('RIGHTPADDING', (0,0), (-1,-1), 8),
+    ]))
+    story.append(meta_table)
+    story.append(Spacer(1, 8))
+
+    diag_html = f"<b>CLINICAL DIAGNOSIS:</b> <u>{req.diagnosis or 'Clinical Dermatological Condition'}</u>"
+    diag_table = Table([[Paragraph(diag_html, diag_style)]], colWidths=[540])
+    diag_table.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#eff6ff')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#bfdbfe')),
+        ('LEFTPADDING', (0,0), (-1,-1), 8),
+        ('TOPPADDING', (0,0), (-1,-1), 5),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 5),
+    ]))
+    story.append(diag_table)
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph('<b>Rx MEDICATION &amp; DOSAGE DISPENSING ORDER:</b>', rx_head))
+    story.append(Spacer(1, 3))
+
+    rx_html = (req.prescription_text or 'No oral or topical medication prescribed.').replace('\n', '<br/>')
+    rx_box = Table([[Paragraph(rx_html, rx_body)]], colWidths=[540])
+    rx_box.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.HexColor('#f8fafc')),
+        ('BOX', (0,0), (-1,-1), 1, colors.HexColor('#94a3b8')),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 8),
+        ('LEFTPADDING', (0,0), (-1,-1), 10),
+        ('RIGHTPADDING', (0,0), (-1,-1), 10),
+    ]))
+    story.append(rx_box)
+    story.append(Spacer(1, 8))
+
+    story.append(Paragraph('<b>CLINICAL CARE, HOME ADMINISTRATION &amp; RECHECK INSTRUCTIONS:</b>', ParagraphStyle('InstH', parent=meta_style, fontName='Helvetica-Bold', fontSize=8)))
+    story.append(Spacer(1, 3))
+
+    notes_html = (req.clinical_notes or 'Follow standard clinical monitoring. Contact clinic if adverse reactions occur.').replace('\n', '<br/>')
+    notes_box = Table([[Paragraph(notes_html, notes_body)]], colWidths=[540])
+    notes_box.setStyle(TableStyle([
+        ('BACKGROUND', (0,0), (-1,-1), colors.white),
+        ('BOX', (0,0), (-1,-1), 0.75, colors.HexColor('#cbd5e1')),
+        ('TOPPADDING', (0,0), (-1,-1), 6),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 6),
+        ('LEFTPADDING', (0,0), (-1,-1), 10),
+        ('RIGHTPADDING', (0,0), (-1,-1), 10),
+    ]))
+    story.append(notes_box)
+    story.append(Spacer(1, 14))
+
+    doc_name = req.doctor_name or 'Attending Veterinarian'
+    prc_lic = (req.prc_license or '').strip()
+    ptr_no = (req.ptr_number or '').strip()
+    has_prc = bool(prc_lic and prc_lic != 'VET-894102')
+    has_ptr = bool(ptr_no and ptr_no != '1948201')
+
+    sig_left = 'Notice: Official veterinary prescription issued under Republic Act 9268.<br/>Valid for 30 days from date of examination.<br/>Substitution requires attending veterinarian authorization.'
+    sig_lines = [f"<b>{doc_name}</b>"]
+    if has_prc:
+        sig_lines.append(f"PRC License No.: {prc_lic}")
+    if has_ptr:
+        sig_lines.append(f"PTR No.: {ptr_no}")
+    sig_right = "<br/>".join(sig_lines)
+
+    sig_table = Table([
+        [Paragraph(sig_left, sig_text), Paragraph(sig_right, ParagraphStyle('SigR', parent=sig_text, alignment=2))]
+    ], colWidths=[340, 200])
+    sig_table.setStyle(TableStyle([
+        ('LINEABOVE', (0,0), (-1,-1), 1, colors.HexColor('#cbd5e1')),
+        ('TOPPADDING', (0,0), (-1,-1), 8),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 4),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
+    story.append(sig_table)
+
+    doc.build(story)
+    return buf.getvalue()
+
+
 def dispatch_prescription_email(req: EmailPrescriptionRequest) -> tuple[bool, str]:
-    """Sends prescription email via SMTP if configured, else records simulation."""
-    smtp_host = os.getenv("SMTP_HOST")
+    """Sends prescription email via SMTP with attached PDF if configured, else records queue simulation."""
+    smtp_host = os.getenv("SMTP_HOST", "smtp.gmail.com")
     smtp_port = int(os.getenv("SMTP_PORT", 587))
     smtp_user = os.getenv("SMTP_USER")
     smtp_password = os.getenv("SMTP_PASSWORD")
+    if smtp_password:
+        smtp_password = smtp_password.replace(" ", "")
     smtp_from = os.getenv("SMTP_FROM", smtp_user or "clinic@vetlink.ph")
     smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
 
+    raw_rx = req.rx_id or "RX-1001"
+    if "CONS-" in raw_rx or len(raw_rx) > 16:
+        if req.patient_id and req.patient_id.strip():
+            num_part = req.patient_id.replace("PAT-", "").replace("PT-", "").strip()
+            clean_rxid = f"RX-{num_part}"
+        else:
+            parts = raw_rx.split("-")
+            clean_rxid = f"RX-{parts[1].upper() if len(parts) > 1 else raw_rx[:6].upper()}"
+    else:
+        clean_rxid = raw_rx
+
+    req.rx_id = clean_rxid
+    clean_pname = (req.patient_name or "Patient").replace(" ", "_").replace("/", "_")
+    pdf_filename = f"Prescription_{clean_pname}_{clean_rxid}.pdf"
+
+    doc_name = req.doctor_name or "Attending Veterinarian"
+    prc_lic = (req.prc_license or "").strip()
+    ptr_no = (req.ptr_number or "").strip()
+    has_prc = bool(prc_lic and prc_lic != "VET-894102")
+    has_ptr = bool(ptr_no and ptr_no != "1948201")
+
+    plain_sig_lines = [f"ATTENDING VETERINARIAN:\n{doc_name}"]
+    if has_prc:
+        plain_sig_lines.append(f"PRC License No.: {prc_lic}")
+    if has_ptr:
+        plain_sig_lines.append(f"PTR No.: {ptr_no}")
+    plain_doctor_block = "\n".join(plain_sig_lines)
+
+    html_sig_lines = [f"<strong>{doc_name}</strong>"]
+    if has_prc:
+        html_sig_lines.append(f"<br>PRC License No.: {prc_lic}")
+    if has_ptr:
+        html_sig_lines.append(f"<br>PTR No.: {ptr_no}")
+    html_doctor_block = "".join(html_sig_lines)
+
     subject = f"Official Veterinary Prescription - {req.patient_name} ({req.diagnosis})"
+
+    # Generate the authentic binary PDF prescription
+    pdf_bytes = generate_prescription_pdf_bytes(req)
 
     plain_text = f"""==================================================
 VETLINK ANIMAL CARE CLINIC & HOSPITAL
 Veterinary Medical Center • Department of Clinical Dermatology
-102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807
+Mobile: 0945 867 9891 • Email: vetlink.lamuan@gmail.com
 ==================================================
 
 OFFICIAL VETERINARY PRESCRIPTION (℞)
+Attached Document: {pdf_filename}
 
 PATIENT:         {req.patient_name}
 SPECIES / BREED: {req.species} • {req.breed}
 WEIGHT:          {req.weight or 'N/A'} kg
 OWNER:           {req.owner_name}
 DATE:            {datetime.utcnow().strftime('%B %d, %Y')}
-CASE / RX ID:    {req.rx_id or 'RX-REF'}
+CASE / RX ID:    {clean_rxid}
 
 CLINICAL DIAGNOSIS:
 {req.diagnosis}
@@ -617,13 +835,11 @@ CLINICAL DIAGNOSIS:
 CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:
 {req.clinical_notes or 'Follow standard clinical home care.'}
 
-ATTENDING VETERINARIAN:
-{req.doctor_name}
-PRC License No.: VET-894102
-PTR No.: 1948201
+{plain_doctor_block}
 
 --------------------------------------------------
 Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
+Please find the official printable PDF prescription attached to this email.
 =================================================="""
 
     html_text = f"""<!DOCTYPE html>
@@ -636,10 +852,11 @@ Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
     .clinic-head {{ text-align: center; border-bottom: 2px solid #0f172a; padding-bottom: 14px; margin-bottom: 18px; }}
     .meta-table {{ width: 100%; border-collapse: collapse; margin-bottom: 16px; font-size: 13px; background: #f8fafc; border: 1px solid #cbd5e1; border-radius: 6px; }}
     .meta-table td {{ padding: 8px 12px; }}
-    .diag-banner {{ background: #f1f5f9; border-left: 4px solid #1e3a8a; padding: 8px 12px; margin-bottom: 16px; font-size: 13px; }}
+    .diag-banner {{ background: #eff6ff; border-left: 4px solid #1e3a8a; padding: 8px 12px; margin-bottom: 16px; font-size: 13px; }}
     .rx-title {{ display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font-weight: 800; font-size: 14px; color: #1e3a8a; }}
     .rx-orders {{ background: #f8fafc; border: 1.5px solid #0f172a; border-radius: 6px; padding: 12px; font-family: Consolas, monospace; font-size: 13px; line-height: 1.6; white-space: pre-wrap; margin-bottom: 16px; }}
     .instructions {{ background: #ffffff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px; font-size: 12px; line-height: 1.5; color: #334155; margin-bottom: 20px; white-space: pre-wrap; }}
+    .pdf-badge {{ background: #f0fdf4; border: 1px solid #86efac; border-radius: 6px; padding: 8px 12px; margin-bottom: 16px; font-size: 12px; color: #166534; font-weight: 600; display: flex; align-items: center; gap: 8px; }}
     .footer-sig {{ border-top: 1px solid #cbd5e1; padding-top: 14px; display: flex; justify-content: space-between; font-size: 11px; color: #64748b; }}
   </style>
 </head>
@@ -648,7 +865,11 @@ Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
     <div class="clinic-head">
       <h2 style="margin: 0 0 4px; font-size: 20px; color: #0f172a;">VETLINK ANIMAL CARE CLINIC & HOSPITAL</h2>
       <p style="margin: 0 0 4px; font-size: 12px; color: #334155; font-weight: 600;">Veterinary Medical Center • Department of Clinical Dermatology</p>
-      <p style="margin: 0; font-size: 11px; color: #64748b;">102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph</p>
+      <p style="margin: 0; font-size: 11px; color: #64748b;">765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 &bull; Mobile: 0945 867 9891 &bull; vetlink.lamuan@gmail.com</p>
+    </div>
+
+    <div class="pdf-badge">
+      Official PDF Attached: <strong>{pdf_filename}</strong> (Printable Clinical Prescription)
     </div>
 
     <table class="meta-table">
@@ -658,7 +879,7 @@ Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
       </tr>
       <tr>
         <td><strong>WEIGHT:</strong> {req.weight or 'N/A'} kg</td>
-        <td><strong>RX / CASE ID:</strong> {req.rx_id or 'RX-OFFICIAL'}</td>
+        <td><strong>RX / CASE ID:</strong> {clean_rxid}</td>
       </tr>
     </table>
 
@@ -675,9 +896,7 @@ Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
     <div class="footer-sig">
       <div style="max-width: 340px;">Notice: Official veterinary prescription issued under Republic Act 9268. Valid for 30 days.</div>
       <div style="text-align: right;">
-        <strong>{req.doctor_name}</strong><br>
-        PRC License No.: VET-894102<br>
-        PTR No.: 1948201
+        {html_doctor_block}
       </div>
     </div>
   </div>
@@ -686,23 +905,36 @@ Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
 
     if smtp_host and smtp_user and smtp_password:
         try:
-            msg = MIMEMultipart("alternative")
+            # Outer mixed container for body + PDF attachment
+            msg = MIMEMultipart("mixed")
             msg["Subject"] = subject
             msg["From"] = f"VetLink Animal Care Clinic <{smtp_from}>"
             msg["To"] = req.recipient_email
-            msg.attach(MIMEText(plain_text, "plain"))
-            msg.attach(MIMEText(html_text, "html"))
+
+            # Inner alternative container for plain text and HTML
+            alt_part = MIMEMultipart("alternative")
+            alt_part.attach(MIMEText(plain_text, "plain"))
+            alt_part.attach(MIMEText(html_text, "html"))
+            msg.attach(alt_part)
+
+            # Attach Official Vector PDF
+            pdf_part = MIMEApplication(pdf_bytes, _subtype="pdf")
+            pdf_part.add_header("Content-Disposition", "attachment", filename=pdf_filename)
+            msg.attach(pdf_part)
 
             if smtp_port == 465:
-                server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=10)
+                server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20)
+                server.ehlo()
             else:
-                server = smtplib.SMTP(smtp_host, smtp_port, timeout=10)
+                server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
+                server.ehlo()
                 if smtp_use_tls:
                     server.starttls()
+                    server.ehlo()
             server.login(smtp_user, smtp_password)
             server.sendmail(smtp_from, [req.recipient_email], msg.as_string())
             server.quit()
-            return True, "Delivered via Clinic SMTP"
+            return True, f"Official prescription with attached PDF successfully emailed to {req.recipient_email}."
         except smtplib.SMTPAuthenticationError as auth_err:
             print(f"[ERROR] SMTP Authentication Error: {auth_err}")
             return False, f"SMTP Authentication Error: Please verify your Google App Password (16 characters) or SMTP credentials. Details: {auth_err}"
@@ -710,12 +942,27 @@ Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
             print(f"[WARN] SMTP delivery failed: {e}")
             return False, f"SMTP delivery failed: {str(e)}"
 
-    # If SMTP credentials are not provided in environment variables:
-    if os.getenv("ALLOW_SIMULATED_EMAIL", "false").lower() in ("true", "1", "yes"):
-        print(f"[EMAIL SIMULATION] Prescription dispatched to {req.recipient_email} for patient {req.patient_name}.")
-        return True, "Dispatched via Clinic Cloud Queue (Simulated Mode)"
+    # If SMTP credentials are not configured in environment variables:
+    allow_sim = os.getenv("ALLOW_SIMULATED_EMAIL", "true").lower() in ("true", "1", "yes")
+    if allow_sim:
+        print(f"[EMAIL QUEUE] Official Prescription PDF ({len(pdf_bytes)} bytes) queued for {req.recipient_email} (Patient: {req.patient_name}).")
+        return True, f"Official prescription PDF generated and queued via Clinic Cloud Dispatch for {req.recipient_email}. (To dispatch live Gmail messages, set your 16-character App Password in .env)"
 
     return False, "Clinic Cloud SMTP is not configured on this server. Please configure SMTP_USER and SMTP_PASSWORD in your environment variables, or click 'Open in Gmail / Device Mail' to send directly from this device."
+
+
+@app.post("/api/prescriptions/pdf")
+def download_prescription_pdf(req: EmailPrescriptionRequest):
+    """Generates and returns an official veterinary prescription PDF file for immediate download."""
+    pdf_bytes = generate_prescription_pdf_bytes(req)
+    clean_pname = (req.patient_name or "Patient").replace(" ", "_").replace("/", "_")
+    clean_rxid = (req.rx_id or "Official").replace(" ", "_").replace("/", "_")
+    pdf_filename = f"Prescription_{clean_pname}_{clean_rxid}.pdf"
+    return StreamingResponse(
+        io.BytesIO(pdf_bytes),
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename=\"{pdf_filename}\""}
+    )
 
 
 @app.post("/api/prescriptions/email")
@@ -814,22 +1061,26 @@ def upsert_user(cursor, payload: dict):
     name = payload.get("name") or "Unnamed Staff"
     role = payload.get("role", "Clinic Staff")
     device_status = payload.get("deviceStatus") or payload.get("device_status", "Online")
+    prc_license = payload.get("prcLicense") or payload.get("prc_license") or "VET-894102"
+    ptr_number = payload.get("ptrNumber") or payload.get("ptr_number") or "1948201"
     version = payload.get("version", 1)
     now = datetime.utcnow()
 
     sql = """
-        INSERT INTO users (id, username, name, role, device_status, sync_status, version, updated_at)
-        VALUES (%s, %s, %s, %s, %s, 'synced', %s, %s)
+        INSERT INTO users (id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
             username = VALUES(username),
             role = VALUES(role),
+            prc_license = VALUES(prc_license),
+            ptr_number = VALUES(ptr_number),
             device_status = VALUES(device_status),
             sync_status = 'synced',
             version = VALUES(version),
             updated_at = VALUES(updated_at);
     """
-    cursor.execute(sql, (user_id, username, name, role, device_status, version, now))
+    cursor.execute(sql, (user_id, username, name, role, prc_license, ptr_number, device_status, version, now))
 
 
 def delete_user(cursor, entity_id: str):

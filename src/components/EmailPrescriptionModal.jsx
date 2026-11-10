@@ -9,7 +9,9 @@ export default function EmailPrescriptionModal({
   prescription = '',
   clinicalNotes = '',
   diagnosis = '',
-  doctorName = 'Dr. Sarah Lin, DVM',
+  doctorName = '',
+  prcLicense,
+  ptrNumber,
   currentUser,
   authToken,
   apiBaseUrl = 'http://localhost:8000',
@@ -27,6 +29,7 @@ export default function EmailPrescriptionModal({
   const [allowDuplicate, setAllowDuplicate] = useState(false)
   const [isDuplicateDetected, setIsDuplicateDetected] = useState(false)
   const [duplicateSentTime, setDuplicateSentTime] = useState('')
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
 
   const patientName = patient?.name || 'Patient'
   const patientSpecies = patient?.species || 'Canine'
@@ -39,9 +42,27 @@ export default function EmailPrescriptionModal({
     month: 'long',
     day: 'numeric',
   })
-  const cleanRxId = consultation?.id || (patient?.id ? `RX-${patient.id.replace('PAT-', '')}` : `RX-${Date.now().toString().slice(-6)}`)
+  const cleanRxId = (() => {
+    if (patient?.id) {
+      const pNum = String(patient.id).replace(/^(PAT-|PT-)/i, '').trim()
+      if (pNum) return `RX-${pNum}`
+    }
+    if (consultation?.id) {
+      const raw = String(consultation.id).trim()
+      if (!raw.toLowerCase().includes('uuid') && raw.length <= 12) return raw
+    }
+    return 'RX-1001'
+  })()
   const cleanDiagnosis = diagnosis || consultation?.diagnosis || patient?.areaOfConcern || 'Cutaneous Dermatological Condition'
-  const cleanDoctor = doctorName || (currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM')
+  const cleanDoctor = (() => {
+    if (doctorName && doctorName !== 'Dr. Sarah Lin, DVM' && doctorName !== 'Attending Veterinarian') return doctorName
+    if (currentUser?.name) return currentUser.name.startsWith('Dr.') ? currentUser.name : `Dr. ${currentUser.name}`
+    return 'Attending Veterinarian'
+  })()
+  const cleanPrcLicense = (prcLicense || currentUser?.prcLicense || '').trim()
+  const cleanPtrNumber = ptrNumber || currentUser?.ptrNumber || ''
+  const hasPrc = Boolean(cleanPrcLicense && cleanPrcLicense !== 'VET-894102')
+  const hasPtr = Boolean(cleanPtrNumber && cleanPtrNumber !== '1948201')
 
   // Check 24-Hour Duplicate Dispatch Guard
   useEffect(() => {
@@ -90,8 +111,8 @@ export default function EmailPrescriptionModal({
       '==================================================',
       'VETLINK ANIMAL CARE CLINIC & HOSPITAL',
       'Veterinary Medical Center | Department of Clinical Dermatology',
-      '102 Rizal Avenue, Brgy. San Antonio | Tel: (02) 8876-5432',
-      'Mobile: 0917-123-4567 | Email: clinic@vetlink.ph',
+      '765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807',
+      'Mobile: 0945 867 9891 | Email: vetlink.lamuan@gmail.com',
       '==================================================',
       '',
       'OFFICIAL VETERINARY PRESCRIPTION (Rx)',
@@ -118,8 +139,8 @@ export default function EmailPrescriptionModal({
       personalNote ? `CLINIC STAFF INSTRUCTIONS TO OWNER:\n"${personalNote}"\n` : '',
       'ATTENDING VETERINARIAN:',
       cleanDoctor,
-      'PRC License No.: VET-894102',
-      'PTR No.: 1948201',
+      hasPrc ? `PRC License No.: ${cleanPrcLicense}` : '',
+      hasPtr ? `PTR No.: ${cleanPtrNumber}` : '',
       '',
       '--------------------------------------------------',
       'Notice: Official prescription issued under Republic Act 9268.',
@@ -203,6 +224,8 @@ export default function EmailPrescriptionModal({
         doctor_name: cleanDoctor,
         rx_id: cleanRxId,
         allow_duplicate: allowDuplicate,
+        prc_license: cleanPrcLicense,
+        ptr_number: cleanPtrNumber,
       }
 
       const headers = { 'Content-Type': 'application/json' }
@@ -247,7 +270,101 @@ export default function EmailPrescriptionModal({
     }
   }
 
-  // Option 2: Send via Device Email Client (mailto:), 100% Offline Compatible
+  // Option 2: Download Official Prescription PDF
+  const handleDownloadPdf = async () => {
+    setIsDownloadingPdf(true)
+    setErrorMessage('')
+    setStatusMessage('')
+
+    const payload = {
+      recipient_email: recipientEmail.trim() || 'vetlink.lamuan@gmail.com',
+      patient_id: patient?.id || null,
+      patient_name: patientName,
+      owner_name: ownerName,
+      species: patientSpecies,
+      breed: patientBreed,
+      weight: patient?.weight ? String(patient.weight) : null,
+      diagnosis: cleanDiagnosis,
+      prescription_text: prescription,
+      clinical_notes: personalNote
+        ? `${clinicalNotes}\n\nClinic Staff Note: ${personalNote}`
+        : clinicalNotes,
+      doctor_name: cleanDoctor,
+      rx_id: cleanRxId,
+      prc_license: cleanPrcLicense,
+      ptr_number: cleanPtrNumber,
+    }
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/prescriptions/pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!res.ok) throw new Error('Could not generate PDF from server.')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Prescription_${patientName.replace(/\s+/g, '_')}_${cleanRxId}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      setStatusMessage('Official Prescription PDF downloaded successfully. You can attach it to your email or print it.')
+    } catch (err) {
+      console.warn('Backend PDF generation error, using printable window:', err)
+      setStatusMessage('PDF download initiated via local print preview.')
+      window.print()
+    } finally {
+      setIsDownloadingPdf(false)
+    }
+  }
+
+  // Option 3A: Open Gmail Web Composer directly in browser
+  const handleSendGmailWeb = async () => {
+    setErrorMessage('')
+    setStatusMessage('')
+
+    const trimmedEmail = recipientEmail.trim()
+    if (!trimmedEmail) {
+      setErrorMessage('Please enter an owner email address.')
+      return
+    }
+    if (!validateEmail(trimmedEmail)) {
+      setErrorMessage('Please enter a valid email address.')
+      return
+    }
+
+    try {
+      await syncEmailToPatientRecord(trimmedEmail)
+      recordDispatchCache(trimmedEmail)
+
+      const subject = encodeURIComponent(emailSubject || `Official Veterinary Prescription - ${patientName}`)
+      const body = encodeURIComponent(generatePrescriptionText())
+      const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(trimmedEmail)}&su=${subject}&body=${body}`
+
+      window.open(gmailUrl, '_blank')
+      setStatusMessage(`Gmail Web composer opened for ${trimmedEmail}. You can attach the downloaded Prescription PDF.`)
+
+      await logAuditEvent({
+        action: 'PRESCRIPTION_EMAILED',
+        user: currentUser || { name: 'Clinic Staff', role: 'Staff' },
+        targetEntity: 'patients',
+        targetId: patient?.id || '',
+        details: `Opened Gmail Web composer for ${patientName} (${trimmedEmail}).`,
+      })
+
+      if (onPrescriptionSent) {
+        onPrescriptionSent(trimmedEmail)
+      }
+    } catch (err) {
+      setErrorMessage('Could not open Gmail Web: ' + (err.message || 'Unknown error'))
+    }
+  }
+
+  // Option 3B: Send via Device Email Client (mailto:), 100% Offline Compatible
   const handleSendMailto = async () => {
     setErrorMessage('')
     setStatusMessage('')
@@ -341,7 +458,7 @@ export default function EmailPrescriptionModal({
             aria-label="Close dialog"
             disabled={isSending}
           >
-            ✕
+            &times;
           </button>
         </header>
 
@@ -533,15 +650,15 @@ export default function EmailPrescriptionModal({
                   opacity: isDuplicateDetected && !allowDuplicate ? 0.6 : 1,
                 }}
               >
-                {isSending ? 'Sending via Cloud...' : 'Send via Clinic Cloud Email'}
+                {isSending ? 'Sending via Cloud...' : 'Send via Clinic Cloud Email (with Attached PDF)'}
               </button>
 
-              {/* Native Mail App Fallback */}
+              {/* Download Prescription PDF */}
               <button
                 type="button"
-                className="secondary-btn"
-                onClick={handleSendMailto}
-                disabled={isSending}
+                className="action-btn green"
+                onClick={handleDownloadPdf}
+                disabled={isDownloadingPdf}
                 style={{
                   minHeight: 38,
                   padding: '8px 16px',
@@ -552,14 +669,69 @@ export default function EmailPrescriptionModal({
                   alignItems: 'center',
                   gap: 6,
                   borderRadius: 6,
-                  border: '1px solid var(--border, #cbd5e1)',
-                  background: '#f8fafc',
-                  color: '#334155',
-                  cursor: isSending ? 'not-allowed' : 'pointer',
+                  background: '#059669',
+                  color: '#ffffff',
+                  border: 'none',
+                  cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
                 }}
               >
-                Open in Gmail / Device Mail
+                {isDownloadingPdf ? 'Generating PDF...' : 'Download Official Prescription (PDF)'}
               </button>
+
+              {/* Instant Gmail Web & Native Mail Fallback Row */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={handleSendGmailWeb}
+                  disabled={isSending}
+                  style={{
+                    minHeight: 34,
+                    padding: '6px 8px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    borderRadius: 6,
+                    border: '1px solid #cbd5e1',
+                    background: '#ffffff',
+                    color: '#1e3a8a',
+                    cursor: isSending ? 'not-allowed' : 'pointer',
+                  }}
+                  title="Open Gmail composer in web browser"
+                >
+                  Open in Gmail Web
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={handleSendMailto}
+                  disabled={isSending}
+                  style={{
+                    minHeight: 34,
+                    padding: '6px 8px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    borderRadius: 6,
+                    border: '1px solid #cbd5e1',
+                    background: '#f8fafc',
+                    color: '#334155',
+                    cursor: isSending ? 'not-allowed' : 'pointer',
+                  }}
+                  title="Open device native email app"
+                >
+                  Device Mail App
+                </button>
+              </div>
+
+              <span style={{ fontSize: '0.71rem', color: '#64748b', textAlign: 'center', margin: '2px 0 0' }}>
+                Tip: Click "Download Official Prescription (PDF)" first, then open Gmail to attach the file directly.
+              </span>
             </div>
           </div>
 
@@ -577,6 +749,28 @@ export default function EmailPrescriptionModal({
               color: '#0f172a',
             }}
           >
+            {/* Official PDF Document Badge */}
+            <div
+              style={{
+                background: '#f0fdf4',
+                border: '1px solid #86efac',
+                borderRadius: 6,
+                padding: '5px 8px',
+                marginBottom: 8,
+                fontSize: '0.72rem',
+                color: '#166534',
+                fontWeight: 600,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <span>Attachment: Prescription_{patientName.replace(/\s+/g, '_')}_{cleanRxId}.pdf</span>
+              <span style={{ fontSize: '0.65rem', background: '#dcfce7', border: '1px solid #86efac', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', fontWeight: 700 }}>
+                Official PDF
+              </span>
+            </div>
+
             {/* Preview Card Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: 6, marginBottom: 8 }}>
               <span style={{ fontWeight: 800, fontSize: '0.72rem', letterSpacing: '0.5px', color: '#1e3a8a', textTransform: 'uppercase' }}>
@@ -591,6 +785,7 @@ export default function EmailPrescriptionModal({
                   border: '1px solid #cbd5e1',
                   borderRadius: 4,
                   background: '#ffffff',
+                  color: '#1e293b',
                   cursor: 'pointer',
                   fontWeight: 600,
                 }}
@@ -601,9 +796,10 @@ export default function EmailPrescriptionModal({
 
             {/* Clinic Letterhead */}
             <div style={{ textAlign: 'center', borderBottom: '1px solid #94a3b8', paddingBottom: 6, marginBottom: 8 }}>
-              <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0f172a' }}>VETLINK ANIMAL CARE CLINIC</div>
-              <div style={{ fontSize: '0.68rem', color: '#475569' }}>Veterinary Medical Center | Department of Dermatology</div>
-              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>Tel: (02) 8876-5432 | Mobile: 0917-123-4567</div>
+              <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0f172a' }}>VETLINK ANIMAL CARE CLINIC & HOSPITAL</div>
+              <div style={{ fontSize: '0.68rem', color: '#475569' }}>Veterinary Medical Center | Department of Clinical Dermatology</div>
+              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807</div>
+              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>Mobile: 0945 867 9891 | Email: vetlink.lamuan@gmail.com</div>
             </div>
 
             {/* Patient Meta Summary Grid */}
@@ -674,7 +870,13 @@ export default function EmailPrescriptionModal({
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontWeight: 700, color: '#0f172a' }}>{cleanDoctor}</div>
-                <div>PRC Lic: VET-894102 | PTR: 1948201</div>
+                {(hasPrc || hasPtr) && (
+                  <div>
+                    {hasPrc && <span>PRC Lic: {cleanPrcLicense}</span>}
+                    {hasPrc && hasPtr && <span> | </span>}
+                    {hasPtr && <span>PTR: {cleanPtrNumber}</span>}
+                  </div>
+                )}
               </div>
             </div>
           </div>

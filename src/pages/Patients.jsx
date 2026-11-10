@@ -200,7 +200,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
     const pSpecies = String(patient.species || '').toLowerCase()
     const matchesSpecies =
       selectedSpecies === 'All' ||
-      (selectedSpecies === 'Lagomorph'
+      (selectedSpecies === 'Rabbit'
         ? pSpecies === 'rabbit' || pSpecies === 'lagomorph'
         : pSpecies === selectedSpecies.toLowerCase())
 
@@ -670,17 +670,13 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
       <div className="patients-toolbar-wrap">
         <div className="patients-filter-pills" role="tablist" aria-label="Filter patients by species">
-          {['All', 'Canine', 'Feline', 'Avian', 'Lagomorph'].map((sp) => (
+          {['All', 'Canine', 'Feline', 'Avian', 'Rabbit'].map((sp) => (
             <button
               key={sp}
               type="button"
               className={`filter-pill ${selectedSpecies === sp ? 'active' : ''}`}
               onClick={() => setSelectedSpecies(sp)}
             >
-              {sp === 'Canine' }
-              {sp === 'Feline' }
-              {sp === 'Avian' }
-              {sp === 'Lagomorph' }
               {sp}
             </button>
           ))}
@@ -889,12 +885,25 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
 
       {editingPatient && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="edit-patient-title">
-          <div className="modal-dialog" style={{ maxWidth: 540, maxHeight: '90vh', display: 'flex', flexDirection: 'column' }}>
-            <header className="modal-header" style={{ flexShrink: 0 }}>
+          <form
+            className="modal-dialog modal-form"
+            style={{
+              maxWidth: 540,
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: 0,
+              overflow: 'hidden',
+              borderRadius: 10,
+              background: 'var(--surface, #1e293b)',
+            }}
+            onSubmit={handleSavePatient}
+          >
+            <header className="modal-header" style={{ flexShrink: 0, padding: '14px 20px', borderBottom: '1px solid var(--border, #334155)' }}>
               <h3 id="edit-patient-title">Edit Patient Record</h3>
               <button className="modal-close-btn" type="button" onClick={() => setEditingPatient(null)} aria-label="Close edit patient dialog">✕</button>
             </header>
-            <form className="modal-form" style={{ overflowY: 'auto', flex: 1 }} onSubmit={handleSavePatient}>
+            <div style={{ overflowY: 'auto', flex: 1, padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {formError && <div className="alert-banner error" role="alert">{formError}</div>}
               <label>
                 <span>Patient ID</span>
@@ -911,7 +920,7 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                     <option>Canine</option>
                     <option>Feline</option>
                     <option>Avian</option>
-                    <option>Lagomorph</option>
+                    <option>Rabbit</option>
                     <option>Other</option>
                   </select>
                 </label>
@@ -1009,12 +1018,12 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   </select>
                 </label>
               </div>
-              <div className="modal-actions" style={{ position: 'sticky', bottom: 0, background: 'var(--surface, #fff)', zIndex: 2, paddingTop: 12 }}>
-                <button className="small-outline" type="button" onClick={() => setEditingPatient(null)} disabled={isSaving}>Cancel</button>
-                <button className="action-btn blue" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Changes'}</button>
-              </div>
-            </form>
-          </div>
+            </div>
+            <div className="modal-actions" style={{ flexShrink: 0, padding: '12px 20px', borderTop: '1px solid var(--border, #334155)', background: 'var(--surface, #1e293b)', display: 'flex', justifyContent: 'flex-end', gap: 10, margin: 0 }}>
+              <button className="small-outline" type="button" onClick={() => setEditingPatient(null)} disabled={isSaving}>Cancel</button>
+              <button className="action-btn blue" type="submit" disabled={isSaving}>{isSaving ? 'Saving...' : 'Save Changes'}</button>
+            </div>
+          </form>
         </div>
       )}
 
@@ -1023,15 +1032,28 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
       {/* ────────────────────────────────────────────────────────────────── */}
       {reviewPatient && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="review-patient-title">
-          <div className="modal-dialog" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto' }}>
-            <header className="modal-header">
+          <form
+            className="modal-dialog modal-form"
+            style={{
+              maxWidth: 760,
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: 0,
+              overflow: 'hidden',
+              borderRadius: 10,
+              background: 'var(--surface, #1e293b)',
+            }}
+            onSubmit={handleSaveClinicalReview}
+          >
+            <header className="modal-header" style={{ flexShrink: 0, padding: '14px 20px', borderBottom: '1px solid var(--border, #334155)' }}>
               <h3 id="review-patient-title">
                 Clinical Case Review: {reviewPatient.name} ({reviewPatient.species})
               </h3>
               <button className="modal-close-btn" type="button" onClick={() => setReviewPatient(null)} aria-label="Close dialog">✕</button>
             </header>
 
-            <form className="modal-form" onSubmit={handleSaveClinicalReview}>
+            <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
               {reviewError && <div className="alert-banner error" role="alert">{reviewError}</div>}
 
               {/* 1. Header Grid: Patient Info & Baseline Photo */}
@@ -1372,98 +1394,88 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                   }}
                 />
               </div>
+            </div>
 
-              {/* Modal Actions */}
-              <div className="modal-actions" style={{ marginTop: 16, display: 'flex', justifyContent: 'space-between', flexWrap: 'wrap', gap: 8 }}>
-                <button className="small-outline" type="button" onClick={() => setReviewPatient(null)} disabled={isSavingReview}>
-                  Cancel
-                </button>
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                  {(reviewTreatmentPlan || reviewConsult?.treatmentPlan) && (
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      style={{ padding: '8px 14px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
-                      onClick={() => {
-                        const rawDiag = overrideDiag === 'OTHER'
-                          ? (customDiag.trim() || 'Custom Dermatological Condition')
-                          : (overrideDiag || reviewConsult?.diagnosis || reviewPatient.areaOfConcern || 'Clinical Dermatological Case')
-                        setEmailRxModalData({
-                          patient: reviewPatient,
-                          consultation: reviewConsult,
-                          prescription: reviewTreatmentPlan || reviewConsult?.treatmentPlan || '',
-                          clinicalNotes: reviewConsult?.clinicalNotes || '',
-                          diagnosis: rawDiag,
-                        })
-                      }}
-                      title="Email official prescription to pet owner"
-                    >
-                      Email Rx
-                    </button>
-                  )}
-                  {onProceedToTreatment && (
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      style={{ padding: '8px 14px', fontSize: '0.85rem', background: '#f8fafc', border: '1px solid #cbd5e1', fontWeight: 700 }}
-                      onClick={() => {
-                        const rawDiag = overrideDiag === 'OTHER'
-                          ? (customDiag.trim() || 'Custom Dermatological Condition')
-                          : (overrideDiag || reviewConsult?.diagnosis || 'Skin Lesion')
+            {/* Modal Actions (Solid Non-Floating Footer) */}
+            <div className="modal-actions" style={{ flexShrink: 0, padding: '12px 20px', borderTop: '1px solid var(--border, #334155)', background: 'var(--surface, #1e293b)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0 }}>
+              <button className="small-outline" type="button" onClick={() => setReviewPatient(null)} disabled={isSavingReview}>
+                Cancel
+              </button>
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+                {onProceedToTreatment && (
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ padding: '8px 14px', fontSize: '0.85rem', fontWeight: 700 }}
+                    onClick={() => {
+                      const rawDiag = overrideDiag === 'OTHER'
+                        ? (customDiag.trim() || 'Custom Dermatological Condition')
+                        : (overrideDiag || reviewConsult?.diagnosis || 'Skin Lesion')
 
-                        let primaryParsed = rawDiag
-                        let secondaryParsed = null
+                      let primaryParsed = rawDiag
+                      let secondaryParsed = null
 
-                        if (rawDiag.toLowerCase().includes(' with ')) {
-                          const parts = rawDiag.split(/ with /i)
-                          primaryParsed = parts[0].trim()
-                          secondaryParsed = parts[1].trim()
-                        } else if (rawDiag.includes(' + ')) {
-                          const parts = rawDiag.split(' + ')
-                          primaryParsed = parts[0].trim()
-                          secondaryParsed = parts[1].trim()
-                        } else if (overrideDiag) {
-                          // Doctor overridden to specific single condition -> purge stale AI secondary condition!
-                          secondaryParsed = null
-                        } else {
-                          secondaryParsed = reviewConsult?.secondaryDiagnosis || null
-                        }
+                      if (rawDiag.toLowerCase().includes(' with ')) {
+                        const parts = rawDiag.split(/ with /i)
+                        primaryParsed = parts[0].trim()
+                        secondaryParsed = parts[1].trim()
+                      } else if (rawDiag.includes(' + ')) {
+                        const parts = rawDiag.split(' + ')
+                        primaryParsed = parts[0].trim()
+                        secondaryParsed = parts[1].trim()
+                      } else if (overrideDiag) {
+                        // Doctor overridden to specific single condition -> purge stale AI secondary condition!
+                        secondaryParsed = null
+                      } else {
+                        secondaryParsed = reviewConsult?.secondaryDiagnosis || null
+                      }
 
-                        onProceedToTreatment({
-                          patient: reviewPatient,
-                          consultation: reviewConsult,
-                          aiResult: {
-                            displayLabel: primaryParsed,
-                            percent: reviewScreening?.aiPercent || 'Clinical Evaluation',
-                            top3: reviewScreening?.aiTop3 ? JSON.parse(reviewScreening.aiTop3) : [],
-                          },
-                          previewUrl: reviewScreening?.imageData,
-                          diagnosis: primaryParsed,
-                          secondaryDiagnosis: secondaryParsed,
-                          isComorbid: Boolean(secondaryParsed),
-                          assignedStatus: clinicalStatus,
-                          labTestRequired: clinicalStatus === 'Awaiting Lab Test' || reviewConsult?.reviewStatus === 'awaiting_lab',
-                        })
-                        setReviewPatient(null)
-                      }}
-                    >
-                      Proceed to Treatment / Rx
-                    </button>
-                  )}
-                  <button className="action-btn blue" type="submit" disabled={isSavingReview}>
-                    {isSavingReview ? 'Saving...' : 'Save Case Decisions'}
+                      onProceedToTreatment({
+                        patient: reviewPatient,
+                        consultation: reviewConsult,
+                        aiResult: {
+                          displayLabel: primaryParsed,
+                          percent: reviewScreening?.aiPercent || 'Clinical Evaluation',
+                          top3: reviewScreening?.aiTop3 ? JSON.parse(reviewScreening.aiTop3) : [],
+                        },
+                        previewUrl: reviewScreening?.imageData,
+                        diagnosis: primaryParsed,
+                        secondaryDiagnosis: secondaryParsed,
+                        isComorbid: Boolean(secondaryParsed),
+                        assignedStatus: clinicalStatus,
+                        labTestRequired: clinicalStatus === 'Awaiting Lab Test' || reviewConsult?.reviewStatus === 'awaiting_lab',
+                      })
+                      setReviewPatient(null)
+                    }}
+                  >
+                    Proceed to Treatment / Rx
                   </button>
-                </div>
+                )}
+                <button className="action-btn blue" type="submit" disabled={isSavingReview}>
+                  {isSavingReview ? 'Saving...' : 'Save Case Decisions'}
+                </button>
               </div>
-            </form>
-          </div>
+            </div>
+          </form>
         </div>
       )}
 
       {recheckPatient && (
         <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="recheck-patient-title">
-          <div className="modal-dialog" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto' }}>
-            <header className="modal-header">
+          <div
+            className="modal-dialog"
+            style={{
+              maxWidth: 760,
+              maxHeight: '90vh',
+              display: 'flex',
+              flexDirection: 'column',
+              padding: 0,
+              overflow: 'hidden',
+              borderRadius: 10,
+              background: 'var(--surface, #1e293b)',
+            }}
+          >
+            <header className="modal-header" style={{ flexShrink: 0, padding: '14px 20px', borderBottom: '1px solid var(--border, #334155)' }}>
               <h3 id="recheck-patient-title">
                 {currentUser?.role === 'Clinic Staff'
                   ? `Staff Patient Intake & Triage: ${recheckPatient.name} (${recheckPatient.id})`
@@ -1472,63 +1484,67 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
               <button className="modal-close-btn" type="button" onClick={() => setRecheckPatient(null)} aria-label="Close dialog">✕</button>
             </header>
 
-            {/* Demographics Summary Bar */}
-            <div style={{
-              display: 'flex',
-              gap: 12,
-              padding: '8px 12px',
-              background: '#f1f5f9',
-              borderRadius: 8,
-              fontSize: '0.82rem',
-              color: '#334155',
-              marginBottom: 12,
-              flexWrap: 'wrap'
-            }}>
-              <span><strong>Species:</strong> {recheckPatient.species} ({recheckPatient.breed || 'Mixed'})</span>
-              <span><strong>Age:</strong> {recheckPatient.age || '—'}</span>
-              <span><strong>Last Recorded Weight:</strong> {recheckPatient.weight ? `${recheckPatient.weight} kg` : 'Not recorded'}</span>
-              {recheckPatient.ownerName && (
-                <span><strong>Owner:</strong> {recheckPatient.ownerName} {recheckPatient.ownerPhone ? `(${recheckPatient.ownerPhone})` : ''}</span>
+            {/* Demographics & Tabs Container (Anchored at Top) */}
+            <div style={{ flexShrink: 0, padding: '12px 20px 8px', borderBottom: '1px solid var(--border, #e2e8f0)' }}>
+              {/* Demographics Summary Bar */}
+              <div style={{
+                display: 'flex',
+                gap: 12,
+                padding: '6px 10px',
+                background: '#f1f5f9',
+                borderRadius: 6,
+                fontSize: '0.80rem',
+                color: '#334155',
+                marginBottom: 8,
+                flexWrap: 'wrap'
+              }}>
+                <span><strong>Species:</strong> {recheckPatient.species} ({recheckPatient.breed || 'Mixed'})</span>
+                <span><strong>Age:</strong> {recheckPatient.age || '—'}</span>
+                <span><strong>Last Recorded Weight:</strong> {recheckPatient.weight ? `${recheckPatient.weight} kg` : 'Not recorded'}</span>
+                {recheckPatient.ownerName && (
+                  <span><strong>Owner:</strong> {recheckPatient.ownerName} {recheckPatient.ownerPhone ? `(${recheckPatient.ownerPhone})` : ''}</span>
+                )}
+              </div>
+
+              {/* If Veterinarian / Admin: Show Sub-Tabs for History Timeline vs Clinical Evaluation */}
+              {currentUser?.role !== 'Clinic Staff' && (
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button
+                    type="button"
+                    className={`filter-pill ${recheckTab === 'history' ? 'active' : ''}`}
+                    onClick={() => setRecheckTab('history')}
+                    style={{ fontWeight: 600, fontSize: '0.82rem' }}
+                  >
+                    Medical Record History ({pastVisits.length} visits)
+                  </button>
+                  <button
+                    type="button"
+                    className={`filter-pill ${recheckTab === 'evaluate' ? 'active' : ''}`}
+                    onClick={() => setRecheckTab('evaluate')}
+                    style={{ fontWeight: 600, fontSize: '0.82rem' }}
+                  >
+                    Evaluate Today's Recheck & Prescription
+                  </button>
+                </div>
               )}
             </div>
 
-            {/* If Veterinarian / Admin: Show Sub-Tabs for History Timeline vs Clinical Evaluation */}
-            {currentUser?.role !== 'Clinic Staff' && (
-              <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
-                <button
-                  type="button"
-                  className={`filter-pill ${recheckTab === 'history' ? 'active' : ''}`}
-                  onClick={() => setRecheckTab('history')}
-                  style={{ fontWeight: 600, fontSize: '0.82rem' }}
-                >
-                  Medical Record History ({pastVisits.length} visits)
-                </button>
-                <button
-                  type="button"
-                  className={`filter-pill ${recheckTab === 'evaluate' ? 'active' : ''}`}
-                  onClick={() => setRecheckTab('evaluate')}
-                  style={{ fontWeight: 600, fontSize: '0.82rem' }}
-                >
-                  Evaluate Today's Recheck & Prescription
-                </button>
-              </div>
-            )}
-
             {/* Tab 1: Comprehensive Medical Record History Timeline (Veterinarian View) */}
             {currentUser?.role !== 'Clinic Staff' && recheckTab === 'history' && (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 14, marginBottom: 16 }}>
-                {pastVisits.length === 0 ? (
-                  <div style={{ padding: 24, textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: 8 }}>
-                    No previous consultation records found for this patient.
-                  </div>
-                ) : (
-                  pastVisits.map((v) => (
-                    <div
-                      key={v.visitNum}
-                      style={{
-                        border: '1px solid #cbd5e1',
-                        borderRadius: 10,
-                        padding: 14,
+              <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 14 }}>
+                  {pastVisits.length === 0 ? (
+                    <div style={{ padding: 24, textAlign: 'center', color: '#64748b', background: '#f8fafc', borderRadius: 8 }}>
+                      No previous consultation records found for this patient.
+                    </div>
+                  ) : (
+                    pastVisits.map((v) => (
+                      <div
+                        key={v.visitNum}
+                        style={{
+                          border: '1px solid #cbd5e1',
+                          borderRadius: 10,
+                          padding: 14,
                         background: '#ffffff',
                         boxShadow: '0 1px 3px rgba(0,0,0,0.05)'
                       }}
@@ -1620,20 +1636,25 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                     </div>
                   ))
                 )}
-                <button
-                  type="button"
-                  className="primary-btn"
-                  onClick={() => setRecheckTab('evaluate')}
-                  style={{ alignSelf: 'flex-end', padding: '8px 18px', fontSize: '0.86rem' }}
-                >
-                  Proceed to Recheck Evaluation &rarr;
-                </button>
+                </div>
+                <div className="modal-actions" style={{ flexShrink: 0, padding: '12px 20px', borderTop: '1px solid var(--border, #334155)', background: 'var(--surface, #1e293b)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0 }}>
+                  <button className="small-outline" type="button" onClick={() => setRecheckPatient(null)}>Close</button>
+                  <button
+                    type="button"
+                    className="primary-btn"
+                    onClick={() => setRecheckTab('evaluate')}
+                    style={{ padding: '8px 18px', fontSize: '0.86rem' }}
+                  >
+                    Proceed to Recheck Evaluation &rarr;
+                  </button>
+                </div>
               </div>
             )}
 
             {/* Tab 2: Recheck Form (Staff Intake OR Veterinarian Evaluation) */}
             {(currentUser?.role === 'Clinic Staff' || recheckTab === 'evaluate') && (
-              <form className="modal-form" onSubmit={handleSaveRecheck}>
+              <form style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden', margin: 0 }} onSubmit={handleSaveRecheck}>
+                <div style={{ flex: 1, overflowY: 'auto', padding: '16px 20px', display: 'flex', flexDirection: 'column', gap: 10 }}>
                 {recheckError && <div className="alert-banner error" role="alert">{recheckError}</div>}
 
                 {/* Staff-Specific Triage Section */}
@@ -2020,30 +2041,12 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
                     </label>
                   </>
                 )}
+                </div>
 
-                <div className="modal-actions" style={{ marginTop: 14, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
+                <div className="modal-actions" style={{ flexShrink: 0, padding: '12px 20px', borderTop: '1px solid var(--border, #334155)', background: 'var(--surface, #1e293b)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', margin: 0 }}>
                   <button className="small-outline" type="button" onClick={() => setRecheckPatient(null)} disabled={isSavingRecheck}>Cancel</button>
 
-                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-                    {(vetAdjustedRx || pastConsult?.treatmentPlan) && (
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        style={{ padding: '8px 12px', fontSize: '0.85rem', display: 'inline-flex', alignItems: 'center', gap: 6, fontWeight: 700 }}
-                        onClick={() => {
-                          setEmailRxModalData({
-                            patient: recheckPatient,
-                            consultation: pastConsult,
-                            prescription: vetAdjustedRx || pastConsult?.treatmentPlan || '',
-                            clinicalNotes: recheckNotes || pastConsult?.clinicalNotes || '',
-                            diagnosis: `Follow-up: ${pastConsult?.diagnosis || recheckPatient?.areaOfConcern || 'Cutaneous Check'}`,
-                          })
-                        }}
-                        title="Email adjusted prescription to pet owner"
-                      >
-                        Email Rx
-                      </button>
-                    )}
+                  <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
                     {currentUser?.role !== 'Clinic Staff' && onProceedToTreatment && (
                       <button
                         type="button"
@@ -2115,7 +2118,9 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
           prescription={emailRxModalData.prescription}
           clinicalNotes={emailRxModalData.clinicalNotes}
           diagnosis={emailRxModalData.diagnosis}
-          doctorName={currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM'}
+          doctorName={currentUser?.name ? (currentUser.name.startsWith('Dr.') ? currentUser.name : `Dr. ${currentUser.name}`) : 'Attending Veterinarian'}
+          prcLicense={currentUser?.prcLicense || ''}
+          ptrNumber={currentUser?.ptrNumber || ''}
           currentUser={currentUser}
           authToken={authToken}
           apiBaseUrl={apiBaseUrl}

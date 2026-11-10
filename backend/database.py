@@ -87,6 +87,8 @@ def auto_initialize_schema():
                 "password_hash": "ALTER TABLE users ADD COLUMN password_hash VARCHAR(255) NULL",
                 "must_change_password": "ALTER TABLE users ADD COLUMN must_change_password BOOLEAN NOT NULL DEFAULT FALSE",
                 "is_active": "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
+                "prc_license": "ALTER TABLE users ADD COLUMN prc_license VARCHAR(64) NULL DEFAULT 'VET-894102'",
+                "ptr_number": "ALTER TABLE users ADD COLUMN ptr_number VARCHAR(64) NULL DEFAULT '1948201'",
             }
             for column, statement in migrations.items():
                 if column not in user_columns:
