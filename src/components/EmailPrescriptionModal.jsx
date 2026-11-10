@@ -761,6 +761,7 @@ export default function EmailPrescriptionModal({
                   border: '1px solid #cbd5e1',
                   borderRadius: 4,
                   background: '#ffffff',
+                  color: '#1e293b',
                   cursor: 'pointer',
                   fontWeight: 600,
                 }}
