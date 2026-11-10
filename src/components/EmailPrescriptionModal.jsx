@@ -9,7 +9,7 @@ export default function EmailPrescriptionModal({
   prescription = '',
   clinicalNotes = '',
   diagnosis = '',
-  doctorName = 'Dr. Sarah Lin, DVM',
+  doctorName = '',
   prcLicense,
   ptrNumber,
   currentUser,
@@ -42,11 +42,27 @@ export default function EmailPrescriptionModal({
     month: 'long',
     day: 'numeric',
   })
-  const cleanRxId = consultation?.id || (patient?.id ? `RX-${patient.id.replace('PAT-', '')}` : `RX-${Date.now().toString().slice(-6)}`)
+  const cleanRxId = (() => {
+    if (patient?.id) {
+      const pNum = String(patient.id).replace(/^(PAT-|PT-)/i, '').trim()
+      if (pNum) return `RX-${pNum}`
+    }
+    if (consultation?.id) {
+      const raw = String(consultation.id).trim()
+      if (!raw.toLowerCase().includes('uuid') && raw.length <= 12) return raw
+    }
+    return 'RX-1001'
+  })()
   const cleanDiagnosis = diagnosis || consultation?.diagnosis || patient?.areaOfConcern || 'Cutaneous Dermatological Condition'
-  const cleanDoctor = doctorName || (currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM')
-  const cleanPrcLicense = prcLicense || currentUser?.prcLicense || 'VET-894102'
-  const cleanPtrNumber = ptrNumber || currentUser?.ptrNumber || '1948201'
+  const cleanDoctor = (() => {
+    if (doctorName && doctorName !== 'Dr. Sarah Lin, DVM' && doctorName !== 'Attending Veterinarian') return doctorName
+    if (currentUser?.name) return currentUser.name.startsWith('Dr.') ? currentUser.name : `Dr. ${currentUser.name}`
+    return 'Attending Veterinarian'
+  })()
+  const cleanPrcLicense = (prcLicense || currentUser?.prcLicense || '').trim()
+  const cleanPtrNumber = ptrNumber || currentUser?.ptrNumber || ''
+  const hasPrc = Boolean(cleanPrcLicense && cleanPrcLicense !== 'VET-894102')
+  const hasPtr = Boolean(cleanPtrNumber && cleanPtrNumber !== '1948201')
 
   // Check 24-Hour Duplicate Dispatch Guard
   useEffect(() => {
@@ -95,8 +111,8 @@ export default function EmailPrescriptionModal({
       '==================================================',
       'VETLINK ANIMAL CARE CLINIC & HOSPITAL',
       'Veterinary Medical Center | Department of Clinical Dermatology',
-      '102 Rizal Avenue, Brgy. San Antonio | Tel: (02) 8876-5432',
-      'Mobile: 0917-123-4567 | Email: clinic@vetlink.ph',
+      '765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807',
+      'Mobile: 0945 867 9891 | Email: vetlink.lamuan@gmail.com',
       '==================================================',
       '',
       'OFFICIAL VETERINARY PRESCRIPTION (Rx)',
@@ -123,8 +139,8 @@ export default function EmailPrescriptionModal({
       personalNote ? `CLINIC STAFF INSTRUCTIONS TO OWNER:\n"${personalNote}"\n` : '',
       'ATTENDING VETERINARIAN:',
       cleanDoctor,
-      `PRC License No.: ${cleanPrcLicense}`,
-      `PTR No.: ${cleanPtrNumber}`,
+      hasPrc ? `PRC License No.: ${cleanPrcLicense}` : '',
+      hasPtr ? `PTR No.: ${cleanPtrNumber}` : '',
       '',
       '--------------------------------------------------',
       'Notice: Official prescription issued under Republic Act 9268.',
@@ -261,7 +277,7 @@ export default function EmailPrescriptionModal({
     setStatusMessage('')
 
     const payload = {
-      recipient_email: recipientEmail.trim() || 'clinic@vetlink.ph',
+      recipient_email: recipientEmail.trim() || 'vetlink.lamuan@gmail.com',
       patient_id: patient?.id || null,
       patient_name: patientName,
       owner_name: ownerName,
@@ -780,9 +796,10 @@ export default function EmailPrescriptionModal({
 
             {/* Clinic Letterhead */}
             <div style={{ textAlign: 'center', borderBottom: '1px solid #94a3b8', paddingBottom: 6, marginBottom: 8 }}>
-              <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0f172a' }}>VETLINK ANIMAL CARE CLINIC</div>
-              <div style={{ fontSize: '0.68rem', color: '#475569' }}>Veterinary Medical Center | Department of Dermatology</div>
-              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>Tel: (02) 8876-5432 | Mobile: 0917-123-4567</div>
+              <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0f172a' }}>VETLINK ANIMAL CARE CLINIC & HOSPITAL</div>
+              <div style={{ fontSize: '0.68rem', color: '#475569' }}>Veterinary Medical Center | Department of Clinical Dermatology</div>
+              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807</div>
+              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>Mobile: 0945 867 9891 | Email: vetlink.lamuan@gmail.com</div>
             </div>
 
             {/* Patient Meta Summary Grid */}
@@ -853,7 +870,13 @@ export default function EmailPrescriptionModal({
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontWeight: 700, color: '#0f172a' }}>{cleanDoctor}</div>
-                <div>PRC Lic: {cleanPrcLicense} | PTR: {cleanPtrNumber}</div>
+                {(hasPrc || hasPtr) && (
+                  <div>
+                    {hasPrc && <span>PRC Lic: {cleanPrcLicense}</span>}
+                    {hasPrc && hasPtr && <span> | </span>}
+                    {hasPtr && <span>PTR: {cleanPtrNumber}</span>}
+                  </div>
+                )}
               </div>
             </div>
           </div>

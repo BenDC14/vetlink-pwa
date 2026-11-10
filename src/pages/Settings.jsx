@@ -215,17 +215,17 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
     try {
       const saved = localStorage.getItem('vetlink_clinic_info')
       return saved ? JSON.parse(saved) : {
-        name: 'VetLink Demo Clinic',
-        address: '1234 51st Street, Suite 40, VettLink, CA 92907',
-        phone: '(800) 357-4680',
-        operatingHours: 'Mon - Fri: 8:00 AM - 6:00 PM',
+        name: 'VetLink Animal Care Clinic',
+        address: '765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807',
+        phone: '0945 867 9891',
+        operatingHours: 'Mon - Sat: 8:00 AM - 6:00 PM',
       }
     } catch {
       return {
-        name: 'VetLink Demo Clinic',
-        address: '1234 51st Street, Suite 40, VettLink, CA 92907',
-        phone: '(800) 357-4680',
-        operatingHours: 'Mon - Fri: 8:00 AM - 6:00 PM',
+        name: 'VetLink Animal Care Clinic',
+        address: '765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807',
+        phone: '0945 867 9891',
+        operatingHours: 'Mon - Sat: 8:00 AM - 6:00 PM',
       }
     }
   })

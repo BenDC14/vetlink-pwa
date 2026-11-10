@@ -166,6 +166,24 @@ def generate_changelog_pdf(output_paths):
             Paragraph("Configured PRC License and PTR fields as optional during account creation; non-clinical staff (receptionists/cashiers) operate without error.", s["table_cell"]),
             Paragraph("Verified: Admin creates staff accounts with email/password; individual doctors configure their personal licenses in Settings.", s["table_cell"]),
         ],
+        [
+            Paragraph("<b>Marikina Clinic Contact & Branding</b>", s["table_cell"]),
+            Paragraph("Letterheads, PDF templates, and dispatch footers previously displayed placeholder address and telephone numbers.", s["table_cell"]),
+            Paragraph("Updated clinic contact across frontend modals, printable slips, and ReportLab PDF generator to: 765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 | Tel: 0945 867 9891 | vetlink.lamuan@gmail.com.", s["table_cell"]),
+            Paragraph("Verified: Official Marikina clinic branding renders consistently across printouts, email notifications, and PDF attachments.", s["table_cell"]),
+        ],
+        [
+            Paragraph("<b>Human-Readable Rx ID & PDF Naming</b>", s["table_cell"]),
+            Paragraph("Prescription case identifiers previously exposed long raw UUID strings (e.g. CONS-fa1e5cee-f52a...), impairing readability on pet owner emails.", s["table_cell"]),
+            Paragraph("Engineered regex normalization converting internal patient IDs into clean clinical identifiers (e.g., RX-1001 from PT-1001) and friendly PDF filenames (Prescription_Buddy_RX-1001.pdf).", s["table_cell"]),
+            Paragraph("Verified: Pet owners receive cleanly titled attachments and easily communicable reference numbers for clinic checkups.", s["table_cell"]),
+        ],
+        [
+            Paragraph("<b>Strict Conditional Licensure (Zero Dummy Data)</b>", s["table_cell"]),
+            Paragraph("Defaulting to demonstration license numbers (VET-894102 / 1948201) when a veterinarian had not entered a PRC number risked misrepresenting credentials.", s["table_cell"]),
+            Paragraph("Replaced placeholder defaults with strict conditional rendering: if PRC License and PTR Number are blank, the system omits licensure lines completely.", s["table_cell"]),
+            Paragraph("Verified: Attending doctor name renders dynamically from user profile; non-configured licensure fields remain completely blank.", s["table_cell"]),
+        ],
     ]
 
     t = Table(table_rows, colWidths=[120, 140, 160, 120])
@@ -240,3 +258,4 @@ if __name__ == "__main__":
         r"C:\Users\Admin\.gemini\antigravity\brain\29f89b92-a290-4a25-a3ca-303314853942\Vetlink_Feature_Updates_and_Changelog_Nov10.pdf",
     ]
     generate_changelog_pdf(cl_paths)
+

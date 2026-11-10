@@ -372,9 +372,11 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
   const consultation  = caseData?.consultation
   const aiResult      = caseData?.aiResult
   const [currentOwnerEmail, setCurrentOwnerEmail] = useState(patient?.ownerEmail || '')
-  const doctorName = currentUser?.name ? (currentUser.name.startsWith('Dr.') ? currentUser.name : `Dr. ${currentUser.name}`) : 'Dr. Sarah Lin, DVM'
-  const doctorPrcLicense = currentUser?.prcLicense || 'VET-894102'
-  const doctorPtrNumber = currentUser?.ptrNumber || '1948201'
+  const doctorName = currentUser?.name ? (currentUser.name.startsWith('Dr.') ? currentUser.name : `Dr. ${currentUser.name}`) : (caseData?.doctorName || 'Attending Veterinarian')
+  const doctorPrcLicense = (currentUser?.prcLicense || '').trim()
+  const doctorPtrNumber = (currentUser?.ptrNumber || '').trim()
+  const hasPrc = Boolean(doctorPrcLicense && doctorPrcLicense !== 'VET-894102')
+  const hasPtr = Boolean(doctorPtrNumber && doctorPtrNumber !== '1948201')
 
   // Check if case is flagged as awaiting lab test
   const isAwaitingLab = Boolean(
@@ -664,9 +666,17 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
     ? `${diagnosis} with Secondary ${secondaryDiagnosis}`
     : diagnosis
 
-  const cleanRxId = consultation?.id
-    ? (consultation.id.length > 18 ? `RX-${consultation.id.slice(0, 8).toUpperCase()}` : consultation.id)
-    : `RX-2026-${patient?.id ? String(patient.id).replace('PT-', '') : '0142'}`
+  const cleanRxId = (() => {
+    if (patient?.id) {
+      const pNum = String(patient.id).replace(/^(PAT-|PT-)/i, '').trim()
+      if (pNum) return `RX-${pNum}`
+    }
+    if (consultation?.id) {
+      const raw = String(consultation.id).trim()
+      if (!raw.toLowerCase().includes('uuid') && raw.length <= 12) return raw
+    }
+    return 'RX-1001'
+  })()
 
   const todayStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
   const isVetOrAdmin = currentUser?.role === 'Clinic Admin' || !currentUser?.role
@@ -949,7 +959,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               </div>
               <div>
                 <strong>Owner:</strong> {patient?.ownerName || 'None recorded'} {patient?.ownerPhone ? `(${patient.ownerPhone})` : ''}<br />
-                <strong>Ordering Clinician:</strong> Dr. Sarah Lin, DVM<br />
+                <strong>Ordering Clinician:</strong> {doctorName}<br />
                 <strong>Suspected Condition:</strong> <u>{diagnosis}</u> {secondaryDiagnosis ? `+ ${secondaryDiagnosis}` : ''}<br />
                 <strong>AI Pre-screen Flag:</strong> {aiResult?.percent || '<60%'} (FR7 Calibrated Threshold)
               </div>
@@ -1368,7 +1378,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                   Veterinary Medical Center • Department of Clinical Dermatology
                 </p>
                 <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
-                  102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+                  765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 • Mobile: 0945 867 9891 • vetlink.lamuan@gmail.com
                 </p>
               </div>
 
@@ -1435,8 +1445,8 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 <div style={{ textAlign: 'center', width: 210 }}>
                   <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: 24 }}></div>
                   <strong style={{ fontSize: '0.88rem' }}>{doctorName}</strong><br />
-                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br />
-                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>
+                  {hasPrc && (<><span style={{ fontSize: '0.75rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
+                  {hasPtr && (<span style={{ fontSize: '0.75rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
                 </div>
               </div>
             </div>
@@ -1492,7 +1502,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                   Department of Clinical Pathology & Diagnostic Dermatology
                 </p>
                 <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
-                  102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+                  765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 • Mobile: 0945 867 9891 • vetlink.lamuan@gmail.com
                 </p>
               </div>
 
@@ -1511,7 +1521,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                   <strong>OWNER:</strong> {patient?.ownerName || 'Walk-in'}<br />
                   <strong>CONTACT:</strong> {patient?.ownerPhone || 'N/A'}<br />
                   <strong>DATE:</strong> {todayStr}<br />
-                  <strong>ORDERING VET:</strong> Dr. Sarah Lin, DVM<br />
+                  <strong>ORDERING VET:</strong> {doctorName}<br />
                   <strong>REQUISITION ID:</strong> {cleanRxId}
                 </div>
               </div>
@@ -1544,8 +1554,8 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 <div style={{ textAlign: 'center', width: 210 }}>
                   <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: 24 }}></div>
                   <strong style={{ fontSize: '0.88rem' }}>{doctorName}</strong><br />
-                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br />
-                  <span style={{ fontSize: '0.75rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>
+                  {hasPrc && (<><span style={{ fontSize: '0.75rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
+                  {hasPtr && (<span style={{ fontSize: '0.75rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
                 </div>
               </div>
             </div>
@@ -1585,7 +1595,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 Department of Clinical Pathology & Diagnostic Dermatology
               </p>
               <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-                102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+                765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 • Mobile: 0945 867 9891 • vetlink.lamuan@gmail.com
               </p>
             </div>
 
@@ -1604,7 +1614,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 <strong>OWNER:</strong> {patient?.ownerName || '________'}<br />
                 <strong>CONTACT:</strong> {patient?.ownerPhone || '________'}<br />
                 <strong>DATE:</strong> {todayStr}<br />
-                <strong>ORDERING VET:</strong> Dr. Sarah Lin, DVM<br />
+                <strong>ORDERING VET:</strong> {doctorName}<br />
                 <strong>REQUISITION ID:</strong> {consultation?.id || 'REQ-2026-1027'}
               </div>
             </div>
@@ -1637,8 +1647,8 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               <div style={{ textAlign: 'center', width: 230 }}>
                 <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 6, height: 32 }}></div>
                 <strong style={{ fontSize: '0.9rem' }}>{doctorName}</strong><br />
-                <span style={{ fontSize: '0.8rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br />
-                <span style={{ fontSize: '0.8rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>
+                {hasPrc && (<><span style={{ fontSize: '0.8rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
+                {hasPtr && (<span style={{ fontSize: '0.8rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
               </div>
             </div>
           </div>
@@ -1654,7 +1664,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 Veterinary Medical Center • Department of Clinical Dermatology
               </p>
               <p style={{ margin: 0, fontSize: '0.8rem', color: '#64748b' }}>
-                102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+                765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 • Mobile: 0945 867 9891 • vetlink.lamuan@gmail.com
               </p>
             </div>
 
@@ -1726,8 +1736,8 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               <div style={{ textAlign: 'center', width: 230 }}>
                 <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 6, height: 32 }}></div>
                 <strong style={{ fontSize: '0.92rem' }}>{doctorName}</strong><br />
-                <span style={{ fontSize: '0.8rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br />
-                <span style={{ fontSize: '0.8rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>
+                {hasPrc && (<><span style={{ fontSize: '0.8rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
+                {hasPtr && (<span style={{ fontSize: '0.8rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
               </div>
             </div>
           </div>

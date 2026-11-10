@@ -136,11 +136,11 @@ class EmailPrescriptionRequest(BaseModel):
     diagnosis: str
     prescription_text: str
     clinical_notes: Optional[str] = ""
-    doctor_name: Optional[str] = "Dr. Sarah Lin, DVM"
+    doctor_name: Optional[str] = "Attending Veterinarian"
     rx_id: Optional[str] = None
     allow_duplicate: Optional[bool] = False
-    prc_license: Optional[str] = "VET-894102"
-    ptr_number: Optional[str] = "1948201"
+    prc_license: Optional[str] = ""
+    ptr_number: Optional[str] = ""
 
 
 def decode_json_value(value):
@@ -641,7 +641,7 @@ def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
         Spacer(1, 2),
         Paragraph('Veterinary Medical Center &bull; Department of Clinical Dermatology', h_sub),
         Spacer(1, 2),
-        Paragraph('102 Rizal Avenue, Brgy. San Antonio &bull; Tel: (02) 8876-5432 &bull; Mobile: 0917-123-4567 &bull; clinic@vetlink.ph', h_contact),
+        Paragraph('765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 &bull; Mobile: 0945 867 9891 &bull; vetlink.lamuan@gmail.com', h_contact),
         Spacer(1, 4),
         HRFlowable(width='100%', thickness=1.5, color=primary_color, spaceBefore=2, spaceAfter=8)
     ]
@@ -651,7 +651,17 @@ def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
     p_breed = req.breed or 'Unknown'
     p_wt = f"{req.weight} kg" if req.weight else "N/A"
     o_name = req.owner_name or 'Pet Owner'
-    rx_num = req.rx_id or 'RX-OFFICIAL'
+    raw_rx = req.rx_id or 'RX-1001'
+    if 'CONS-' in raw_rx or len(raw_rx) > 16:
+        if req.patient_id and req.patient_id.strip():
+            num_part = req.patient_id.replace('PAT-', '').replace('PT-', '').strip()
+            rx_num = f"RX-{num_part}"
+        else:
+            parts = raw_rx.split('-')
+            rx_num = f"RX-{parts[1].upper() if len(parts) > 1 else raw_rx[:6].upper()}"
+    else:
+        rx_num = raw_rx
+
     date_str = datetime.utcnow().strftime('%B %d, %Y')
 
     col1_html = f"<b>PATIENT:</b> {p_name}<br/><b>SPECIES / BREED:</b> {p_spec} &bull; {p_breed}<br/><b>WEIGHT:</b> {p_wt}"
@@ -716,11 +726,19 @@ def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
     story.append(notes_box)
     story.append(Spacer(1, 14))
 
-    doc_name = req.doctor_name or 'Dr. Sarah Lin, DVM'
-    prc_lic = req.prc_license or 'VET-894102'
-    ptr_no = req.ptr_number or '1948201'
+    doc_name = req.doctor_name or 'Attending Veterinarian'
+    prc_lic = (req.prc_license or '').strip()
+    ptr_no = (req.ptr_number or '').strip()
+    has_prc = bool(prc_lic and prc_lic != 'VET-894102')
+    has_ptr = bool(ptr_no and ptr_no != '1948201')
+
     sig_left = 'Notice: Official veterinary prescription issued under Republic Act 9268.<br/>Valid for 30 days from date of examination.<br/>Substitution requires attending veterinarian authorization.'
-    sig_right = f"<b>{doc_name}</b><br/>PRC License No.: {prc_lic}<br/>PTR No.: {ptr_no}"
+    sig_lines = [f"<b>{doc_name}</b>"]
+    if has_prc:
+        sig_lines.append(f"PRC License No.: {prc_lic}")
+    if has_ptr:
+        sig_lines.append(f"PTR No.: {ptr_no}")
+    sig_right = "<br/>".join(sig_lines)
 
     sig_table = Table([
         [Paragraph(sig_left, sig_text), Paragraph(sig_right, ParagraphStyle('SigR', parent=sig_text, alignment=2))]
@@ -749,21 +767,51 @@ def dispatch_prescription_email(req: EmailPrescriptionRequest) -> tuple[bool, st
     smtp_from = os.getenv("SMTP_FROM", smtp_user or "clinic@vetlink.ph")
     smtp_use_tls = os.getenv("SMTP_USE_TLS", "true").lower() in ("true", "1", "yes")
 
-    prc_lic = req.prc_license or "VET-894102"
-    ptr_no = req.ptr_number or "1948201"
+    raw_rx = req.rx_id or "RX-1001"
+    if "CONS-" in raw_rx or len(raw_rx) > 16:
+        if req.patient_id and req.patient_id.strip():
+            num_part = req.patient_id.replace("PAT-", "").replace("PT-", "").strip()
+            clean_rxid = f"RX-{num_part}"
+        else:
+            parts = raw_rx.split("-")
+            clean_rxid = f"RX-{parts[1].upper() if len(parts) > 1 else raw_rx[:6].upper()}"
+    else:
+        clean_rxid = raw_rx
+
+    req.rx_id = clean_rxid
+    clean_pname = (req.patient_name or "Patient").replace(" ", "_").replace("/", "_")
+    pdf_filename = f"Prescription_{clean_pname}_{clean_rxid}.pdf"
+
+    doc_name = req.doctor_name or "Attending Veterinarian"
+    prc_lic = (req.prc_license or "").strip()
+    ptr_no = (req.ptr_number or "").strip()
+    has_prc = bool(prc_lic and prc_lic != "VET-894102")
+    has_ptr = bool(ptr_no and ptr_no != "1948201")
+
+    plain_sig_lines = [f"ATTENDING VETERINARIAN:\n{doc_name}"]
+    if has_prc:
+        plain_sig_lines.append(f"PRC License No.: {prc_lic}")
+    if has_ptr:
+        plain_sig_lines.append(f"PTR No.: {ptr_no}")
+    plain_doctor_block = "\n".join(plain_sig_lines)
+
+    html_sig_lines = [f"<strong>{doc_name}</strong>"]
+    if has_prc:
+        html_sig_lines.append(f"<br>PRC License No.: {prc_lic}")
+    if has_ptr:
+        html_sig_lines.append(f"<br>PTR No.: {ptr_no}")
+    html_doctor_block = "".join(html_sig_lines)
 
     subject = f"Official Veterinary Prescription - {req.patient_name} ({req.diagnosis})"
 
     # Generate the authentic binary PDF prescription
     pdf_bytes = generate_prescription_pdf_bytes(req)
-    clean_pname = (req.patient_name or "Patient").replace(" ", "_").replace("/", "_")
-    clean_rxid = (req.rx_id or "Official").replace(" ", "_").replace("/", "_")
-    pdf_filename = f"Prescription_{clean_pname}_{clean_rxid}.pdf"
 
     plain_text = f"""==================================================
 VETLINK ANIMAL CARE CLINIC & HOSPITAL
 Veterinary Medical Center • Department of Clinical Dermatology
-102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph
+765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807
+Mobile: 0945 867 9891 • Email: vetlink.lamuan@gmail.com
 ==================================================
 
 OFFICIAL VETERINARY PRESCRIPTION (℞)
@@ -774,7 +822,7 @@ SPECIES / BREED: {req.species} • {req.breed}
 WEIGHT:          {req.weight or 'N/A'} kg
 OWNER:           {req.owner_name}
 DATE:            {datetime.utcnow().strftime('%B %d, %Y')}
-CASE / RX ID:    {req.rx_id or 'RX-REF'}
+CASE / RX ID:    {clean_rxid}
 
 CLINICAL DIAGNOSIS:
 {req.diagnosis}
@@ -787,10 +835,7 @@ CLINICAL DIAGNOSIS:
 CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:
 {req.clinical_notes or 'Follow standard clinical home care.'}
 
-ATTENDING VETERINARIAN:
-{req.doctor_name}
-PRC License No.: {prc_lic}
-PTR No.: {ptr_no}
+{plain_doctor_block}
 
 --------------------------------------------------
 Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
@@ -820,7 +865,7 @@ Please find the official printable PDF prescription attached to this email.
     <div class="clinic-head">
       <h2 style="margin: 0 0 4px; font-size: 20px; color: #0f172a;">VETLINK ANIMAL CARE CLINIC & HOSPITAL</h2>
       <p style="margin: 0 0 4px; font-size: 12px; color: #334155; font-weight: 600;">Veterinary Medical Center • Department of Clinical Dermatology</p>
-      <p style="margin: 0; font-size: 11px; color: #64748b;">102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432 • Mobile: 0917-123-4567 • clinic@vetlink.ph</p>
+      <p style="margin: 0; font-size: 11px; color: #64748b;">765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 &bull; Mobile: 0945 867 9891 &bull; vetlink.lamuan@gmail.com</p>
     </div>
 
     <div class="pdf-badge">
@@ -834,7 +879,7 @@ Please find the official printable PDF prescription attached to this email.
       </tr>
       <tr>
         <td><strong>WEIGHT:</strong> {req.weight or 'N/A'} kg</td>
-        <td><strong>RX / CASE ID:</strong> {req.rx_id or 'RX-OFFICIAL'}</td>
+        <td><strong>RX / CASE ID:</strong> {clean_rxid}</td>
       </tr>
     </table>
 
@@ -851,9 +896,7 @@ Please find the official printable PDF prescription attached to this email.
     <div class="footer-sig">
       <div style="max-width: 340px;">Notice: Official veterinary prescription issued under Republic Act 9268. Valid for 30 days.</div>
       <div style="text-align: right;">
-        <strong>{req.doctor_name}</strong><br>
-        PRC License No.: {prc_lic}<br>
-        PTR No.: {ptr_no}
+        {html_doctor_block}
       </div>
     </div>
   </div>
@@ -880,11 +923,14 @@ Please find the official printable PDF prescription attached to this email.
             msg.attach(pdf_part)
 
             if smtp_port == 465:
-                server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=12)
+                server = smtplib.SMTP_SSL(smtp_host, smtp_port, timeout=20)
+                server.ehlo()
             else:
-                server = smtplib.SMTP(smtp_host, smtp_port, timeout=12)
+                server = smtplib.SMTP(smtp_host, smtp_port, timeout=20)
+                server.ehlo()
                 if smtp_use_tls:
                     server.starttls()
+                    server.ehlo()
             server.login(smtp_user, smtp_password)
             server.sendmail(smtp_from, [req.recipient_email], msg.as_string())
             server.quit()
