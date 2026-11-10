@@ -27,6 +27,7 @@ export default function EmailPrescriptionModal({
   const [allowDuplicate, setAllowDuplicate] = useState(false)
   const [isDuplicateDetected, setIsDuplicateDetected] = useState(false)
   const [duplicateSentTime, setDuplicateSentTime] = useState('')
+  const [isDownloadingPdf, setIsDownloadingPdf] = useState(false)
 
   const patientName = patient?.name || 'Patient'
   const patientSpecies = patient?.species || 'Canine'
@@ -247,7 +248,99 @@ export default function EmailPrescriptionModal({
     }
   }
 
-  // Option 2: Send via Device Email Client (mailto:), 100% Offline Compatible
+  // Option 2: Download Official Prescription PDF
+  const handleDownloadPdf = async () => {
+    setIsDownloadingPdf(true)
+    setErrorMessage('')
+    setStatusMessage('')
+
+    const payload = {
+      recipient_email: recipientEmail.trim() || 'clinic@vetlink.ph',
+      patient_id: patient?.id || null,
+      patient_name: patientName,
+      owner_name: ownerName,
+      species: patientSpecies,
+      breed: patientBreed,
+      weight: patient?.weight ? String(patient.weight) : null,
+      diagnosis: cleanDiagnosis,
+      prescription_text: prescription,
+      clinical_notes: personalNote
+        ? `${clinicalNotes}\n\nClinic Staff Note: ${personalNote}`
+        : clinicalNotes,
+      doctor_name: cleanDoctor,
+      rx_id: cleanRxId,
+    }
+
+    try {
+      const res = await fetch(`${apiBaseUrl}/api/prescriptions/pdf`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+
+      if (!res.ok) throw new Error('Could not generate PDF from server.')
+      const blob = await res.blob()
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Prescription_${patientName.replace(/\s+/g, '_')}_${cleanRxId}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      window.URL.revokeObjectURL(url)
+      document.body.removeChild(a)
+      setStatusMessage('Official Prescription PDF downloaded successfully. You can attach it to your email or print it.')
+    } catch (err) {
+      console.warn('Backend PDF generation error, using printable window:', err)
+      setStatusMessage('PDF download initiated via local print preview.')
+      window.print()
+    } finally {
+      setIsDownloadingPdf(false)
+    }
+  }
+
+  // Option 3A: Open Gmail Web Composer directly in browser
+  const handleSendGmailWeb = async () => {
+    setErrorMessage('')
+    setStatusMessage('')
+
+    const trimmedEmail = recipientEmail.trim()
+    if (!trimmedEmail) {
+      setErrorMessage('Please enter an owner email address.')
+      return
+    }
+    if (!validateEmail(trimmedEmail)) {
+      setErrorMessage('Please enter a valid email address.')
+      return
+    }
+
+    try {
+      await syncEmailToPatientRecord(trimmedEmail)
+      recordDispatchCache(trimmedEmail)
+
+      const subject = encodeURIComponent(emailSubject || `Official Veterinary Prescription - ${patientName}`)
+      const body = encodeURIComponent(generatePrescriptionText())
+      const gmailUrl = `https://mail.google.com/mail/?view=cm&fs=1&to=${encodeURIComponent(trimmedEmail)}&su=${subject}&body=${body}`
+
+      window.open(gmailUrl, '_blank')
+      setStatusMessage(`Gmail Web composer opened for ${trimmedEmail}. You can attach the downloaded Prescription PDF.`)
+
+      await logAuditEvent({
+        action: 'PRESCRIPTION_EMAILED',
+        user: currentUser || { name: 'Clinic Staff', role: 'Staff' },
+        targetEntity: 'patients',
+        targetId: patient?.id || '',
+        details: `Opened Gmail Web composer for ${patientName} (${trimmedEmail}).`,
+      })
+
+      if (onPrescriptionSent) {
+        onPrescriptionSent(trimmedEmail)
+      }
+    } catch (err) {
+      setErrorMessage('Could not open Gmail Web: ' + (err.message || 'Unknown error'))
+    }
+  }
+
+  // Option 3B: Send via Device Email Client (mailto:), 100% Offline Compatible
   const handleSendMailto = async () => {
     setErrorMessage('')
     setStatusMessage('')
@@ -533,15 +626,15 @@ export default function EmailPrescriptionModal({
                   opacity: isDuplicateDetected && !allowDuplicate ? 0.6 : 1,
                 }}
               >
-                {isSending ? 'Sending via Cloud...' : 'Send via Clinic Cloud Email'}
+                {isSending ? 'Sending via Cloud...' : 'Send via Clinic Cloud Email (with Attached PDF)'}
               </button>
 
-              {/* Native Mail App Fallback */}
+              {/* Download Prescription PDF */}
               <button
                 type="button"
-                className="secondary-btn"
-                onClick={handleSendMailto}
-                disabled={isSending}
+                className="action-btn green"
+                onClick={handleDownloadPdf}
+                disabled={isDownloadingPdf}
                 style={{
                   minHeight: 38,
                   padding: '8px 16px',
@@ -552,14 +645,69 @@ export default function EmailPrescriptionModal({
                   alignItems: 'center',
                   gap: 6,
                   borderRadius: 6,
-                  border: '1px solid var(--border, #cbd5e1)',
-                  background: '#f8fafc',
-                  color: '#334155',
-                  cursor: isSending ? 'not-allowed' : 'pointer',
+                  background: '#059669',
+                  color: '#ffffff',
+                  border: 'none',
+                  cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
                 }}
               >
-                Open in Gmail / Device Mail
+                {isDownloadingPdf ? 'Generating PDF...' : 'Download Official Prescription (PDF)'}
               </button>
+
+              {/* Instant Gmail Web & Native Mail Fallback Row */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={handleSendGmailWeb}
+                  disabled={isSending}
+                  style={{
+                    minHeight: 34,
+                    padding: '6px 8px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    borderRadius: 6,
+                    border: '1px solid #cbd5e1',
+                    background: '#ffffff',
+                    color: '#1e3a8a',
+                    cursor: isSending ? 'not-allowed' : 'pointer',
+                  }}
+                  title="Open Gmail composer in web browser"
+                >
+                  Open in Gmail Web
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={handleSendMailto}
+                  disabled={isSending}
+                  style={{
+                    minHeight: 34,
+                    padding: '6px 8px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    borderRadius: 6,
+                    border: '1px solid #cbd5e1',
+                    background: '#f8fafc',
+                    color: '#334155',
+                    cursor: isSending ? 'not-allowed' : 'pointer',
+                  }}
+                  title="Open device native email app"
+                >
+                  Device Mail App
+                </button>
+              </div>
+
+              <span style={{ fontSize: '0.71rem', color: '#64748b', textAlign: 'center', margin: '2px 0 0' }}>
+                Tip: Click "Download Official Prescription (PDF)" first, then open Gmail to attach the file directly.
+              </span>
             </div>
           </div>
 
@@ -577,6 +725,28 @@ export default function EmailPrescriptionModal({
               color: '#0f172a',
             }}
           >
+            {/* Official PDF Document Badge */}
+            <div
+              style={{
+                background: '#f0fdf4',
+                border: '1px solid #86efac',
+                borderRadius: 6,
+                padding: '5px 8px',
+                marginBottom: 8,
+                fontSize: '0.72rem',
+                color: '#166534',
+                fontWeight: 600,
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+              }}
+            >
+              <span>Attachment: Prescription_{patientName.replace(/\s+/g, '_')}_{cleanRxId}.pdf</span>
+              <span style={{ fontSize: '0.65rem', background: '#dcfce7', border: '1px solid #86efac', padding: '1px 5px', borderRadius: 4, textTransform: 'uppercase', fontWeight: 700 }}>
+                Official PDF
+              </span>
+            </div>
+
             {/* Preview Card Header */}
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: 6, marginBottom: 8 }}>
               <span style={{ fontWeight: 800, fontSize: '0.72rem', letterSpacing: '0.5px', color: '#1e3a8a', textTransform: 'uppercase' }}>
