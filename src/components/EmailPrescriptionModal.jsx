@@ -24,11 +24,13 @@ export default function EmailPrescriptionModal({
   const [statusMessage, setStatusMessage] = useState('')
   const [errorMessage, setErrorMessage] = useState('')
   const [copied, setCopied] = useState(false)
-  const [showFullDoc, setShowFullDoc] = useState(false)
+  const [allowDuplicate, setAllowDuplicate] = useState(false)
+  const [isDuplicateDetected, setIsDuplicateDetected] = useState(false)
+  const [duplicateSentTime, setDuplicateSentTime] = useState('')
 
-  const patientName = patient?.name || 'Buddy'
+  const patientName = patient?.name || 'Patient'
   const patientSpecies = patient?.species || 'Canine'
-  const patientBreed = patient?.breed || 'Aspin'
+  const patientBreed = patient?.breed || 'Unknown'
   const patientWeight = patient?.weight ? `${patient.weight} kg` : 'N/A'
   const ownerName = patient?.ownerName || 'Pet Owner'
   const ownerPhone = patient?.ownerPhone || 'N/A'
@@ -41,7 +43,7 @@ export default function EmailPrescriptionModal({
   const cleanDiagnosis = diagnosis || consultation?.diagnosis || patient?.areaOfConcern || 'Cutaneous Dermatological Condition'
   const cleanDoctor = doctorName || (currentUser?.name ? `Dr. ${currentUser.name}` : 'Dr. Sarah Lin, DVM')
 
-  // Keep state synchronized when modal opens or patient changes
+  // Check 24-Hour Duplicate Dispatch Guard
   useEffect(() => {
     if (isOpen) {
       const email = patient?.ownerEmail || ''
@@ -51,25 +53,51 @@ export default function EmailPrescriptionModal({
       setStatusMessage('')
       setErrorMessage('')
       setCopied(false)
+      setAllowDuplicate(false)
+
+      // Inspect duplicate record in localStorage
+      try {
+        const cacheKey = `vetlink_rx_dispatch_${patient?.id || cleanRxId}`
+        const cachedRaw = localStorage.getItem(cacheKey)
+        if (cachedRaw) {
+          const cached = JSON.parse(cachedRaw)
+          const isSameRecipient = (cached.recipient || '').toLowerCase() === email.trim().toLowerCase()
+          const isSameRx = (cached.prescription || '').trim() === (prescription || '').trim()
+          const isSameDiag = (cached.diagnosis || '').trim() === cleanDiagnosis.trim()
+          const sentDate = new Date(cached.timestamp)
+          const hoursAgo = (Date.now() - sentDate.getTime()) / (1000 * 60 * 60)
+
+          if (isSameRecipient && isSameRx && isSameDiag && hoursAgo < 24) {
+            setIsDuplicateDetected(true)
+            setDuplicateSentTime(sentDate.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
+          } else {
+            setIsDuplicateDetected(false)
+          }
+        } else {
+          setIsDuplicateDetected(false)
+        }
+      } catch {
+        setIsDuplicateDetected(false)
+      }
     }
-  }, [isOpen, patient, patientName, cleanDiagnosis])
+  }, [isOpen, patient, patientName, cleanDiagnosis, cleanRxId, prescription])
 
   if (!isOpen) return null
 
-  // Compose Full Prescription Document Plain Text
+  // Generate plain text prescription
   const generatePrescriptionText = () => {
     return [
       '==================================================',
       'VETLINK ANIMAL CARE CLINIC & HOSPITAL',
-      'Veterinary Medical Center • Department of Clinical Dermatology',
-      '102 Rizal Avenue, Brgy. San Antonio • Tel: (02) 8876-5432',
-      'Mobile: 0917-123-4567 • Email: clinic@vetlink.ph',
+      'Veterinary Medical Center | Department of Clinical Dermatology',
+      '102 Rizal Avenue, Brgy. San Antonio | Tel: (02) 8876-5432',
+      'Mobile: 0917-123-4567 | Email: clinic@vetlink.ph',
       '==================================================',
       '',
-      'OFFICIAL VETERINARY PRESCRIPTION (℞)',
+      'OFFICIAL VETERINARY PRESCRIPTION (Rx)',
       '',
       `PATIENT:         ${patientName}`,
-      `SPECIES / BREED: ${patientSpecies} • ${patientBreed}`,
+      `SPECIES / BREED: ${patientSpecies} | ${patientBreed}`,
       `WEIGHT:          ${patientWeight}`,
       `OWNER:           ${ownerName}`,
       `CONTACT:         ${ownerPhone}`,
@@ -79,13 +107,13 @@ export default function EmailPrescriptionModal({
       'CLINICAL DIAGNOSIS:',
       cleanDiagnosis,
       '',
-      '℞ MEDICATION & DOSAGE DISPENSING ORDER:',
+      'Rx MEDICATION & DOSAGE DISPENSING ORDER:',
       '--------------------------------------------------',
       prescription || 'No oral or topical medication prescribed.',
       '--------------------------------------------------',
       '',
       'CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:',
-      clinicalNotes || 'Follow standard home hygiene and monitoring.',
+      clinicalNotes || 'Follow standard home hygiene and clinical monitoring.',
       '',
       personalNote ? `CLINIC STAFF INSTRUCTIONS TO OWNER:\n"${personalNote}"\n` : '',
       'ATTENDING VETERINARIAN:',
@@ -105,7 +133,7 @@ export default function EmailPrescriptionModal({
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
   }
 
-  // Persist updated email to patient store if changed
+  // Persist updated email to patient record
   const syncEmailToPatientRecord = async (targetEmail) => {
     if (saveToPatient && patient?.id && targetEmail && targetEmail !== patient.ownerEmail) {
       try {
@@ -113,6 +141,24 @@ export default function EmailPrescriptionModal({
       } catch (err) {
         console.warn('Failed to update owner email in local patient record:', err)
       }
+    }
+  }
+
+  // Record dispatch in local cache for duplicate prevention
+  const recordDispatchCache = (targetEmail) => {
+    try {
+      const cacheKey = `vetlink_rx_dispatch_${patient?.id || cleanRxId}`
+      localStorage.setItem(
+        cacheKey,
+        JSON.stringify({
+          recipient: targetEmail,
+          diagnosis: cleanDiagnosis,
+          prescription: prescription,
+          timestamp: new Date().toISOString(),
+        })
+      )
+    } catch {
+      // ignore storage errors
     }
   }
 
@@ -129,6 +175,11 @@ export default function EmailPrescriptionModal({
     }
     if (!validateEmail(trimmedEmail)) {
       setErrorMessage('Please enter a valid email address (e.g. owner@example.com).')
+      return
+    }
+
+    if (isDuplicateDetected && !allowDuplicate) {
+      setErrorMessage('Duplicate dispatch prevented. Check "Resend identical copy anyway" if you intentionally need to dispatch again.')
       return
     }
 
@@ -151,6 +202,7 @@ export default function EmailPrescriptionModal({
           : clinicalNotes,
         doctor_name: cleanDoctor,
         rx_id: cleanRxId,
+        allow_duplicate: allowDuplicate,
       }
 
       const headers = { 'Content-Type': 'application/json' }
@@ -170,31 +222,32 @@ export default function EmailPrescriptionModal({
       }
 
       const data = await res.json()
-      setStatusMessage(data.message || `Official prescription successfully emailed to ${trimmedEmail}!`)
+      setStatusMessage(data.message || `Official prescription successfully emailed to ${trimmedEmail}.`)
+      recordDispatchCache(trimmedEmail)
+      setIsDuplicateDetected(false)
 
-      // Record Audit Event
       await logAuditEvent({
         action: 'PRESCRIPTION_EMAILED',
         user: currentUser || { name: 'Clinic Staff', role: 'Staff' },
         targetEntity: 'patients',
         targetId: patient?.id || '',
-        details: `Dispatched prescription for ${patientName} to ${trimmedEmail} via Cloud Email.`,
+        details: `Dispatched official prescription for ${patientName} to ${trimmedEmail} via Clinic Cloud Email.`,
       })
 
       if (onPrescriptionSent) {
         onPrescriptionSent(trimmedEmail)
       }
     } catch (err) {
-      console.warn('Cloud email dispatch failed:', err)
+      console.warn('Cloud email dispatch error:', err)
       setErrorMessage(
-        `Cloud email could not be delivered (${err.message || 'Network unavailable'}). You can immediately open and send via your device's email app using the button below.`
+        `${err.message || 'Cloud delivery could not be completed.'} You can immediately dispatch via your device email app using the button below.`
       )
     } finally {
       setIsSending(false)
     }
   }
 
-  // Option 2: Send via Native Email Client (mailto:), 100% Offline Compatible
+  // Option 2: Send via Device Email Client (mailto:), 100% Offline Compatible
   const handleSendMailto = async () => {
     setErrorMessage('')
     setStatusMessage('')
@@ -205,429 +258,448 @@ export default function EmailPrescriptionModal({
       return
     }
     if (!validateEmail(trimmedEmail)) {
-      setErrorMessage('Please enter a valid email address (e.g. owner@example.com).')
+      setErrorMessage('Please enter a valid email address.')
       return
     }
 
     try {
       await syncEmailToPatientRecord(trimmedEmail)
+      recordDispatchCache(trimmedEmail)
 
-      const bodyText = generatePrescriptionText()
-      const subjectText = emailSubject.trim() || `Official Prescription - ${patientName}`
-      const mailtoUrl = `mailto:${encodeURIComponent(trimmedEmail)}?subject=${encodeURIComponent(subjectText)}&body=${encodeURIComponent(bodyText)}`
+      const subject = encodeURIComponent(emailSubject || `Official Veterinary Prescription - ${patientName}`)
+      const body = encodeURIComponent(generatePrescriptionText())
+      const mailtoUrl = `mailto:${encodeURIComponent(trimmedEmail)}?subject=${subject}&body=${body}`
 
-      // Open mail client
       window.location.href = mailtoUrl
 
-      setStatusMessage(`Launched email client with pre-filled prescription for ${trimmedEmail}.`)
+      setStatusMessage(`Device mail app opened with pre-filled prescription for ${trimmedEmail}.`)
 
-      // Record Audit Event
       await logAuditEvent({
         action: 'PRESCRIPTION_EMAILED',
         user: currentUser || { name: 'Clinic Staff', role: 'Staff' },
         targetEntity: 'patients',
         targetId: patient?.id || '',
-        details: `Opened prescription in email client for ${patientName} to ${trimmedEmail}.`,
+        details: `Opened prescription mail draft for ${patientName} (${trimmedEmail}) via Device Mail Client.`,
       })
 
       if (onPrescriptionSent) {
         onPrescriptionSent(trimmedEmail)
       }
     } catch (err) {
-      setErrorMessage(`Failed to open email client: ${err.message}`)
+      setErrorMessage('Could not open default mail client: ' + (err.message || 'Unknown error'))
     }
   }
 
-  // Option 3: Copy full prescription text
+  // Copy Plain Text Prescription to Clipboard
   const handleCopyText = async () => {
     try {
-      const text = generatePrescriptionText()
-      await navigator.clipboard.writeText(text)
+      const fullText = generatePrescriptionText()
+      await navigator.clipboard.writeText(fullText)
       setCopied(true)
-      setStatusMessage('Full prescription copied to clipboard (ready to paste into SMS or messaging app).')
       setTimeout(() => setCopied(false), 2500)
-    } catch (err) {
-      setErrorMessage('Unable to copy to clipboard.')
+    } catch {
+      setErrorMessage('Clipboard copy failed. Please select text manually from preview.')
     }
   }
 
   return (
-    <div className="modal-overlay no-print" role="dialog" aria-modal="true" style={{ zIndex: 1200 }}>
+    <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="email-rx-title">
       <div
         className="modal-dialog"
         style={{
-          maxWidth: 680,
-          maxHeight: '92vh',
+          maxWidth: 860,
+          maxHeight: '90vh',
           display: 'flex',
           flexDirection: 'column',
+          padding: 0,
           overflow: 'hidden',
+          borderRadius: 10,
         }}
       >
-        {/* Header */}
-        <header className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <span style={{ fontSize: '1.4rem' }}>✉️</span>
-            <div>
-              <h3 style={{ margin: 0, fontSize: '1.12rem', fontWeight: 800, color: 'var(--text-h)' }}>
-                Email Prescription to Owner
-              </h3>
-              <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: 'var(--muted)' }}>
-                Send official digital prescription (℞) directly to pet owner
-              </p>
-            </div>
+        {/* Modal Header */}
+        <header
+          className="modal-header"
+          style={{
+            padding: '14px 20px',
+            borderBottom: '1px solid var(--border, #cbd5e1)',
+            background: 'var(--surface, #ffffff)',
+            flexShrink: 0,
+          }}
+        >
+          <div>
+            <h3 id="email-rx-title" style={{ margin: 0, fontSize: '1.05rem', fontWeight: 800, color: 'var(--text-h, #0f172a)' }}>
+              Email Official Prescription
+            </h3>
+            <span style={{ fontSize: '0.78rem', color: 'var(--muted, #64748b)' }}>
+              Dispatch certified veterinary prescription directly to pet owner
+            </span>
           </div>
           <button
-            type="button"
             className="modal-close-btn"
+            type="button"
             onClick={onClose}
             aria-label="Close dialog"
-            style={{ width: 34, height: 34, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
+            disabled={isSending}
           >
             ✕
           </button>
         </header>
 
-        {/* Scrollable Form Body */}
-        <div style={{ padding: '18px 22px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: 14 }}>
-          {/* Status Alerts */}
-          {statusMessage && (
-            <div
-              className="alert-banner success"
-              style={{
-                background: '#dcfce7',
-                color: '#166534',
-                border: '1px solid #86efac',
-                padding: '10px 14px',
-                borderRadius: 8,
-                fontSize: '0.86rem',
-                fontWeight: 600,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 8,
-              }}
-            >
-              <span>✅</span>
-              <span style={{ flex: 1 }}>{statusMessage}</span>
-            </div>
-          )}
-
-          {errorMessage && (
-            <div
-              className="alert-banner error"
-              style={{
-                background: '#fee2e2',
-                color: '#991b1b',
-                border: '1px solid #fca5a5',
-                padding: '10px 14px',
-                borderRadius: 8,
-                fontSize: '0.86rem',
-                display: 'flex',
-                alignItems: 'flex-start',
-                gap: 8,
-              }}
-            >
-              <span>⚠️</span>
-              <span style={{ flex: 1 }}>{errorMessage}</span>
-            </div>
-          )}
-
-          {/* Patient Quick Summary Box */}
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-              gap: 10,
-              padding: '12px 14px',
-              background: 'var(--surface-2, #f8fafc)',
-              borderRadius: 8,
-              border: '1px solid var(--border, #cbd5e1)',
-              fontSize: '0.82rem',
-            }}
-          >
-            <div>
-              <span style={{ color: 'var(--muted)', display: 'block', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>
-                Patient
-              </span>
-              <strong style={{ fontSize: '0.94rem', color: 'var(--text-h)' }}>{patientName}</strong>
-              <div style={{ color: 'var(--text)', fontSize: '0.78rem' }}>
-                {patientSpecies} • {patientBreed} {patient?.weight ? `(${patient.weight} kg)` : ''}
-              </div>
-            </div>
-
-            <div>
-              <span style={{ color: 'var(--muted)', display: 'block', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>
-                Owner & Contact
-              </span>
-              <strong style={{ fontSize: '0.92rem', color: 'var(--text-h)' }}>{ownerName}</strong>
-              <div style={{ color: 'var(--text)', fontSize: '0.78rem' }}>{ownerPhone}</div>
-            </div>
-
-            <div style={{ gridColumn: 'span 1' }}>
-              <span style={{ color: 'var(--muted)', display: 'block', fontSize: '0.72rem', textTransform: 'uppercase', fontWeight: 700 }}>
-                Diagnosis
-              </span>
-              <strong style={{ color: '#0284c7', fontSize: '0.88rem' }}>{cleanDiagnosis}</strong>
-              <div style={{ color: 'var(--muted)', fontSize: '0.74rem' }}>{todayStr}</div>
-            </div>
-          </div>
-
-          {/* Email Recipient Input */}
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 700, fontSize: '0.86rem', color: 'var(--text-h)' }}>
-              Pet Owner's Email Address <span style={{ color: '#ef4444' }}>*</span>
-            </label>
-            <input
-              type="email"
-              value={recipientEmail}
-              onChange={(e) => setRecipientEmail(e.target.value)}
-              placeholder="e.g. petowner@gmail.com"
-              required
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                borderRadius: 8,
-                border: '1.5px solid var(--border, #cbd5e1)',
-                background: 'var(--surface, #ffffff)',
-                color: 'var(--text, #0f172a)',
-                fontSize: '0.92rem',
-                minHeight: 44,
-                boxSizing: 'border-box',
-              }}
-            />
-            {patient?.id && (
-              <label
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 8,
-                  marginTop: 6,
-                  fontSize: '0.78rem',
-                  color: 'var(--muted)',
-                  cursor: 'pointer',
-                }}
-              >
-                <input
-                  type="checkbox"
-                  checked={saveToPatient}
-                  onChange={(e) => setSaveToPatient(e.target.checked)}
-                />
-                <span>Save this email to patient's clinical file for future visits</span>
-              </label>
-            )}
-          </div>
-
-          {/* Email Subject Input */}
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 700, fontSize: '0.84rem', color: 'var(--text-h)' }}>
-              Subject Line
-            </label>
-            <input
-              type="text"
-              value={emailSubject}
-              onChange={(e) => setEmailSubject(e.target.value)}
-              placeholder="Prescription Subject"
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 8,
-                border: '1px solid var(--border, #cbd5e1)',
-                background: 'var(--surface, #ffffff)',
-                color: 'var(--text, #0f172a)',
-                fontSize: '0.86rem',
-                minHeight: 40,
-                boxSizing: 'border-box',
-              }}
-            />
-          </div>
-
-          {/* Optional Staff Personal Note to Owner */}
-          <div>
-            <label style={{ display: 'block', marginBottom: 6, fontWeight: 700, fontSize: '0.84rem', color: 'var(--text-h)' }}>
-              Optional Note from Clinic Staff (Appended to Email)
-            </label>
-            <textarea
-              value={personalNote}
-              onChange={(e) => setPersonalNote(e.target.value)}
-              rows={2}
-              placeholder="e.g. Please pick up the medicated shampoo at the front desk before 5:00 PM. Call us immediately if any vomiting occurs."
-              style={{
-                width: '100%',
-                padding: '8px 12px',
-                borderRadius: 8,
-                border: '1px solid var(--border, #cbd5e1)',
-                background: 'var(--surface, #ffffff)',
-                color: 'var(--text, #0f172a)',
-                fontSize: '0.84rem',
-                lineHeight: 1.45,
-                boxSizing: 'border-box',
-              }}
-            />
-          </div>
-
-          {/* Collapsible Document Preview */}
-          <div style={{ border: '1px solid var(--border, #cbd5e1)', borderRadius: 8, overflow: 'hidden' }}>
-            <button
-              type="button"
-              onClick={() => setShowFullDoc((prev) => !prev)}
-              style={{
-                width: '100%',
-                padding: '10px 14px',
-                background: 'var(--surface-2, #f1f5f9)',
-                border: 'none',
-                textAlign: 'left',
-                display: 'flex',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                cursor: 'pointer',
-                fontWeight: 700,
-                fontSize: '0.82rem',
-                color: 'var(--text-h)',
-              }}
-            >
-              <span>📄 Document Content Preview ({prescription ? 'Prescription & Notes' : 'Empty Rx'})</span>
-              <span>{showFullDoc ? '▲ Collapse' : '▼ View Preview'}</span>
-            </button>
-
-            {showFullDoc && (
+        {/* Modal Body: Compact Two-Column Split View */}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+            gap: 16,
+            padding: 16,
+            overflowY: 'auto',
+            flex: 1,
+          }}
+        >
+          {/* Left Column: Form Inputs & Action Controls */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+            {/* Status Banners */}
+            {statusMessage && (
               <div
                 style={{
-                  padding: 14,
-                  background: '#ffffff',
-                  color: '#0f172a',
+                  padding: '8px 12px',
+                  background: '#dcfce7',
+                  border: '1px solid #86efac',
+                  borderRadius: 6,
+                  color: '#15803d',
                   fontSize: '0.82rem',
-                  lineHeight: 1.5,
-                  maxHeight: 220,
-                  overflowY: 'auto',
-                  borderTop: '1px solid var(--border, #cbd5e1)',
+                  lineHeight: 1.4,
+                  fontWeight: 600,
                 }}
               >
-                <div style={{ fontWeight: 800, color: '#1e3a8a', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ fontSize: '1.2rem' }}>℞</span>
-                  <span>PRESCRIBED MEDICATIONS:</span>
-                </div>
-                <div
-                  style={{
-                    background: '#f8fafc',
-                    padding: 8,
-                    borderRadius: 6,
-                    border: '1px solid #cbd5e1',
-                    fontFamily: 'Consolas, monospace',
-                    fontSize: '0.8rem',
-                    whiteSpace: 'pre-wrap',
-                    marginBottom: 10,
-                  }}
-                >
-                  {prescription || '(No specific prescription text)'}
-                </div>
-
-                <div style={{ fontWeight: 700, fontSize: '0.78rem', color: '#334155', marginBottom: 4 }}>
-                  CARE & HOME ADMINISTRATION INSTRUCTIONS:
-                </div>
-                <div style={{ background: '#f8fafc', padding: 8, borderRadius: 6, border: '1px solid #cbd5e1', fontSize: '0.78rem', color: '#475569', whiteSpace: 'pre-wrap' }}>
-                  {clinicalNotes || '(Standard clinical home care)'}
-                </div>
+                {statusMessage}
               </div>
             )}
+
+            {errorMessage && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  background: '#fee2e2',
+                  border: '1px solid #fca5a5',
+                  borderRadius: 6,
+                  color: '#b91c1c',
+                  fontSize: '0.82rem',
+                  lineHeight: 1.4,
+                }}
+              >
+                {errorMessage}
+              </div>
+            )}
+
+            {/* Missing Email Prompt */}
+            {!patient?.ownerEmail && !recipientEmail && (
+              <div
+                style={{
+                  padding: '8px 12px',
+                  background: '#f0f9ff',
+                  border: '1px solid #bae6fd',
+                  borderRadius: 6,
+                  color: '#0369a1',
+                  fontSize: '0.78rem',
+                  lineHeight: 1.4,
+                }}
+              >
+                <strong>No email on record.</strong> Please input owner email below to dispatch prescription and auto-save to patient record.
+              </div>
+            )}
+
+            {/* Duplicate Dispatch Warning */}
+            {isDuplicateDetected && (
+              <div
+                style={{
+                  padding: '10px 12px',
+                  background: '#fef3c7',
+                  border: '1px solid #fde047',
+                  borderRadius: 6,
+                  color: '#92400e',
+                  fontSize: '0.8rem',
+                  lineHeight: 1.4,
+                }}
+              >
+                <strong>Prescription Already Dispatched:</strong> An identical prescription was already sent to this owner today at {duplicateSentTime}. No medication or dosage changes were detected.
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 8, cursor: 'pointer', fontWeight: 600 }}>
+                  <input
+                    type="checkbox"
+                    checked={allowDuplicate}
+                    onChange={(e) => setAllowDuplicate(e.target.checked)}
+                  />
+                  <span>Resend identical copy anyway</span>
+                </label>
+              </div>
+            )}
+
+            {/* Recipient Email Input */}
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>
+                Pet Owner Email Address:
+              </label>
+              <input
+                type="email"
+                required
+                value={recipientEmail}
+                onChange={(e) => {
+                  setRecipientEmail(e.target.value)
+                  setErrorMessage('')
+                }}
+                placeholder="e.g. owner@gmail.com"
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  border: '1px solid var(--border, #cbd5e1)',
+                  borderRadius: 6,
+                  fontSize: '0.88rem',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            {/* Email Subject */}
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>
+                Email Subject:
+              </label>
+              <input
+                type="text"
+                value={emailSubject}
+                onChange={(e) => setEmailSubject(e.target.value)}
+                style={{
+                  width: '100%',
+                  padding: '7px 10px',
+                  border: '1px solid var(--border, #cbd5e1)',
+                  borderRadius: 6,
+                  fontSize: '0.82rem',
+                  boxSizing: 'border-box',
+                }}
+              />
+            </div>
+
+            {/* Clinic Staff Personal Note */}
+            <div>
+              <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 700, color: '#1e293b', marginBottom: 4 }}>
+                Clinic Note / Special Instructions (Optional):
+              </label>
+              <textarea
+                rows={2}
+                value={personalNote}
+                onChange={(e) => setPersonalNote(e.target.value)}
+                placeholder="e.g. Please bring Buddy back next Monday for follow-up skin scrape."
+                style={{
+                  width: '100%',
+                  padding: '8px 10px',
+                  border: '1px solid var(--border, #cbd5e1)',
+                  borderRadius: 6,
+                  fontSize: '0.82rem',
+                  boxSizing: 'border-box',
+                  resize: 'none',
+                }}
+              />
+            </div>
+
+            {/* Save to Record Toggle */}
+            <label style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.78rem', color: '#475569', cursor: 'pointer' }}>
+              <input
+                type="checkbox"
+                checked={saveToPatient}
+                onChange={(e) => setSaveToPatient(e.target.checked)}
+              />
+              <span>Save this email to patient profile for future consultations</span>
+            </label>
+
+            {/* Action Buttons */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 'auto', paddingTop: 8 }}>
+              {/* Primary Cloud Email */}
+              <button
+                type="button"
+                className="action-btn blue"
+                onClick={handleSendCloudEmail}
+                disabled={isSending || (isDuplicateDetected && !allowDuplicate)}
+                style={{
+                  minHeight: 40,
+                  padding: '8px 16px',
+                  fontSize: '0.86rem',
+                  fontWeight: 700,
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: 6,
+                  borderRadius: 6,
+                  cursor: isSending || (isDuplicateDetected && !allowDuplicate) ? 'not-allowed' : 'pointer',
+                  opacity: isDuplicateDetected && !allowDuplicate ? 0.6 : 1,
+                }}
+              >
+                {isSending ? 'Sending via Cloud...' : 'Send via Clinic Cloud Email'}
+              </button>
+
+              {/* Native Mail App Fallback */}
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={handleSendMailto}
+                disabled={isSending}
+                style={{
+                  minHeight: 38,
+                  padding: '8px 16px',
+                  fontSize: '0.84rem',
+                  fontWeight: 700,
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'center',
+                  gap: 6,
+                  borderRadius: 6,
+                  border: '1px solid var(--border, #cbd5e1)',
+                  background: '#f8fafc',
+                  color: '#334155',
+                  cursor: isSending ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Open in Gmail / Device Mail
+              </button>
+            </div>
+          </div>
+
+          {/* Right Column: Scaled Digital Prescription Preview Card (Zero Scroll) */}
+          <div
+            style={{
+              background: '#f8fafc',
+              border: '1.5px solid #0f172a',
+              borderRadius: 8,
+              padding: 12,
+              display: 'flex',
+              flexDirection: 'column',
+              fontSize: '0.78rem',
+              lineHeight: 1.4,
+              color: '#0f172a',
+            }}
+          >
+            {/* Preview Card Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: 6, marginBottom: 8 }}>
+              <span style={{ fontWeight: 800, fontSize: '0.72rem', letterSpacing: '0.5px', color: '#1e3a8a', textTransform: 'uppercase' }}>
+                Prescription Preview
+              </span>
+              <button
+                type="button"
+                onClick={handleCopyText}
+                style={{
+                  padding: '3px 8px',
+                  fontSize: '0.72rem',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 4,
+                  background: '#ffffff',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                {copied ? 'Copied' : 'Copy Text'}
+              </button>
+            </div>
+
+            {/* Clinic Letterhead */}
+            <div style={{ textAlign: 'center', borderBottom: '1px solid #94a3b8', paddingBottom: 6, marginBottom: 8 }}>
+              <div style={{ fontWeight: 800, fontSize: '0.88rem', color: '#0f172a' }}>VETLINK ANIMAL CARE CLINIC</div>
+              <div style={{ fontSize: '0.68rem', color: '#475569' }}>Veterinary Medical Center | Department of Dermatology</div>
+              <div style={{ fontSize: '0.65rem', color: '#64748b' }}>Tel: (02) 8876-5432 | Mobile: 0917-123-4567</div>
+            </div>
+
+            {/* Patient Meta Summary Grid */}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 8px', background: '#ffffff', padding: 8, borderRadius: 6, border: '1px solid #e2e8f0', marginBottom: 8 }}>
+              <div><strong>Patient:</strong> {patientName} ({patientSpecies})</div>
+              <div><strong>Owner:</strong> {ownerName}</div>
+              <div><strong>Breed:</strong> {patientBreed}</div>
+              <div><strong>Date:</strong> {todayStr}</div>
+              <div><strong>Weight:</strong> {patientWeight}</div>
+              <div><strong>Rx ID:</strong> {cleanRxId}</div>
+            </div>
+
+            {/* Diagnosis Banner */}
+            <div style={{ background: '#eff6ff', borderLeft: '3px solid #2563eb', padding: '5px 8px', marginBottom: 8, fontSize: '0.75rem' }}>
+              <strong>Clinical Diagnosis:</strong> <u>{cleanDiagnosis}</u>
+            </div>
+
+            {/* Prescribed Medications */}
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontWeight: 800, color: '#1e3a8a', fontSize: '0.78rem', marginBottom: 2 }}>
+                Rx DISPENSING ORDER:
+              </div>
+              <div
+                style={{
+                  background: '#ffffff',
+                  border: '1px solid #cbd5e1',
+                  borderRadius: 6,
+                  padding: '6px 8px',
+                  fontFamily: 'Consolas, monospace',
+                  fontSize: '0.74rem',
+                  maxHeight: 90,
+                  overflowY: 'auto',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {prescription || 'No oral or topical medication prescribed.'}
+              </div>
+            </div>
+
+            {/* Home Instructions */}
+            <div style={{ marginBottom: 8 }}>
+              <div style={{ fontWeight: 700, fontSize: '0.74rem', color: '#334155', marginBottom: 2 }}>
+                Home Care & Recheck Instructions:
+              </div>
+              <div
+                style={{
+                  background: '#ffffff',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: 6,
+                  padding: '5px 8px',
+                  fontSize: '0.72rem',
+                  color: '#475569',
+                  maxHeight: 60,
+                  overflowY: 'auto',
+                  whiteSpace: 'pre-wrap',
+                }}
+              >
+                {clinicalNotes || 'Follow standard home hygiene and monitoring.'}
+                {personalNote ? `\nStaff Note: ${personalNote}` : ''}
+              </div>
+            </div>
+
+            {/* Footer / Signature Block */}
+            <div style={{ marginTop: 'auto', borderTop: '1px solid #cbd5e1', paddingTop: 6, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', fontSize: '0.68rem', color: '#64748b' }}>
+              <div>
+                <div>Republic Act 9268 Certified</div>
+                <div>Valid for 30 days from exam</div>
+              </div>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontWeight: 700, color: '#0f172a' }}>{cleanDoctor}</div>
+                <div>PRC Lic: VET-894102 | PTR: 1948201</div>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Modal Action Footer */}
+        {/* Modal Footer */}
         <footer
           style={{
-            padding: '14px 20px',
-            borderTop: '1px solid var(--border)',
-            background: 'var(--surface-2, #f8fafc)',
+            padding: '10px 18px',
+            borderTop: '1px solid var(--border, #cbd5e1)',
+            background: 'var(--surface, #ffffff)',
             display: 'flex',
-            flexWrap: 'wrap',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            gap: 10,
+            justifyContent: 'flex-end',
+            flexShrink: 0,
           }}
         >
-          {/* Quick Copy Action */}
           <button
             type="button"
-            className="secondary-btn"
-            onClick={handleCopyText}
-            style={{
-              padding: '8px 12px',
-              fontSize: '0.82rem',
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: 6,
-              minHeight: 44,
-            }}
-            title="Copy plain prescription text to clipboard"
+            className="small-outline"
+            onClick={onClose}
+            disabled={isSending}
+            style={{ padding: '6px 14px', fontSize: '0.82rem' }}
           >
-            {copied ? '✅ Copied!' : '📋 Copy Text'}
+            Close
           </button>
-
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              className="small-outline"
-              onClick={onClose}
-              disabled={isSending}
-              style={{ minHeight: 44, padding: '8px 16px', fontSize: '0.85rem' }}
-            >
-              Cancel
-            </button>
-
-            {/* Offline Mail Client Fallback Button */}
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={handleSendMailto}
-              disabled={isSending}
-              style={{
-                minHeight: 44,
-                padding: '8px 14px',
-                fontSize: '0.85rem',
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                fontWeight: 600,
-              }}
-              title="Open prescription draft in Gmail, Apple Mail, or Outlook"
-            >
-              <span>📬</span>
-              <span>Open in Email App</span>
-            </button>
-
-            {/* Cloud Email Dispatch Button */}
-            <button
-              type="button"
-              className="action-btn blue"
-              onClick={handleSendCloudEmail}
-              disabled={isSending}
-              style={{
-                minHeight: 44,
-                padding: '8px 18px',
-                fontSize: '0.86rem',
-                fontWeight: 700,
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 6,
-                background: '#0284c7',
-                color: '#ffffff',
-                border: 'none',
-                borderRadius: 8,
-                cursor: isSending ? 'not-allowed' : 'pointer',
-              }}
-            >
-              {isSending ? (
-                <>
-                  <span className="spinner" style={{ width: 14, height: 14 }}></span>
-                  <span>Sending...</span>
-                </>
-              ) : (
-                <>
-                  <span>✉️</span>
-                  <span>Send Cloud Email</span>
-                </>
-              )}
-            </button>
-          </div>
         </footer>
       </div>
     </div>

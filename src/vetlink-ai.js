@@ -352,6 +352,13 @@ export async function predict(imageElement, species = 'Canine') {
     const topLabel = topItem.label
     const topConf = topItem.confidence
 
+    // Flat distribution / uncalibrated model check (e.g. 5 canine classes receiving uniform ~20% probability)
+    if (allowedClasses.length >= 3 && topConf <= (1.0 / allowedClasses.length + 0.05)) {
+      throw new Error(
+        'AI Inference Inconclusive: On-device neural model returned flat or uncalibrated probabilities for this image. Please retake the photo with clearer focus and direct lesion lighting.'
+      )
+    }
+
     const top3 = classScores.slice(0, 3).map((item) => ({
       label: item.label,
       display: CLASS_DISPLAY[item.label] || item.label,

@@ -1356,6 +1356,11 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                         ))}
                       </div>
 
+                      {/* Clinical Scope & Out-of-Dataset Diagnostic Safety Notice */}
+                      <div style={{ marginTop: 8, padding: '7px 9px', background: 'rgba(30, 41, 59, 0.6)', border: '1px solid #475569', borderRadius: 4, fontSize: '0.71rem', color: '#cbd5e1', lineHeight: 1.35, fontFamily: 'sans-serif' }}>
+                        <strong>Clinical Scope Notice:</strong> VetLink AI screening is calibrated for target high-prevalence domestic conditions. For atypical lesions or conditions outside primary classes (e.g. Feline Acne, Malassezia Yeast, Flea Allergy Dermatitis), Attending Veterinarian examination and confirmatory diagnostics (Skin Scrape / Cytology / DTM) are mandated prior to therapy.
+                      </div>
+
                       {/* Multimodal Symptom Synergy Indicator */}
                       {selectedSymptoms.includes('SYM-SCALING') && aiResult.top3.some(t => t.display.toLowerCase().includes('mange')) && (
                         <div style={{ marginTop: 8, padding: '6px 8px', background: 'rgba(56, 189, 248, 0.12)', border: '1px solid #0284c7', borderRadius: 4, fontSize: '0.74rem', color: '#7dd3fc', fontFamily: 'sans-serif' }}>

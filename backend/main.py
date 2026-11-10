@@ -121,6 +121,7 @@ class EmailPrescriptionRequest(BaseModel):
     clinical_notes: Optional[str] = ""
     doctor_name: Optional[str] = "Dr. Sarah Lin, DVM"
     rx_id: Optional[str] = None
+    allow_duplicate: Optional[bool] = False
 
 
 def decode_json_value(value):
@@ -702,12 +703,19 @@ Notice: Official prescription issued under Republic Act 9268. Valid for 30 days.
             server.sendmail(smtp_from, [req.recipient_email], msg.as_string())
             server.quit()
             return True, "Delivered via Clinic SMTP"
+        except smtplib.SMTPAuthenticationError as auth_err:
+            print(f"[ERROR] SMTP Authentication Error: {auth_err}")
+            return False, f"SMTP Authentication Error: Please verify your Google App Password (16 characters) or SMTP credentials. Details: {auth_err}"
         except Exception as e:
-            print(f"[WARN] SMTP delivery failed: {e}. Falling back to simulation.")
-            return False, f"SMTP error: {str(e)}"
+            print(f"[WARN] SMTP delivery failed: {e}")
+            return False, f"SMTP delivery failed: {str(e)}"
 
-    print(f"[EMAIL SIMULATION] Prescription dispatched to {req.recipient_email} for patient {req.patient_name}.")
-    return True, "Dispatched via Clinic Cloud Queue (Simulated)"
+    # If SMTP credentials are not provided in environment variables:
+    if os.getenv("ALLOW_SIMULATED_EMAIL", "false").lower() in ("true", "1", "yes"):
+        print(f"[EMAIL SIMULATION] Prescription dispatched to {req.recipient_email} for patient {req.patient_name}.")
+        return True, "Dispatched via Clinic Cloud Queue (Simulated Mode)"
+
+    return False, "Clinic Cloud SMTP is not configured on this server. Please configure SMTP_USER and SMTP_PASSWORD in your environment variables, or click 'Open in Gmail / Device Mail' to send directly from this device."
 
 
 @app.post("/api/prescriptions/email")
@@ -724,7 +732,41 @@ def send_prescription_email(req: EmailPrescriptionRequest, authorization: Option
     if not recipient or "@" not in recipient or "." not in recipient:
         raise HTTPException(status_code=400, detail="A valid recipient email address is required")
 
+    # Duplicate Dispatch Guard (24 hours):
+    if req.patient_id and not req.allow_duplicate:
+        try:
+            conn = get_connection()
+            try:
+                with conn.cursor() as cursor:
+                    cursor.execute("""
+                        SELECT details, created_at FROM audit_logs 
+                        WHERE action = 'PRESCRIPTION_EMAILED' AND target_id = %s
+                        ORDER BY created_at DESC LIMIT 1;
+                    """, (req.patient_id,))
+                    last_log = cursor.fetchone()
+                    if last_log:
+                        last_time = last_log.get("created_at")
+                        last_det = (last_log.get("details") or "").lower()
+                        if last_time and (datetime.utcnow() - last_time) < timedelta(hours=24):
+                            if recipient in last_det and req.diagnosis.lower() in last_det:
+                                raise HTTPException(
+                                    status_code=409,
+                                    detail=f"An identical prescription was already emailed to {recipient} on {last_time.strftime('%b %d, %H:%M UTC')}. If you intentionally need to re-send, check 'Resend identical copy anyway'."
+                                )
+            finally:
+                conn.close()
+        except HTTPException:
+            raise
+        except Exception as dup_err:
+            print(f"[WARN] Could not check duplicate email guard: {dup_err}")
+
     success, message = dispatch_prescription_email(req)
+
+    if not success:
+        raise HTTPException(
+            status_code=502 if ("SMTP" in message or "Authentication" in message) else 400,
+            detail=message,
+        )
 
     # Record Audit Log into MySQL if database is connected
     try:
@@ -1464,13 +1506,27 @@ def get_animal_verifier():
         import numpy as np
         _animal_verifier = tf.keras.applications.MobileNetV3Small(weights="imagenet", include_top=True)
         # Precompute animal class boolean mask across 1,000 ImageNet categories
-        # Synsets starting with n01 (fish, birds, reptiles) and n02 (mammals: dogs, cats, rabbits)
+        # Target domestic companion species: dogs (151-268), cats (281-293), rabbits, birds, mammals/fur
         dummy = np.eye(1000, dtype=np.float32)
         decoded = tf.keras.applications.mobilenet_v3.decode_predictions(dummy, top=1)
-        _animal_mask = np.array([
-            bool(r[0][0].startswith(("n01", "n02")) or r[0][1] in {"wool", "fleece", "feather_boa"})
-            for r in decoded
-        ], dtype=bool)
+        _animal_mask = np.zeros(1000, dtype=bool)
+        NON_DOMESTIC = {
+            "nematode", "flatworm", "jellyfish", "sea_anemone", "coral", "snail", "slug",
+            "chiton", "nautilus", "crab", "lobster", "crayfish", "spider", "scorpion",
+            "tick", "centipede", "starfish", "sea_urchin", "sea_cucumber", "sponge",
+            "agaric", "mushroom", "bolete", "earthstar"
+        }
+        for i, r in enumerate(decoded):
+            name = r[0][1].lower()
+            if any(nd in name for nd in NON_DOMESTIC):
+                continue
+            is_dog = (151 <= i <= 268)
+            is_cat = (281 <= i <= 293)
+            is_rabbit = ("rabbit" in name or "hare" in name)
+            is_bird = (7 <= i <= 24) or (80 <= i <= 100) or (127 <= i <= 146) or ("cock" in name or "hen" in name or "parrot" in name or "bird" in name)
+            is_mammal = ("guinea_pig" in name or "hamster" in name or "wool" in name or "fleece" in name or "horse" in name or "pig" in name)
+            if is_dog or is_cat or is_rabbit or is_bird or is_mammal:
+                _animal_mask[i] = True
     except Exception as e:
         print(f"[WARN] Animal verifier unavailable: {e}")
         _animal_verifier = False
@@ -1558,27 +1614,30 @@ def predict_disease(req: AIPredictionRequest):
                 p_animal = float(np.sum(v_preds[0, animal_mask]))
                 
                 top_dec = tf.keras.applications.mobilenet_v3.decode_predictions(v_preds, top=5)[0]
+                top_idx = int(np.argmax(v_preds[0]))
                 top_id, top_name, top_score = top_dec[0]
-                is_top_artifact = not top_id.startswith(("n01", "n02"))
+                is_top_artifact = not bool(animal_mask[top_idx])
                 is_derm_mimic = (
                     top_name in DERM_TEXTURE_MIMICS or 
                     any(t[1] in DERM_TEXTURE_MIMICS for t in top_dec[:2])
                 )
                 is_screen_or_tech = (
                     top_name in SCREEN_OR_TECH_CLASSES or 
-                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.10 for t in top_dec)
+                    any(t[1] in SCREEN_OR_TECH_CLASSES and float(t[2]) >= 0.08 for t in top_dec)
                 )
 
                 # Calibrated Clinical Rejection Gate:
-                # Bypass rejection if VetLink disease model confirms high-confidence animal pathology (>= 0.70)
+                # Bypass rejection if VetLink disease model confirms high-confidence animal pathology (>= 0.65)
+                # Severe Scab Safeguard: if derm texture mimic (custard apple, breadfruit, apple pie)
+                # is accompanied by high-confidence Mange or Pyoderma, it's a real severe animal lesion!
                 should_reject = False
-                if is_screen_or_tech and p_animal < 0.35 and max_disease_conf < 0.70:
+                if is_screen_or_tech and max_disease_conf < 0.70:
                     should_reject = True
-                elif is_derm_mimic and p_animal < 0.10 and max_disease_conf < 0.70:
+                elif is_derm_mimic and max_disease_conf < 0.60:
                     should_reject = True
-                elif is_top_artifact and p_animal < 0.25 and max_disease_conf < 0.70:
+                elif is_top_artifact and max_disease_conf < 0.65 and p_animal < 0.35:
                     should_reject = True
-                elif p_animal < 0.16 and max_disease_conf < 0.60:
+                elif p_animal < 0.15 and max_disease_conf < 0.60:
                     should_reject = True
 
                 if should_reject:
