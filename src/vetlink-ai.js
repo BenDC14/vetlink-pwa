@@ -509,6 +509,7 @@ export function validateClinicalImageQuality(imgElement) {
     let warmOrganicPixels = 0
     let humanSkinPixels = 0
     let hairFiberEdges = 0
+    let highErythemaPixels = 0
 
     const gray = new Float32Array(size * size)
     const n = size * size
@@ -545,6 +546,12 @@ export function validateClinicalImageQuality(imgElement) {
       const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
       if (cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173 && r > g && r > b + 14 && r > 90) {
         humanSkinPixels++
+      }
+
+      // Active inflammatory erythema (lesions)
+      const ery = r - (g + b) / 2
+      if (ery > 45) {
+        highErythemaPixels++
       }
 
       // Horizontal edge count for dense animal hair shafts
@@ -663,18 +670,22 @@ export function validateClinicalImageQuality(imgElement) {
       }
     }
 
-    // 7. Human Skin & Glabrous Flesh Detection Gate:
-    // Differentiates smooth human skin (legs, arms, belly, face) from dense animal fur coat.
-    // Crucial Clinical Safeguard: Severe animal lesions with alopecia exhibit rough papules, scabs, and crusts (lapVariance >= 350.0).
-    // Only smooth, unblemished human skin (lapVariance < 350.0) is rejected as HUMAN_SKIN.
+    // 7. Human Face & Cutaneous Subject Detection Gate:
+    // Differentiates human skin / human face from animal fur and lesions.
+    // Real canine/feline lesions exhibit high inflammatory erythema (highEryPct >= 0.08) or dense fur margins.
+    // Human skin (whether smooth limbs or human faces with hair/eyes) exhibits low erythema (highEryPct < 0.06) and low animal fur density.
     const humanRatio = humanSkinPixels / n
     const furDensity = hairFiberEdges / n
-    if (humanRatio >= 0.55 && furDensity < 0.22 && lapVariance < 350.0) {
+    const highEryPct = highErythemaPixels / n
+    const isHumanSubject = (humanRatio >= 0.28 && furDensity < 0.22 && highEryPct < 0.06) ||
+                           (humanRatio >= 0.50 && furDensity < 0.25 && highEryPct < 0.08)
+
+    if (isHumanSubject) {
       return {
         isValid: false,
-        reason: 'HUMAN_SKIN',
-        title: 'Image Rejected: Human Cutaneous Subject Detected',
-        message: 'The submitted image exhibits human cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is prohibited under clinical safety protocols.',
+        reason: 'HUMAN_SUBJECT',
+        title: 'Image Rejected: Human Face / Cutaneous Subject Detected',
+        message: 'The submitted image exhibits human facial or cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is prohibited under clinical safety protocols.',
         instructions: 'Please point your camera directly at an animal patient (dog, cat, bird, or rabbit) with visible skin or fur.',
       }
     }
