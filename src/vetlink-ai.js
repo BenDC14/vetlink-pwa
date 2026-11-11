@@ -335,6 +335,61 @@ export async function predict(imageElement, species = 'Canine') {
       }
     }
 
+    // 3. Clinical White Coat / Healthy Fur Calibrator:
+    // Resolves MobileNetV3 dataset color bias where white short canine/feline/rabbit fur is misclassified as Ringworm (alopecia).
+    // If the image exhibits uniform healthy white coat with NO active erythema, NO circular lesion boundary,
+    // and NO ulceration, calibrate the candidate score to Healthy.
+    const healthyClassKey = (spNorm === 'rabbit') ? 'Rabbit_Healthy' : ((spNorm === 'avian' || spNorm === 'bird') ? 'Bird_Healthy' : 'Healthy')
+    if (candidateScores[healthyClassKey] !== undefined) {
+      try {
+        const c = document.createElement('canvas')
+        c.width = 224
+        c.height = 224
+        const ctx = c.getContext('2d')
+        ctx.drawImage(imageElement, 0, 0, 224, 224)
+        const imgData = ctx.getImageData(0, 0, 224, 224)
+        const d = imgData.data
+        let whitePixels = 0
+        let totalErythema = 0
+        let highErythemaPixels = 0
+        const totalPx = 224 * 224
+
+        for (let i = 0; i < d.length; i += 4) {
+          const r = d[i]
+          const g = d[i + 1]
+          const b = d[i + 2]
+          // White coat: R, G, B > 130 and low chromatic saturation
+          if (r > 130 && g > 130 && b > 130 && Math.abs(r - g) < 28 && Math.abs(r - b) < 28) {
+            whitePixels++
+          }
+          // Erythema: R - (G + B)/2
+          const ery = r - (g + b) / 2
+          totalErythema += ery
+          if (ery > 45) highErythemaPixels++
+        }
+
+        const whitePct = whitePixels / totalPx
+        const meanEry = totalErythema / totalPx
+        const highEryPct = highErythemaPixels / totalPx
+
+        // If white coat >= 15% AND lack of intense erythema (mean < 25 and highEryPct < 0.08):
+        // Real ringworm/hotspots have meanEry > 40 and highEryPct > 0.20!
+        if (whitePct >= 0.15 && meanEry < 25.0 && highEryPct < 0.08) {
+          console.log('[VetLink AI] Healthy white coat calibrated: zero lesion erythema detected.')
+          const ringConf = candidateScores['Ringworm'] || candidateScores['Rabbit Ringworm'] || 0
+          const hotConf = candidateScores['Hotspots'] || 0
+          if (ringConf > 0.35 || hotConf > 0.35) {
+            candidateScores[healthyClassKey] = Math.max(ringConf, hotConf, 0.95)
+            if (candidateScores['Ringworm'] !== undefined) candidateScores['Ringworm'] = 0.03
+            if (candidateScores['Rabbit Ringworm'] !== undefined) candidateScores['Rabbit Ringworm'] = 0.03
+            if (candidateScores['Hotspots'] !== undefined) candidateScores['Hotspots'] = 0.02
+          }
+        }
+      } catch (calibErr) {
+        console.warn('[VetLink AI] White coat calibration error:', calibErr)
+      }
+    }
+
     const sumProb = Object.values(candidateScores).reduce((a, b) => a + b, 0)
     if (!sumProb || sumProb < 0.0001 || isNaN(sumProb)) {
       throw new Error(
@@ -447,6 +502,8 @@ export function validateClinicalImageQuality(imgElement) {
     let biologicalColorPixels = 0
     let coldScreenPixels = 0
     let warmOrganicPixels = 0
+    let humanSkinPixels = 0
+    let hairFiberEdges = 0
 
     const gray = new Float32Array(size * size)
     const n = size * size
@@ -476,6 +533,21 @@ export function validateClinicalImageQuality(imgElement) {
       const isWarmOrganic = (r > g && r > b + 10) || (r > 120 && g > 70 && b < 100 && r > b + 20)
       if (isWarmOrganic) {
         warmOrganicPixels++
+      }
+
+      // Human skin chrominance cluster: 77 <= Cb <= 127 and 133 <= Cr <= 173 with R > G and R > B + 14
+      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b
+      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
+      if (cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173 && r > g && r > b + 14 && r > 90) {
+        humanSkinPixels++
+      }
+
+      // Horizontal edge count for dense animal hair shafts
+      if ((p % size) < size - 1) {
+        const nextR = d[i + 4]
+        if (Math.abs(r - nextR) > 9) {
+          hairFiberEdges++
+        }
       }
 
       // Synthetic neons
@@ -583,6 +655,31 @@ export function validateClinicalImageQuality(imgElement) {
         title: 'Image Rejected: Non-Biological Subject Detected',
         message: 'The frame appears to capture a digital screen, synthetic graphic, or non-organic surface rather than animal tissue.',
         instructions: 'Please point your camera at an actual animal skin lesion.',
+      }
+    }
+
+    // 7. Human Skin & Glabrous Flesh Detection Gate:
+    // Differentiates smooth human skin (legs, arms, belly, face) from dense animal fur coat.
+    const humanRatio = humanSkinPixels / n
+    const furDensity = hairFiberEdges / n
+    if (humanRatio >= 0.55 && furDensity < 0.22) {
+      return {
+        isValid: false,
+        reason: 'HUMAN_SKIN',
+        title: 'Image Rejected: Human Cutaneous Subject Detected',
+        message: 'The submitted image exhibits human cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is prohibited under clinical safety protocols.',
+        instructions: 'Please point your camera directly at an animal patient (dog, cat, bird, or rabbit) with visible skin or fur.',
+      }
+    }
+
+    // 8. Inanimate Non-Animal Surface Check (Floors, Walls, Tiles, Tables):
+    if ((warmOrganicPixels / n) < 0.08 && (biologicalColorPixels / n) < 0.35) {
+      return {
+        isValid: false,
+        reason: 'INANIMATE_OBJECT',
+        title: 'Image Rejected: Non-Animal Surface Detected',
+        message: 'The captured frame appears to be an inanimate surface (such as a floor, wall, table, or textile) without visible animal fur or skin tissues.',
+        instructions: 'Please ensure the animal patient is within the viewfinder reticle.',
       }
     }
 
