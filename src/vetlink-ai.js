@@ -665,9 +665,11 @@ export function validateClinicalImageQuality(imgElement) {
 
     // 7. Human Skin & Glabrous Flesh Detection Gate:
     // Differentiates smooth human skin (legs, arms, belly, face) from dense animal fur coat.
+    // Crucial Clinical Safeguard: Severe animal lesions with alopecia exhibit rough papules, scabs, and crusts (lapVariance >= 350.0).
+    // Only smooth, unblemished human skin (lapVariance < 350.0) is rejected as HUMAN_SKIN.
     const humanRatio = humanSkinPixels / n
     const furDensity = hairFiberEdges / n
-    if (humanRatio >= 0.55 && furDensity < 0.22) {
+    if (humanRatio >= 0.55 && furDensity < 0.22 && lapVariance < 350.0) {
       return {
         isValid: false,
         reason: 'HUMAN_SKIN',
