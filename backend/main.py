@@ -1850,6 +1850,47 @@ def predict_disease(req: AIPredictionRequest):
                     filtered = cand_filtered
                     break
 
+        # 2b. Human Skin Rejection Gate
+        r_chan = img_arr[:, :, 0]
+        g_chan = img_arr[:, :, 1]
+        b_chan = img_arr[:, :, 2]
+        cb = 128 - 0.168736 * r_chan - 0.331264 * g_chan + 0.5 * b_chan
+        cr = 128 + 0.5 * r_chan - 0.418688 * g_chan - 0.081312 * b_chan
+        is_skin = (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173) & (r_chan > g_chan) & (r_chan > b_chan + 14) & (r_chan > 90)
+        dx = np.abs(r_chan[:, 1:] - r_chan[:, :-1])
+        fur_density = float(np.mean(dx > 9))
+        human_ratio = float(np.mean(is_skin))
+
+        if human_ratio >= 0.55 and fur_density < 0.22:
+            return {
+                "rejected": True,
+                "reason": "HUMAN_SKIN",
+                "detected": "Human Skin",
+                "message": "The submitted image exhibits human cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is strictly prohibited under clinical safety protocols."
+            }
+
+        # 2c. Clinical White Coat / Healthy Fur Calibrator
+        # Resolves MobileNetV3 dataset color bias where white short animal fur is misclassified as Ringworm (alopecia).
+        healthy_key = "Rabbit_Healthy" if sp_key == "rabbit" else ("Bird_Healthy" if sp_key in ["avian", "bird"] else "Healthy")
+        if healthy_key in filtered:
+            is_white = (r_chan > 130) & (g_chan > 130) & (b_chan > 130) & (np.abs(r_chan - g_chan) < 28) & (np.abs(r_chan - b_chan) < 28)
+            ery = r_chan - (g_chan + b_chan) / 2.0
+            white_pct = float(np.mean(is_white))
+            mean_ery = float(np.mean(ery))
+            high_ery_pct = float(np.mean(ery > 45))
+
+            if white_pct >= 0.15 and mean_ery < 25.0 and high_ery_pct < 0.08:
+                ring_conf = filtered.get("Ringworm", 0.0) or filtered.get("Rabbit Ringworm", 0.0)
+                hot_conf = filtered.get("Hotspots", 0.0)
+                if ring_conf > 0.35 or hot_conf > 0.35:
+                    filtered[healthy_key] = max(ring_conf, hot_conf, 0.95)
+                    if "Ringworm" in filtered:
+                        filtered["Ringworm"] = 0.03
+                    if "Rabbit Ringworm" in filtered:
+                        filtered["Rabbit Ringworm"] = 0.03
+                    if "Hotspots" in filtered:
+                        filtered["Hotspots"] = 0.02
+
         tot = sum(filtered.values()) or 1.0
         normalized = sorted([(lbl, filtered[lbl] / tot) for lbl in allowed], key=lambda x: x[1], reverse=True)
         top_label, top_conf = normalized[0]
