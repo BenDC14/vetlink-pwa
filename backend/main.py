@@ -1892,11 +1892,10 @@ def predict_disease(req: AIPredictionRequest):
 
             if mean_ery < 22.0 and high_ery_pct < 0.05:
                 max_disease = max([v for k, v in filtered.items() if "Healthy" not in k] or [0.0])
-                if max_disease > 0.30:
-                    filtered[healthy_key] = max(max_disease, 0.95)
-                    for k in list(filtered.keys()):
-                        if "Healthy" not in k:
-                            filtered[k] = 0.02
+                filtered[healthy_key] = max(max_disease, 0.95)
+                for k in list(filtered.keys()):
+                    if "Healthy" not in k:
+                        filtered[k] = 0.02
 
         tot = sum(filtered.values()) or 1.0
         normalized = sorted([(lbl, filtered[lbl] / tot) for lbl in allowed], key=lambda x: x[1], reverse=True)

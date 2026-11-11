@@ -380,15 +380,13 @@ export async function predict(imageElement, species = 'Canine') {
             .map(([, v]) => v)
           const maxDisease = Math.max(...diseaseScores, 0)
 
-          if (maxDisease > 0.30) {
-            console.log(`[VetLink AI] Healthy coat calibrated (${spNorm}, meanEry=${meanEry.toFixed(1)}, highEryPct=${(highEryPct * 100).toFixed(1)}%). Zero active erythema detected.`)
-            candidateScores[healthyClassKey] = Math.max(maxDisease, 0.95)
-            Object.keys(candidateScores).forEach((k) => {
-              if (k !== healthyClassKey) {
-                candidateScores[k] = 0.02
-              }
-            })
-          }
+          console.log(`[VetLink AI] Healthy coat calibrated (${spNorm}, meanEry=${meanEry.toFixed(1)}, highEryPct=${(highEryPct * 100).toFixed(1)}%). Zero active erythema detected.`)
+          candidateScores[healthyClassKey] = Math.max(maxDisease, 0.95)
+          Object.keys(candidateScores).forEach((k) => {
+            if (k !== healthyClassKey) {
+              candidateScores[k] = 0.02
+            }
+          })
         }
       } catch (calibErr) {
         console.warn('[VetLink AI] Healthy coat calibration error:', calibErr)
