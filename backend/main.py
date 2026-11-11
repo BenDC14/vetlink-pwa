@@ -1869,27 +1869,22 @@ def predict_disease(req: AIPredictionRequest):
                 "message": "The submitted image exhibits human cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is strictly prohibited under clinical safety protocols."
             }
 
-        # 2c. Clinical White Coat / Healthy Fur Calibrator
-        # Resolves MobileNetV3 dataset color bias where white short animal fur is misclassified as Ringworm (alopecia).
+        # 2c. Universal Biophysical Healthy Fur & Skin Calibrator
+        # Resolves MobileNetV3 dataset shortcut learning where close-up fur without active erythema
+        # is spuriously classified as Ringworm (white fur) or Mange (dark/black fur).
         healthy_key = "Rabbit_Healthy" if sp_key == "rabbit" else ("Bird_Healthy" if sp_key in ["avian", "bird"] else "Healthy")
         if healthy_key in filtered:
-            is_white = (r_chan > 130) & (g_chan > 130) & (b_chan > 130) & (np.abs(r_chan - g_chan) < 28) & (np.abs(r_chan - b_chan) < 28)
             ery = r_chan - (g_chan + b_chan) / 2.0
-            white_pct = float(np.mean(is_white))
             mean_ery = float(np.mean(ery))
             high_ery_pct = float(np.mean(ery > 45))
 
-            if white_pct >= 0.15 and mean_ery < 25.0 and high_ery_pct < 0.08:
-                ring_conf = filtered.get("Ringworm", 0.0) or filtered.get("Rabbit Ringworm", 0.0)
-                hot_conf = filtered.get("Hotspots", 0.0)
-                if ring_conf > 0.35 or hot_conf > 0.35:
-                    filtered[healthy_key] = max(ring_conf, hot_conf, 0.95)
-                    if "Ringworm" in filtered:
-                        filtered["Ringworm"] = 0.03
-                    if "Rabbit Ringworm" in filtered:
-                        filtered["Rabbit Ringworm"] = 0.03
-                    if "Hotspots" in filtered:
-                        filtered["Hotspots"] = 0.02
+            if mean_ery < 22.0 and high_ery_pct < 0.05:
+                max_disease = max([v for k, v in filtered.items() if "Healthy" not in k] or [0.0])
+                if max_disease > 0.30:
+                    filtered[healthy_key] = max(max_disease, 0.95)
+                    for k in list(filtered.keys()):
+                        if "Healthy" not in k:
+                            filtered[k] = 0.02
 
         tot = sum(filtered.values()) or 1.0
         normalized = sorted([(lbl, filtered[lbl] / tot) for lbl in allowed], key=lambda x: x[1], reverse=True)
