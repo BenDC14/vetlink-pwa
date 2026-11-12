@@ -609,15 +609,22 @@ def get_owner(owner_id: str, authorization: Optional[str] = Header(default=None)
 
 
 def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
-    """Generates an authentic Philippine Veterinary Medical Prescription PDF in memory formatted to A5 Prescription Pad size."""
+    """Generates an authentic Philippine Veterinary Medical Prescription PDF in memory formatted to a compact Rx Pad size."""
     buf = io.BytesIO()
+
+    # Calculate optimal compact page height to eliminate wasted blank space at bottom
+    rx_lines = max(1, len((req.prescription_text or '').split('\n')))
+    notes_lines = max(1, len((req.clinical_notes or '').split('\n')))
+    compact_height = max(380, min(595, 330 + rx_lines * 14 + notes_lines * 12))
+    compact_rx_pad = (420, compact_height)
+
     doc = SimpleDocTemplate(
         buf,
-        pagesize=A5,
+        pagesize=compact_rx_pad,
         leftMargin=24,
         rightMargin=24,
-        topMargin=20,
-        bottomMargin=20
+        topMargin=18,
+        bottomMargin=18
     )
     styles = getSampleStyleSheet()
 
