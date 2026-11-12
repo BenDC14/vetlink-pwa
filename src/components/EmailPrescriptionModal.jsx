@@ -421,6 +421,83 @@ export default function EmailPrescriptionModal({
 
   return (
     <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="email-rx-title">
+      {/* Isolated Print Stylesheet for Authentic A5 Veterinary Prescription Pad */}
+      <style>{`
+        @media print {
+          @page {
+            size: A5 portrait;
+            margin: 6mm;
+          }
+          html, body {
+            visibility: hidden !important;
+            background: #ffffff !important;
+            margin: 0 !important;
+            padding: 0 !important;
+          }
+          body * {
+            visibility: hidden !important;
+          }
+          .modal-overlay {
+            visibility: visible !important;
+            position: static !important;
+            background: transparent !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            display: block !important;
+            width: auto !important;
+            height: auto !important;
+          }
+          .modal-dialog {
+            visibility: visible !important;
+            position: static !important;
+            background: transparent !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            box-shadow: none !important;
+            max-width: 100% !important;
+            max-height: none !important;
+            display: block !important;
+            overflow: visible !important;
+          }
+          .modal-header,
+          .modal-footer,
+          .email-form-col,
+          .app-nav,
+          nav,
+          .no-print {
+            display: none !important;
+            visibility: hidden !important;
+          }
+          #vetlink-rx-paper,
+          #vetlink-rx-paper * {
+            visibility: visible !important;
+          }
+          #vetlink-rx-paper {
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
+            width: 100% !important;
+            max-width: 136mm !important;
+            margin: 0 auto !important;
+            padding: 6mm 8mm !important;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            border: 1.5px solid #0f172a !important;
+            border-radius: 6px !important;
+            box-shadow: none !important;
+            display: flex !important;
+            flex-direction: column !important;
+            font-size: 0.8rem !important;
+            line-height: 1.35 !important;
+          }
+          #vetlink-rx-paper .rx-scrollable {
+            max-height: none !important;
+            overflow: visible !important;
+            white-space: pre-wrap !important;
+          }
+        }
+      `}</style>
       <div
         className="modal-dialog"
         style={{
@@ -435,7 +512,7 @@ export default function EmailPrescriptionModal({
       >
         {/* Modal Header */}
         <header
-          className="modal-header"
+          className="modal-header no-print"
           style={{
             padding: '14px 20px',
             borderBottom: '1px solid var(--border, #cbd5e1)',
@@ -474,7 +551,7 @@ export default function EmailPrescriptionModal({
           }}
         >
           {/* Left Column: Form Inputs & Action Controls */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+          <div className="email-form-col no-print" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
             {/* Status Banners */}
             {statusMessage && (
               <div
@@ -653,30 +730,57 @@ export default function EmailPrescriptionModal({
                 {isSending ? 'Sending via Cloud...' : 'Send via Clinic Cloud Email (with Attached PDF)'}
               </button>
 
-              {/* Download Prescription PDF */}
-              <button
-                type="button"
-                className="action-btn green"
-                onClick={handleDownloadPdf}
-                disabled={isDownloadingPdf}
-                style={{
-                  minHeight: 38,
-                  padding: '8px 16px',
-                  fontSize: '0.84rem',
-                  fontWeight: 700,
-                  display: 'flex',
-                  justifyContent: 'center',
-                  alignItems: 'center',
-                  gap: 6,
-                  borderRadius: 6,
-                  background: '#059669',
-                  color: '#ffffff',
-                  border: 'none',
-                  cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
-                }}
-              >
-                {isDownloadingPdf ? 'Generating PDF...' : 'Download Official Prescription (PDF)'}
-              </button>
+              {/* Action Buttons Row: Download PDF & Print A5 Prescription Pad */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
+                <button
+                  type="button"
+                  className="action-btn green"
+                  onClick={handleDownloadPdf}
+                  disabled={isDownloadingPdf}
+                  style={{
+                    minHeight: 38,
+                    padding: '8px 10px',
+                    fontSize: '0.80rem',
+                    fontWeight: 700,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: 6,
+                    borderRadius: 6,
+                    background: '#059669',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: isDownloadingPdf ? 'not-allowed' : 'pointer',
+                  }}
+                  title="Download official A5 vector PDF file"
+                >
+                  {isDownloadingPdf ? 'Generating PDF...' : 'Download PDF (A5)'}
+                </button>
+
+                <button
+                  type="button"
+                  className="action-btn"
+                  onClick={() => window.print()}
+                  style={{
+                    minHeight: 38,
+                    padding: '8px 10px',
+                    fontSize: '0.80rem',
+                    fontWeight: 700,
+                    display: 'flex',
+                    justifyContent: 'center',
+                    alignItems: 'center',
+                    gap: 6,
+                    borderRadius: 6,
+                    background: '#0284c7',
+                    color: '#ffffff',
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                  title="Print authentic A5 prescription pad or Save as PDF"
+                >
+                  Print Reseta (A5 Pad)
+                </button>
+              </div>
 
               {/* Instant Gmail Web & Native Mail Fallback Row */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6 }}>
@@ -737,6 +841,8 @@ export default function EmailPrescriptionModal({
 
           {/* Right Column: Scaled Digital Prescription Preview Card (Zero Scroll) */}
           <div
+            id="vetlink-rx-paper"
+            className="vetlink-rx-paper"
             style={{
               background: '#f8fafc',
               border: '1.5px solid #0f172a',
@@ -751,6 +857,7 @@ export default function EmailPrescriptionModal({
           >
             {/* Official PDF Document Badge */}
             <div
+              className="no-print"
               style={{
                 background: '#f0fdf4',
                 border: '1px solid #86efac',
@@ -772,7 +879,7 @@ export default function EmailPrescriptionModal({
             </div>
 
             {/* Preview Card Header */}
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: 6, marginBottom: 8 }}>
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #cbd5e1', paddingBottom: 6, marginBottom: 8 }}>
               <span style={{ fontWeight: 800, fontSize: '0.72rem', letterSpacing: '0.5px', color: '#1e3a8a', textTransform: 'uppercase' }}>
                 Prescription Preview
               </span>
@@ -823,6 +930,7 @@ export default function EmailPrescriptionModal({
                 Rx DISPENSING ORDER:
               </div>
               <div
+                className="rx-scrollable"
                 style={{
                   background: '#ffffff',
                   border: '1px solid #cbd5e1',
@@ -845,6 +953,7 @@ export default function EmailPrescriptionModal({
                 Home Care & Recheck Instructions:
               </div>
               <div
+                className="rx-scrollable"
                 style={{
                   background: '#ffffff',
                   border: '1px solid #e2e8f0',
@@ -884,6 +993,7 @@ export default function EmailPrescriptionModal({
 
         {/* Modal Footer */}
         <footer
+          className="modal-footer no-print"
           style={{
             padding: '10px 18px',
             borderTop: '1px solid var(--border, #cbd5e1)',
