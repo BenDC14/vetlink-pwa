@@ -25,7 +25,7 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Pres
         <title>${docTitle}</title>
         <style>
           @page {
-            size: A5 portrait;
+            size: auto;
             margin: 6mm 8mm;
           }
           * {
@@ -47,11 +47,14 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Pres
             background: #ffffff !important;
             border: 1.5px solid #0f172a !important;
             border-radius: 6px !important;
-            padding: 6mm 8mm !important;
-            max-width: 138mm !important;
+            padding: 5mm 6mm !important;
+            width: 100% !important;
+            max-width: 160mm !important;
             margin: 0 auto !important;
-            font-size: 0.8rem !important;
+            font-size: 0.78rem !important;
             line-height: 1.35 !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .rx-scrollable {
             max-height: none !important;

@@ -322,7 +322,7 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Docu
         <title>${docTitle}</title>
         <style>
           @page {
-            size: A5 portrait;
+            size: auto;
             margin: 6mm 8mm;
           }
           * {
@@ -344,11 +344,14 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Docu
             box-shadow: none !important;
             border: 1.5px solid #0f172a !important;
             border-radius: 6px !important;
-            padding: 6mm 8mm !important;
-            max-width: 138mm !important;
+            padding: 5mm 6mm !important;
+            width: 100% !important;
+            max-width: 160mm !important;
             margin: 0 auto !important;
-            font-size: 0.8rem !important;
+            font-size: 0.78rem !important;
             line-height: 1.35 !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
           }
           .rx-scrollable {
             max-height: none !important;
@@ -1549,22 +1552,22 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
             </div>
 
             {/* Authentic White Paper Document Preview */}
-            <div ref={rxPrintCardRef} className="printable-card-target" id="treatment-rx-paper" style={{ background: '#ffffff', color: '#0f172a', padding: 28, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a' }}>
-              <div style={{ textAlign: 'center', borderBottom: '2px solid #0f172a', paddingBottom: 12, marginBottom: 16 }}>
-                <h2 style={{ margin: '0 0 4px', fontSize: '1.45rem', color: '#0f172a', letterSpacing: '0.5px' }}>
+            <div ref={rxPrintCardRef} className="printable-card-target" id="treatment-rx-paper" style={{ background: '#ffffff', color: '#0f172a', padding: 16, borderRadius: 8, boxShadow: '0 4px 20px rgba(0,0,0,0.3)', border: '2px solid #0f172a', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
+              <div style={{ textAlign: 'center', borderBottom: '2px solid #0f172a', paddingBottom: 8, marginBottom: 10 }}>
+                <h2 style={{ margin: '0 0 2px', fontSize: '1.25rem', color: '#0f172a', letterSpacing: '0.5px' }}>
                   VETLINK ANIMAL CARE CLINIC & HOSPITAL
                 </h2>
-                <p style={{ margin: '0 0 4px', fontSize: '0.85rem', color: '#334155', fontWeight: 600 }}>
+                <p style={{ margin: '0 0 2px', fontSize: '0.80rem', color: '#334155', fontWeight: 600 }}>
                   Veterinary Medical Center • Department of Clinical Dermatology
                 </p>
-                <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+                <p style={{ margin: 0, fontSize: '0.72rem', color: '#64748b' }}>
                   765 J. P. Rizal St., Conception Uno, Marikina City, Philippines, 1807 • Mobile: 0945 867 9891 • vetlink.lamuan@gmail.com
                 </p>
               </div>
 
-              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12, padding: 10, background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 6, marginBottom: 14, fontSize: '0.84rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 10, padding: '6px 10px', background: '#f8fafc', border: '1px solid #cbd5e1', borderRadius: 6, marginBottom: 8, fontSize: '0.80rem' }}>
                 <div>
-                  <strong>FOR (PATIENT):</strong> <span style={{ fontSize: '0.98rem', fontWeight: 800 }}>{patient?.name || 'Buddy'}</span><br />
+                  <strong>FOR (PATIENT):</strong> <span style={{ fontSize: '0.92rem', fontWeight: 800 }}>{patient?.name || 'Buddy'}</span><br />
                   <strong>SPECIES / BREED:</strong> {patientSpecies} • {patient?.breed || 'Aspin'}<br />
                   <strong>WEIGHT:</strong> {patient?.weight ? `${patient.weight} kg` : 'N/A'} • <strong>AGE:</strong> {patient?.age || 'N/A'}
                 </div>
@@ -1576,30 +1579,30 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 </div>
               </div>
 
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '6px 12px', background: '#f1f5f9', borderLeft: '4px solid #1e3a8a', marginBottom: 14 }}>
-                <span style={{ fontSize: '0.84rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 10px', background: '#f1f5f9', borderLeft: '4px solid #1e3a8a', marginBottom: 8 }}>
+                <span style={{ fontSize: '0.80rem' }}>
                   <strong>CLINICAL DIAGNOSIS:</strong> <u style={{ fontWeight: 800 }}>{cleanDiagnosisDisplay}</u> ({patientSpecies})
                 </span>
-                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: '#16a34a' }}>
+                <span style={{ fontSize: '0.72rem', fontWeight: 700, color: '#16a34a' }}>
                   VALIDATED CLINICAL PRESCRIPTION
                 </span>
               </div>
 
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
-                  <span style={{ fontFamily: 'Georgia, serif', fontSize: '2rem', fontWeight: 900, color: '#1e3a8a', lineHeight: 1 }}>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 4 }}>
+                  <span style={{ fontFamily: 'Georgia, serif', fontSize: '1.4rem', fontWeight: 900, color: '#1e3a8a', lineHeight: 1 }}>
                     ℞
                   </span>
-                  <span style={{ fontWeight: 800, fontSize: '0.92rem', color: '#0f172a' }}>
+                  <span style={{ fontWeight: 800, fontSize: '0.84rem', color: '#0f172a' }}>
                     MEDICATION & DOSAGE DISPENSING ORDER
                   </span>
                 </div>
                 <div style={{
-                  padding: 12,
+                  padding: '8px 10px',
                   border: '1.5px solid #0f172a',
                   borderRadius: 6,
-                  fontSize: '0.9rem',
-                  lineHeight: 1.6,
+                  fontSize: '0.82rem',
+                  lineHeight: 1.4,
                   whiteSpace: 'pre-wrap',
                   fontFamily: 'Consolas, "Courier New", monospace',
                   background: '#fafafa',
@@ -1609,24 +1612,24 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 </div>
               </div>
 
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontWeight: 800, fontSize: '0.84rem', color: '#0f172a', marginBottom: 4, textTransform: 'uppercase' }}>
+              <div style={{ marginBottom: 8 }}>
+                <div style={{ fontWeight: 800, fontSize: '0.80rem', color: '#0f172a', marginBottom: 3, textTransform: 'uppercase' }}>
                   CLINICAL CARE, HOME ADMINISTRATION & RECHECK INSTRUCTIONS:
                 </div>
-                <div style={{ padding: 10, border: '1px solid #cbd5e1', borderRadius: 6, fontSize: '0.82rem', lineHeight: 1.5, background: '#ffffff', color: '#334155' }}>
+                <div style={{ padding: '6px 10px', border: '1px solid #cbd5e1', borderRadius: 6, fontSize: '0.78rem', lineHeight: 1.35, background: '#ffffff', color: '#334155' }}>
                   {clinicalNotes}
                 </div>
               </div>
 
-              <div style={{ marginTop: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 12, borderTop: '1px solid #cbd5e1' }}>
-                <div style={{ fontSize: '0.72rem', color: '#64748b', maxWidth: 360, lineHeight: 1.4 }}>
+              <div style={{ marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', paddingTop: 8, borderTop: '1px solid #cbd5e1', breakInside: 'avoid', pageBreakInside: 'avoid' }}>
+                <div style={{ fontSize: '0.68rem', color: '#64748b', maxWidth: 360, lineHeight: 1.3 }}>
                   Notice: Official prescription issued under Republic Act 9268. Valid for 30 days from date of examination. Substitution requires attending veterinarian authorization.
                 </div>
                 <div style={{ textAlign: 'center', width: 210 }}>
-                  <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: 24 }}></div>
-                  <strong style={{ fontSize: '0.88rem' }}>{doctorName}</strong><br />
-                  {hasPrc && (<><span style={{ fontSize: '0.75rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
-                  {hasPtr && (<span style={{ fontSize: '0.75rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
+                  <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: 20 }}></div>
+                  <strong style={{ fontSize: '0.84rem' }}>{doctorName}</strong><br />
+                  {hasPrc && (<><span style={{ fontSize: '0.72rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
+                  {hasPtr && (<span style={{ fontSize: '0.72rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
                 </div>
               </div>
             </div>
