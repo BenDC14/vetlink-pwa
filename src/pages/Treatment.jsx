@@ -322,8 +322,8 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Docu
         <title>${docTitle}</title>
         <style>
           @page {
-            size: A4 portrait;
-            margin: 14mm 16mm;
+            size: A5 portrait;
+            margin: 6mm 8mm;
           }
           * {
             box-sizing: border-box;
@@ -336,6 +336,24 @@ function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Docu
             font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
+          }
+          .no-print {
+            display: none !important;
+          }
+          .printable-card-target, #treatment-rx-paper, #treatment-lab-paper {
+            box-shadow: none !important;
+            border: 1.5px solid #0f172a !important;
+            border-radius: 6px !important;
+            padding: 6mm 8mm !important;
+            max-width: 138mm !important;
+            margin: 0 auto !important;
+            font-size: 0.8rem !important;
+            line-height: 1.35 !important;
+          }
+          .rx-scrollable {
+            max-height: none !important;
+            overflow: visible !important;
+            white-space: pre-wrap !important;
           }
         </style>
       </head>
@@ -656,7 +674,12 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
     } catch {
       // Proceed to print even if offline storage had minor error
     }
-    window.print()
+    const cardEl = rxPrintCardRef.current || document.getElementById('treatment-rx-paper')
+    if (cardEl) {
+      printElementViaIframe(cardEl.outerHTML, `Prescription_${patient?.name || 'Patient'}_${cleanRxId}`)
+    } else {
+      window.print()
+    }
   }
 
   const handlePrintLabSlip = async () => {
@@ -665,7 +688,12 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
     } catch {
       // Proceed to print
     }
-    window.print()
+    const cardEl = labSlipPrintCardRef.current || document.getElementById('treatment-lab-paper')
+    if (cardEl) {
+      printElementViaIframe(cardEl.outerHTML, `Lab_Order_${patient?.name || 'Patient'}_${cleanRxId}`)
+    } else {
+      window.print()
+    }
   }
 
   const cleanDiagnosisDisplay = secondaryDiagnosis
@@ -1312,11 +1340,12 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
         {/* ── Action Buttons ──────────────────────────────────── */}
         <div className="treatment-footer no-print" style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between', marginTop: 24, paddingTop: 16, borderTop: '1px solid var(--border, #cbd5e1)' }}>
           <button
-            className="secondary-btn"
             type="button"
             onClick={onBack}
             style={{
               height: 40,
+              width: 'auto',
+              flex: '0 0 auto',
               padding: '8px 16px',
               fontSize: '0.85rem',
               fontWeight: 700,
@@ -1324,27 +1353,34 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               alignItems: 'center',
               gap: 6,
               borderRadius: 6,
+              border: '1px solid #cbd5e1',
+              background: '#f8fafc',
+              color: '#334155',
+              cursor: 'pointer',
             }}
           >
             ← Back to Patient Records
           </button>
-          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'nowrap', alignItems: 'center' }}>
             {isLibraryMode && isVetOrAdmin && !isAwaitingLab && (
               <button
                 type="button"
-                className="secondary-btn"
                 onClick={handleSaveClinicSOP}
                 style={{
                   height: 40,
+                  width: 'auto',
+                  flex: '0 0 auto',
                   padding: '8px 16px',
                   fontSize: '0.85rem',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 6,
                   fontWeight: 700,
-                  borderColor: '#0d9488',
+                  border: '1px solid #0d9488',
+                  background: '#f0fdfa',
                   color: '#0f766e',
                   borderRadius: 6,
+                  cursor: 'pointer',
                 }}
               >
                 Save as Clinic SOP
@@ -1352,7 +1388,6 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
             )}
             <button
               type="button"
-              className="secondary-btn"
               onClick={() => {
                 if (isAwaitingLab) {
                   setShowLabSlipPreviewModal(true)
@@ -1362,6 +1397,8 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               }}
               style={{
                 height: 40,
+                width: 'auto',
+                flex: '0 0 auto',
                 padding: '8px 18px',
                 fontSize: '0.85rem',
                 display: 'inline-flex',
@@ -1369,9 +1406,10 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 gap: 6,
                 fontWeight: 700,
                 color: '#1e3a8a',
-                borderColor: '#93c5fd',
+                border: '1px solid #93c5fd',
                 background: '#eff6ff',
                 borderRadius: 6,
+                cursor: 'pointer',
               }}
             >
               {isAwaitingLab ? 'View Laboratory Requisition Slip' : 'Preview & Print Prescription (Rx)'}
@@ -1379,18 +1417,24 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
             {!isLibraryMode && (
               <button
                 type="button"
-                className="action-btn blue"
                 onClick={handleSaveTreatmentPlan}
                 disabled={isSaving}
                 style={{
                   height: 40,
-                  padding: '8px 20px',
+                  width: 'auto',
+                  flex: '0 0 auto',
+                  padding: '8px 22px',
                   fontSize: '0.85rem',
                   display: 'inline-flex',
                   alignItems: 'center',
                   gap: 6,
                   fontWeight: 800,
                   borderRadius: 6,
+                  background: '#0d9488',
+                  color: '#ffffff',
+                  border: 'none',
+                  cursor: isSaving ? 'not-allowed' : 'pointer',
+                  boxShadow: '0 2px 8px rgba(13, 148, 136, 0.3)',
                 }}
               >
                 {isSaving ? 'Saving...' : 'Save & Finalize Treatment Plan'}
@@ -1487,9 +1531,9 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
 
       {/* ── Prescription Preview Modal (Option B - In-App Preview) ── */}
       {showRxPreviewModal && (
-        <div className="modal-overlay no-print" role="dialog" aria-modal="true" style={{ zIndex: 1000 }}>
+        <div className="modal-overlay" role="dialog" aria-modal="true" style={{ zIndex: 1000 }}>
           <div className="modal-dialog" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto', background: '#0f172a', padding: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, color: '#f8fafc' }}>
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, color: '#f8fafc' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#38bdf8' }}>Official Prescription Preview</h3>
                 <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>Review the document before generating physical printout or saving PDF</p>
@@ -1587,21 +1631,23 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 12, marginTop: 16 }}>
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
               <button
                 type="button"
                 onClick={() => setShowRxPreviewModal(false)}
                 style={{
-                  height: 42,
-                  padding: '8px 16px',
+                  height: 40,
+                  width: 'auto',
+                  flex: '0 0 auto',
+                  padding: '8px 20px',
                   background: '#334155',
                   color: '#f8fafc',
                   border: '1px solid #475569',
                   borderRadius: 6,
                   cursor: 'pointer',
                   fontWeight: 700,
-                  fontSize: '0.88rem',
-                  display: 'flex',
+                  fontSize: '0.86rem',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -1612,16 +1658,18 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 type="button"
                 onClick={handlePrintRx}
                 style={{
-                  height: 42,
-                  padding: '8px 20px',
+                  height: 40,
+                  width: 'auto',
+                  flex: '0 0 auto',
+                  padding: '8px 24px',
                   background: '#0d9488',
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: 6,
                   cursor: 'pointer',
                   fontWeight: 800,
-                  fontSize: '0.90rem',
-                  display: 'flex',
+                  fontSize: '0.88rem',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   boxShadow: '0 2px 8px rgba(13, 148, 136, 0.4)',
@@ -1636,9 +1684,9 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
 
       {/* ── Laboratory Slip Preview Modal (Option B - In-App Preview) ── */}
       {showLabSlipPreviewModal && (
-        <div className="modal-overlay no-print" role="dialog" aria-modal="true" style={{ zIndex: 1000 }}>
+        <div className="modal-overlay" role="dialog" aria-modal="true" style={{ zIndex: 1000 }}>
           <div className="modal-dialog" style={{ maxWidth: 760, maxHeight: '92vh', overflowY: 'auto', background: '#0f172a', padding: 20 }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, color: '#f8fafc' }}>
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14, color: '#f8fafc' }}>
               <div>
                 <h3 style={{ margin: 0, fontSize: '1.1rem', fontWeight: 800, color: '#f59e0b' }}>Official Laboratory Requisition Order Preview</h3>
                 <p style={{ margin: '2px 0 0', fontSize: '0.78rem', color: '#94a3b8' }}>Review requisition specifications before printing laboratory order slip</p>
@@ -1721,21 +1769,23 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.6fr', gap: 12, marginTop: 16 }}>
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 16 }}>
               <button
                 type="button"
                 onClick={() => setShowLabSlipPreviewModal(false)}
                 style={{
-                  height: 42,
-                  padding: '8px 16px',
+                  height: 40,
+                  width: 'auto',
+                  flex: '0 0 auto',
+                  padding: '8px 20px',
                   background: '#334155',
                   color: '#f8fafc',
                   border: '1px solid #475569',
                   borderRadius: 6,
                   cursor: 'pointer',
                   fontWeight: 700,
-                  fontSize: '0.88rem',
-                  display: 'flex',
+                  fontSize: '0.86rem',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                 }}
@@ -1746,16 +1796,18 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 type="button"
                 onClick={handlePrintLabSlip}
                 style={{
-                  height: 42,
-                  padding: '8px 20px',
+                  height: 40,
+                  width: 'auto',
+                  flex: '0 0 auto',
+                  padding: '8px 24px',
                   background: '#d97706',
                   color: '#ffffff',
                   border: 'none',
                   borderRadius: 6,
                   cursor: 'pointer',
                   fontWeight: 800,
-                  fontSize: '0.90rem',
-                  display: 'flex',
+                  fontSize: '0.88rem',
+                  display: 'inline-flex',
                   alignItems: 'center',
                   justifyContent: 'center',
                   boxShadow: '0 2px 8px rgba(217, 119, 6, 0.4)',

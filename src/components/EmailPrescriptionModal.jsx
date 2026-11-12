@@ -1,6 +1,90 @@
 import { useState, useEffect } from 'react'
 import { updatePatient, logAuditEvent } from '../db/database'
 
+// Isolated hidden iframe printer: Prints without triggering @media print on parent window
+function printElementViaIframe(elementHtml, docTitle = 'Official Veterinary Prescription') {
+  if (!elementHtml) return
+
+  const iframe = document.createElement('iframe')
+  iframe.style.position = 'fixed'
+  iframe.style.right = '0'
+  iframe.style.bottom = '0'
+  iframe.style.width = '0'
+  iframe.style.height = '0'
+  iframe.style.border = '0'
+  iframe.style.visibility = 'hidden'
+  document.body.appendChild(iframe)
+
+  const doc = iframe.contentWindow.document
+  doc.open()
+  doc.write(`
+    <!DOCTYPE html>
+    <html lang="en">
+      <head>
+        <meta charset="utf-8" />
+        <title>${docTitle}</title>
+        <style>
+          @page {
+            size: A5 portrait;
+            margin: 6mm 8mm;
+          }
+          * {
+            box-sizing: border-box;
+          }
+          body {
+            margin: 0;
+            padding: 0;
+            background: #ffffff !important;
+            color: #0f172a !important;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+          }
+          .no-print {
+            display: none !important;
+          }
+          #vetlink-rx-paper {
+            background: #ffffff !important;
+            border: 1.5px solid #0f172a !important;
+            border-radius: 6px !important;
+            padding: 6mm 8mm !important;
+            max-width: 138mm !important;
+            margin: 0 auto !important;
+            font-size: 0.8rem !important;
+            line-height: 1.35 !important;
+          }
+          .rx-scrollable {
+            max-height: none !important;
+            overflow: visible !important;
+            white-space: pre-wrap !important;
+          }
+        </style>
+      </head>
+      <body>
+        ${elementHtml}
+      </body>
+    </html>
+  `)
+  doc.close()
+
+  iframe.contentWindow.focus()
+  setTimeout(() => {
+    try {
+      iframe.contentWindow.print()
+    } catch (err) {
+      console.error('Isolated iframe print error:', err)
+    } finally {
+      setTimeout(() => {
+        try {
+          if (document.body.contains(iframe)) {
+            document.body.removeChild(iframe)
+          }
+        } catch (e) {}
+      }, 1500)
+    }
+  }, 250)
+}
+
 export default function EmailPrescriptionModal({
   isOpen,
   onClose,
@@ -270,6 +354,15 @@ export default function EmailPrescriptionModal({
     }
   }
 
+  const handlePrintRxPad = () => {
+    const rxEl = document.getElementById('vetlink-rx-paper')
+    if (rxEl) {
+      printElementViaIframe(rxEl.outerHTML, `Prescription_${patientName.replace(/\s+/g, '_')}_${cleanRxId}`)
+    } else {
+      window.print()
+    }
+  }
+
   // Option 2: Download Official Prescription PDF
   const handleDownloadPdf = async () => {
     setIsDownloadingPdf(true)
@@ -316,7 +409,7 @@ export default function EmailPrescriptionModal({
     } catch (err) {
       console.warn('Backend PDF generation error, using printable window:', err)
       setStatusMessage('PDF download initiated via local print preview.')
-      window.print()
+      handlePrintRxPad()
     } finally {
       setIsDownloadingPdf(false)
     }
@@ -759,10 +852,11 @@ export default function EmailPrescriptionModal({
 
                 <button
                   type="button"
-                  className="action-btn"
-                  onClick={() => window.print()}
+                  onClick={handlePrintRxPad}
                   style={{
                     minHeight: 38,
+                    width: 'auto',
+                    flex: 1,
                     padding: '8px 10px',
                     fontSize: '0.80rem',
                     fontWeight: 700,
