@@ -27,7 +27,17 @@ export default defineConfig({
       devOptions: {
         enabled: true,
       },
-      includeAssets: ['favicon.svg', 'icon-192.png', 'icon-512.png', 'icons.svg', 'models/*', 'wasm/*'],
+      includeAssets: [
+        'favicon.ico',
+        'favicon.png',
+        'favicon-32x32.png',
+        'apple-touch-icon.png',
+        'icon-192.png',
+        'icon-512.png',
+        'icon-maskable-512.png',
+        'models/*',
+        'wasm/*',
+      ],
       manifest: {
         name: "VetLink Animal Skin Disease Support",
         short_name: "VetLink",
@@ -40,6 +50,12 @@ export default defineConfig({
         scope: "/",
         icons: [
           {
+            src: "/favicon-32x32.png",
+            sizes: "32x32",
+            type: "image/png",
+            purpose: "any",
+          },
+          {
             src: "/icon-192.png",
             sizes: "192x192",
             type: "image/png",
@@ -49,7 +65,13 @@ export default defineConfig({
             src: "/icon-512.png",
             sizes: "512x512",
             type: "image/png",
-            purpose: "any maskable",
+            purpose: "any",
+          },
+          {
+            src: "/icon-maskable-512.png",
+            sizes: "512x512",
+            type: "image/png",
+            purpose: "maskable",
           },
         ],
       },
