@@ -392,9 +392,14 @@ export default function EmailPrescriptionModal({
     }
 
     try {
+      const headers = { 'Content-Type': 'application/json' }
+      if (authToken) {
+        headers['Authorization'] = `Bearer ${authToken}`
+      }
+
       const res = await fetch(`${apiBaseUrl}/api/prescriptions/pdf`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify(payload),
       })
 

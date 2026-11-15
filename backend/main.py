@@ -34,10 +34,25 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Enable CORS for local Vite dev server and PWA devices
+# Configure Allowed CORS Origins (supports local development, custom LAN/Wi-Fi IPs, and production Vercel domains)
+raw_origins = os.getenv("ALLOWED_ORIGINS", "")
+if raw_origins.strip():
+    allowed_origins = [origin.strip() for origin in raw_origins.split(",") if origin.strip()]
+else:
+    allowed_origins = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://localhost:4173",
+    ]
+
+# Matches any vercel.app deployment and standard local Wi-Fi / LAN IP addresses
+cors_regex = r"^(https:\/\/.*\.vercel\.app|http:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+)(:\d+)?)$"
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins for local Wi-Fi / tablet testing
+    allow_origins=allowed_origins,
+    allow_origin_regex=cors_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -182,9 +197,8 @@ def root():
 
 @app.get("/api/health")
 def health_check():
-    """Verifies connection to XAMPP MySQL and returns record statistics."""
+    """Verifies connection to MySQL and returns service health status."""
     try:
-        db_info = test_connection()
         conn = get_connection()
         with conn.cursor() as cursor:
             cursor.execute("SELECT COUNT(*) AS total FROM users;")
@@ -195,7 +209,8 @@ def health_check():
 
         return {
             "status": "healthy",
-            "database": db_info,
+            "service": "VetLink Cloud Sync API",
+            "database": "connected",
             "counts": {
                 "users": users_count,
                 "patients": patients_count,
@@ -961,8 +976,9 @@ Please find the official printable PDF prescription attached to this email.
 
 
 @app.post("/api/prescriptions/pdf")
-def download_prescription_pdf(req: EmailPrescriptionRequest):
+def download_prescription_pdf(req: EmailPrescriptionRequest, authorization: Optional[str] = Header(default=None)):
     """Generates and returns an official veterinary prescription PDF file for immediate download."""
+    get_current_user_from_header(authorization)
     pdf_bytes = generate_prescription_pdf_bytes(req)
     clean_pname = (req.patient_name or "Patient").replace(" ", "_").replace("/", "_")
     clean_rxid = (req.rx_id or "Official").replace(" ", "_").replace("/", "_")
@@ -977,12 +993,7 @@ def download_prescription_pdf(req: EmailPrescriptionRequest):
 @app.post("/api/prescriptions/email")
 def send_prescription_email(req: EmailPrescriptionRequest, authorization: Optional[str] = Header(default=None)):
     """Dispatches official prescription to pet owner's email address and logs audit trail."""
-    current_user = None
-    if authorization and authorization.startswith("Bearer "):
-        try:
-            current_user = get_current_user_from_header(authorization)
-        except Exception:
-            pass
+    current_user = get_current_user_from_header(authorization)
 
     recipient = req.recipient_email.strip().lower()
     if not recipient or "@" not in recipient or "." not in recipient:
@@ -1554,8 +1565,9 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
+            user_cols = "id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, created_at, updated_at"
             if since:
-                cursor.execute("SELECT * FROM users WHERE updated_at > %s;", (since,))
+                cursor.execute(f"SELECT {user_cols} FROM users WHERE updated_at > %s;", (since,))
                 users = cursor.fetchall()
                 cursor.execute("SELECT * FROM owners WHERE updated_at > %s;", (since,))
                 owners = cursor.fetchall()
@@ -1568,7 +1580,7 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
                 cursor.execute("SELECT * FROM audit_logs WHERE created_at > %s ORDER BY created_at DESC LIMIT 500;", (since,))
                 audit_logs = cursor.fetchall()
             else:
-                cursor.execute("SELECT * FROM users;")
+                cursor.execute(f"SELECT {user_cols} FROM users;")
                 users = cursor.fetchall()
                 cursor.execute("SELECT * FROM owners;")
                 owners = cursor.fetchall()
