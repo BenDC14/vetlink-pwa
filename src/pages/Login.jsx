@@ -18,7 +18,7 @@ function EyeOffIcon() {
   )
 }
 
-export default function Login({ email, password, setEmail, setPassword, onLogin, onChangePassword, onOfflineDemo }) {
+export default function Login({ email, password, setEmail, setPassword, onLogin, onChangePassword }) {
   const [requiresPasswordChange, setRequiresPasswordChange] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
@@ -103,33 +103,6 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
             <button className="primary-btn" type="submit" disabled={isSubmitting}>
               {isSubmitting ? 'Signing in...' : 'Sign in'}
             </button>
-            {onOfflineDemo && (
-              <div className="login-offline-divider-wrap">
-                <div className="login-divider">
-                  <span>or offline demo</span>
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button
-                    type="button"
-                    className="offline-demo-btn"
-                    style={{ flex: 1, justifyContent: 'center' }}
-                    onClick={() => onOfflineDemo('Clinic Admin')}
-                    title="Explore with local IndexedDB records as Clinic Admin"
-                  >
-                    Admin Mode
-                  </button>
-                  <button
-                    type="button"
-                    className="offline-demo-btn"
-                    style={{ flex: 1, justifyContent: 'center' }}
-                    onClick={() => onOfflineDemo('Clinic Staff')}
-                    title="Explore with local IndexedDB records as Clinic Staff"
-                  >
-                    Staff Mode
-                  </button>
-                </div>
-              </div>
-            )}
           </>
         ) : (
           <>

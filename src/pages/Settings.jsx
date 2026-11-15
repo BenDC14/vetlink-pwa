@@ -670,7 +670,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                     }}
                     onClick={onLogout}
                   >
-                    {currentUser?.isOffline ? 'Exit Demo Session' : 'Log Out'}
+                    Log Out
                   </button>
                 )}
               </div>

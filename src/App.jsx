@@ -310,19 +310,6 @@ function App() {
     }, 1200)
   }
 
-  const handleOfflineLogin = (role = 'Clinic Admin') => {
-    const isAdmin = role === 'Clinic Admin'
-    const offlineUser = {
-      id: isAdmin ? 'ST-001' : 'ST-002',
-      name: isAdmin ? 'Clinic Administrator (Demo)' : 'Clinic Staff Member (Demo)',
-      role: role,
-      email: isAdmin ? 'admin@clinic.vet' : 'staff@clinic.vet',
-      isOffline: true,
-    }
-    setCurrentUser(offlineUser)
-    setLoggedIn(true)
-  }
-
   const handleLogin = async ({ email: loginEmail, password: loginPassword }) => {
     try {
       const response = await fetch(`${API_BASE_URL}/api/auth/login`, {
@@ -343,7 +330,7 @@ function App() {
       return result
     } catch (err) {
       if (err.name === 'TypeError' || err.message?.includes('fetch') || err.message?.includes('NetworkError') || err.message?.includes('Failed to fetch')) {
-        throw new Error('Cannot connect to clinic server (Backend unreachable). Make sure the server is online or continue in Offline Demo Mode below.')
+        throw new Error('Cannot connect to clinic server (Backend unreachable). Please ensure the backend server is online and check your connection.')
       }
       throw err
     }
@@ -477,7 +464,6 @@ function App() {
           setPassword={setPassword}
           onLogin={handleLogin}
           onChangePassword={handleChangePassword}
-          onOfflineDemo={handleOfflineLogin}
         />
       ) : (
         <div className="dashboard-shell">
@@ -650,23 +636,6 @@ function App() {
                   title="Install VetLink on your device"
                 >
                   Install PWA
-                </button>
-              )}
-              {currentUser?.isOffline && (
-                <button
-                  type="button"
-                  className="action-btn secondary"
-                  style={{
-                    borderColor: '#fca5a5',
-                    color: '#dc2626',
-                    background: '#fff',
-                    marginTop: 6,
-                    fontWeight: 600,
-                  }}
-                  onClick={() => setShowLogoutConfirm(true)}
-                  title="Exit Offline Demo Mode"
-                >
-                  Exit Demo Mode
                 </button>
               )}
             </div>
@@ -891,7 +860,7 @@ function App() {
             <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="logout-confirm-title">
               <div className="modal-dialog" style={{ maxWidth: '440px' }}>
                 <header className="modal-header">
-                  <h3 id="logout-confirm-title">{currentUser?.isOffline ? 'Exit Demo Session' : 'Confirm Logout'}</h3>
+                  <h3 id="logout-confirm-title">Confirm Logout</h3>
                   <button
                     type="button"
                     className="modal-close-btn"
@@ -903,9 +872,7 @@ function App() {
                 </header>
                 <div className="modal-form">
                   <p style={{ margin: 0, fontSize: '0.96rem', color: 'var(--text-h)', fontWeight: 600 }}>
-                    {currentUser?.isOffline
-                      ? 'Exit offline demo mode and return to sign in?'
-                      : 'Are you sure you want to log out?'}
+                    Are you sure you want to log out?
                   </p>
                   <div className="modal-actions" style={{ marginTop: '8px' }}>
                     <button
@@ -923,7 +890,7 @@ function App() {
                         handleLogout()
                       }}
                     >
-                      {currentUser?.isOffline ? 'Exit Demo' : 'Log Out'}
+                      Log Out
                     </button>
                   </div>
                 </div>
