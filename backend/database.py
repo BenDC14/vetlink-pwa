@@ -89,6 +89,7 @@ def auto_initialize_schema():
                 "is_active": "ALTER TABLE users ADD COLUMN is_active BOOLEAN NOT NULL DEFAULT TRUE",
                 "prc_license": "ALTER TABLE users ADD COLUMN prc_license VARCHAR(64) NULL DEFAULT 'VET-894102'",
                 "ptr_number": "ALTER TABLE users ADD COLUMN ptr_number VARCHAR(64) NULL DEFAULT '1948201'",
+                "signature_image": "ALTER TABLE users ADD COLUMN signature_image MEDIUMTEXT NULL",
             }
             for column, statement in migrations.items():
                 if column not in user_columns:

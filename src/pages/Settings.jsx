@@ -235,6 +235,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
   const [profileEmail, setProfileEmail] = useState(currentUser?.email || currentUser?.username || 'dr.chen@clinic.vet')
   const [profilePrcLicense, setProfilePrcLicense] = useState(currentUser?.prcLicense || 'VET-894102')
   const [profilePtrNumber, setProfilePtrNumber] = useState(currentUser?.ptrNumber || '1948201')
+  const [profileSignature, setProfileSignature] = useState(currentUser?.signatureImage || currentUser?.signature_image || '')
   const [isSavingProfile, setIsSavingProfile] = useState(false)
   const [profileSuccessMsg, setProfileSuccessMsg] = useState(null)
   const [profileErrorMsg, setProfileErrorMsg] = useState(null)
@@ -264,6 +265,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
     }
     setProfilePrcLicense(currentUser?.prcLicense || 'VET-894102')
     setProfilePtrNumber(currentUser?.ptrNumber || '1948201')
+    setProfileSignature(currentUser?.signatureImage || currentUser?.signature_image || '')
   }
 
   const [isEditingClinic, setIsEditingClinic] = useState(false)
@@ -275,6 +277,71 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
   useEffect(() => {
     localStorage.setItem('vetlink_clinic_info', JSON.stringify(clinicInfo))
   }, [clinicInfo])
+
+  const handleSignatureFileChange = (e) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    if (file.size > 4 * 1024 * 1024) {
+      setProfileErrorMsg('Signature file must be under 4MB.')
+      return
+    }
+
+    const reader = new FileReader()
+    reader.onload = (event) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        let w = img.width
+        let h = img.height
+        const maxW = 320
+        const maxH = 100
+        if (w > maxW || h > maxH) {
+          const ratio = Math.min(maxW / w, maxH / h)
+          w = Math.round(w * ratio)
+          h = Math.round(h * ratio)
+        }
+        canvas.width = w
+        canvas.height = h
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, w, h)
+        const dataUrl = canvas.toDataURL('image/png')
+        setProfileSignature(dataUrl)
+        setProfileSuccessMsg('Signature uploaded! Click "Save Profile" to finalize.')
+      }
+      img.src = event.target.result
+    }
+    reader.readAsDataURL(file)
+    e.target.value = ''
+  }
+
+  const handleGenerateDefaultSignature = () => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 300
+    canvas.height = 90
+    const ctx = canvas.getContext('2d')
+    ctx.clearRect(0, 0, 300, 90)
+    ctx.font = 'italic 30px "Brush Script MT", "Segoe Script", "Dancing Script", cursive'
+    ctx.fillStyle = '#0f172a'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(profileName || 'Attending Veterinarian', 150, 40)
+
+    ctx.beginPath()
+    ctx.strokeStyle = '#0f172a'
+    ctx.lineWidth = 1.8
+    ctx.moveTo(35, 62)
+    ctx.bezierCurveTo(95, 66, 195, 54, 260, 60)
+    ctx.stroke()
+
+    const dataUrl = canvas.toDataURL('image/png')
+    setProfileSignature(dataUrl)
+    setProfileSuccessMsg('Digital e-signature generated! Click "Save Profile" to finalize.')
+  }
+
+  const handleClearSignature = () => {
+    setProfileSignature('')
+  }
 
   const handleSaveProfile = async (e) => {
     e.preventDefault()
@@ -297,6 +364,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
         name: trimmed,
         prcLicense: trimmedPrc,
         ptrNumber: trimmedPtr,
+        signatureImage: profileSignature || null,
       }
 
       // 1. Update React state in App.jsx and cached user in localStorage
@@ -315,6 +383,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
             role: currentUser.role,
             prcLicense: trimmedPrc,
             ptrNumber: trimmedPtr,
+            signatureImage: profileSignature || null,
           })
         } catch (dbErr) {
           console.warn('Could not update local staff store:', dbErr)
@@ -326,7 +395,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
             user: updatedUser,
             targetEntity: 'users',
             targetId: currentUser.id,
-            details: `Updated display name to "${trimmed}", PRC Lic: ${trimmedPrc}, PTR: ${trimmedPtr}`,
+            details: `Updated display name to "${trimmed}", PRC Lic: ${trimmedPrc}, PTR: ${trimmedPtr}, E-Sign: ${profileSignature ? 'Present' : 'None'}`,
           })
         } catch (auditErr) {
           console.warn('Could not log audit event:', auditErr)
@@ -346,6 +415,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
               name: trimmed,
               prc_license: trimmedPrc,
               ptr_number: trimmedPtr,
+              signature_image: profileSignature || '',
             }),
           })
           if (!res.ok) {
@@ -596,6 +666,98 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                     disabled={isSavingProfile}
                   />
                 </label>
+                <div style={{ gridColumn: '1 / -1', marginTop: 10 }}>
+                  <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text-h, #0f172a)', display: 'block', marginBottom: 6 }}>
+                    Official Veterinary E-Signature (Prescription Pad)
+                  </span>
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 14,
+                    padding: 12,
+                    background: 'var(--surface-subtle, #f8fafc)',
+                    border: '1px dashed var(--border, #cbd5e1)',
+                    borderRadius: 8,
+                    flexWrap: 'wrap'
+                  }}>
+                    {profileSignature ? (
+                      <div style={{
+                        background: '#ffffff',
+                        border: '1px solid #cbd5e1',
+                        borderRadius: 6,
+                        padding: '6px 14px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        minHeight: 48,
+                      }}>
+                        <img
+                          src={profileSignature}
+                          alt="Signature Preview"
+                          style={{ maxHeight: 40, maxWidth: 150, objectFit: 'contain' }}
+                        />
+                      </div>
+                    ) : (
+                      <div style={{
+                        fontSize: '0.78rem',
+                        color: 'var(--text-muted, #64748b)',
+                        fontStyle: 'italic',
+                        padding: '8px 12px',
+                        background: '#ffffff',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: 6,
+                      }}>
+                        No signature configured (Printed name line only)
+                      </div>
+                    )}
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <label
+                        className="settings-outline-btn"
+                        style={{
+                          cursor: 'pointer',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          fontSize: '0.8rem',
+                          padding: '6px 12px',
+                          margin: 0,
+                        }}
+                      >
+                        <span>📁 Upload Image</span>
+                        <input
+                          type="file"
+                          accept="image/png,image/jpeg,image/webp"
+                          style={{ display: 'none' }}
+                          onChange={handleSignatureFileChange}
+                          disabled={isSavingProfile}
+                        />
+                      </label>
+                      <button
+                        type="button"
+                        className="settings-outline-btn"
+                        style={{ fontSize: '0.8rem', padding: '6px 12px' }}
+                        onClick={handleGenerateDefaultSignature}
+                        disabled={isSavingProfile}
+                      >
+                        ✍️ Generate Script
+                      </button>
+                      {profileSignature && (
+                        <button
+                          type="button"
+                          className="settings-outline-btn"
+                          style={{ fontSize: '0.8rem', padding: '6px 12px', color: '#ef4444', borderColor: '#fca5a5' }}
+                          onClick={handleClearSignature}
+                          disabled={isSavingProfile}
+                        >
+                          ✕ Remove
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '0.75rem', color: '#64748b', display: 'block', marginTop: 4 }}>
+                    Placed automatically above your printed veterinarian name on all exported PDF and printed prescriptions.
+                  </span>
+                </div>
               </div>
               <p style={{ margin: '8px 0 16px', fontSize: '0.78rem', color: '#64748b' }}>
                 PRC License and PTR numbers are required under Republic Act 9268 for official veterinary prescription generation and digital dispatch.
@@ -609,6 +771,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                     setProfileName(currentUser?.name || '')
                     setProfilePrcLicense(currentUser?.prcLicense || 'VET-894102')
                     setProfilePtrNumber(currentUser?.ptrNumber || '1948201')
+                    setProfileSignature(currentUser?.signatureImage || currentUser?.signature_image || '')
                     setProfileErrorMsg(null)
                   }}
                   disabled={isSavingProfile}
@@ -633,6 +796,11 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                   <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 4, background: 'rgba(100, 116, 139, 0.1)', color: '#64748b', border: '1px solid rgba(100, 116, 139, 0.25)', fontWeight: 600 }}>
                     PTR: {profilePtrNumber || currentUser?.ptrNumber || '1948201'}
                   </span>
+                  {(profileSignature || currentUser?.signatureImage || currentUser?.signature_image) && (
+                    <span style={{ fontSize: '0.75rem', padding: '2px 8px', borderRadius: 4, background: 'rgba(16, 185, 129, 0.1)', color: '#059669', border: '1px solid rgba(16, 185, 129, 0.3)', fontWeight: 600 }}>
+                      ✓ E-Signature Configured
+                    </span>
+                  )}
                 </div>
               </div>
             </div>

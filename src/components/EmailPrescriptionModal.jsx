@@ -99,6 +99,7 @@ export default function EmailPrescriptionModal({
   doctorName = '',
   prcLicense,
   ptrNumber,
+  signatureImage,
   currentUser,
   authToken,
   apiBaseUrl = 'http://localhost:8000',
@@ -148,6 +149,7 @@ export default function EmailPrescriptionModal({
   })()
   const cleanPrcLicense = (prcLicense || currentUser?.prcLicense || '').trim()
   const cleanPtrNumber = ptrNumber || currentUser?.ptrNumber || ''
+  const cleanSignatureImage = signatureImage || currentUser?.signatureImage || currentUser?.signature_image || ''
   const hasPrc = Boolean(cleanPrcLicense && cleanPrcLicense !== 'VET-894102')
   const hasPtr = Boolean(cleanPtrNumber && cleanPtrNumber !== '1948201')
 
@@ -313,6 +315,7 @@ export default function EmailPrescriptionModal({
         allow_duplicate: allowDuplicate,
         prc_license: cleanPrcLicense,
         ptr_number: cleanPtrNumber,
+        signature_image: cleanSignatureImage || null,
       }
 
       const headers = { 'Content-Type': 'application/json' }
@@ -389,6 +392,7 @@ export default function EmailPrescriptionModal({
       rx_id: cleanRxId,
       prc_license: cleanPrcLicense,
       ptr_number: cleanPtrNumber,
+      signature_image: cleanSignatureImage || null,
     }
 
     try {
@@ -1080,6 +1084,15 @@ export default function EmailPrescriptionModal({
                 <div>Valid for 30 days from exam</div>
               </div>
               <div style={{ textAlign: 'right' }}>
+                {cleanSignatureImage && (
+                  <div style={{ marginBottom: 2 }}>
+                    <img
+                      src={cleanSignatureImage}
+                      alt="Veterinarian E-Signature"
+                      style={{ maxHeight: 34, maxWidth: 120, objectFit: 'contain', display: 'inline-block' }}
+                    />
+                  </div>
+                )}
                 <div style={{ fontWeight: 700, color: '#0f172a' }}>{cleanDoctor}</div>
                 {(hasPrc || hasPtr) && (
                   <div>

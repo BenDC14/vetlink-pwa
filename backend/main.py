@@ -16,7 +16,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
 from reportlab.lib.pagesizes import A5, letter
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable, Image as RLImage
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib import colors
 
@@ -101,6 +101,7 @@ class UpdateProfileRequest(BaseModel):
     name: str
     prc_license: Optional[str] = None
     ptr_number: Optional[str] = None
+    signature_image: Optional[str] = None
 
 
 class AdminCreateUserRequest(BaseModel):
@@ -156,6 +157,7 @@ class EmailPrescriptionRequest(BaseModel):
     allow_duplicate: Optional[bool] = False
     prc_license: Optional[str] = ""
     ptr_number: Optional[str] = ""
+    signature_image: Optional[str] = None
 
 
 def decode_json_value(value):
@@ -230,7 +232,7 @@ def login(request: LoginRequest):
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                "SELECT id, username, name, role, password_hash, must_change_password, is_active, prc_license, ptr_number "
+                "SELECT id, username, name, role, password_hash, must_change_password, is_active, prc_license, ptr_number, signature_image "
                 "FROM users WHERE username = %s",
                 (request.email.strip().lower(),),
             )
@@ -261,6 +263,7 @@ def login(request: LoginRequest):
                     "role": user["role"],
                     "prcLicense": user.get("prc_license") or "VET-894102",
                     "ptrNumber": user.get("ptr_number") or "1948201",
+                    "signatureImage": user.get("signature_image"),
                 },
             }
     finally:
@@ -320,6 +323,9 @@ def auth_me(authorization: Optional[str] = Header(default=None)):
         "name": user["name"],
         "role": user["role"],
         "must_change_password": bool(user["must_change_password"]),
+        "prcLicense": user.get("prc_license") or "VET-894102",
+        "ptrNumber": user.get("ptr_number") or "1948201",
+        "signatureImage": user.get("signature_image"),
     }
 
 
@@ -332,6 +338,7 @@ def update_profile(request: UpdateProfileRequest, authorization: Optional[str] =
         raise HTTPException(status_code=400, detail="Display name cannot be empty")
     prc = request.prc_license.strip() if request.prc_license else None
     ptr = request.ptr_number.strip() if request.ptr_number else None
+    sig = request.signature_image.strip() if request.signature_image else (None if request.signature_image == "" else user.get("signature_image"))
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
@@ -340,11 +347,12 @@ def update_profile(request: UpdateProfileRequest, authorization: Optional[str] =
                    SET name = %s, 
                        prc_license = COALESCE(%s, prc_license), 
                        ptr_number = COALESCE(%s, ptr_number), 
+                       signature_image = %s,
                        updated_at = %s 
                    WHERE id = %s""",
-                (name, prc, ptr, datetime.utcnow(), user["id"]),
+                (name, prc, ptr, sig, datetime.utcnow(), user["id"]),
             )
-        return {"success": True, "name": name, "prc_license": prc, "ptr_number": ptr}
+        return {"success": True, "name": name, "prc_license": prc, "ptr_number": ptr, "signature_image": sig}
     finally:
         conn.close()
 
@@ -357,7 +365,7 @@ def get_current_user_from_header(authorization: Optional[str]) -> dict:
     try:
         with conn.cursor() as cursor:
             cursor.execute(
-                """SELECT u.id, u.username, u.name, u.role, u.must_change_password, u.is_active, u.prc_license, u.ptr_number
+                """SELECT u.id, u.username, u.name, u.role, u.must_change_password, u.is_active, u.prc_license, u.ptr_number, u.signature_image
                    FROM auth_sessions s JOIN users u ON u.id = s.user_id
                    WHERE s.token_hash = %s AND s.expires_at > %s""",
                 (hash_session_token(token), datetime.utcnow()),
@@ -431,7 +439,7 @@ def get_all_users(authorization: Optional[str] = Header(default=None)):
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute("SELECT id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, created_at, updated_at FROM users ORDER BY created_at ASC;")
+            cursor.execute("SELECT id, username, name, role, prc_license, ptr_number, signature_image, device_status, sync_status, version, created_at, updated_at FROM users ORDER BY created_at ASC;")
             rows = cursor.fetchall()
             return {"users": rows, "count": len(rows)}
     finally:
@@ -748,8 +756,25 @@ def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
         sig_lines.append(f"PTR No.: {ptr_no}")
     sig_right = "<br/>".join(sig_lines)
 
+    sig_right_cell = []
+    if req.signature_image:
+        try:
+            raw_sig = req.signature_image
+            if "base64," in raw_sig:
+                raw_sig = raw_sig.split("base64,", 1)[1]
+            sig_bytes = base64.b64decode(raw_sig)
+            sig_io = io.BytesIO(sig_bytes)
+            sig_img = RLImage(sig_io, width=80, height=26)
+            sig_img.hAlign = 'RIGHT'
+            sig_right_cell.append(sig_img)
+            sig_right_cell.append(Spacer(1, 2))
+        except Exception as sig_err:
+            print(f"[WARN] Could not parse prescription signature: {sig_err}")
+
+    sig_right_cell.append(Paragraph(sig_right, ParagraphStyle('SigR', parent=sig_text, alignment=2)))
+
     sig_table = Table([
-        [Paragraph(sig_left, sig_text), Paragraph(sig_right, ParagraphStyle('SigR', parent=sig_text, alignment=2))]
+        [Paragraph(sig_left, sig_text), sig_right_cell]
     ], colWidths=[232, 140])
     sig_table.setStyle(TableStyle([
         ('LINEABOVE', (0,0), (-1,-1), 0.75, colors.HexColor('#cbd5e1')),
@@ -757,6 +782,7 @@ def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
         ('BOTTOMPADDING', (0,0), (-1,-1), 2),
         ('LEFTPADDING', (0,0), (-1,-1), 0),
         ('RIGHTPADDING', (0,0), (-1,-1), 0),
+        ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
     ]))
     story.append(sig_table)
 
@@ -1083,24 +1109,26 @@ def upsert_user(cursor, payload: dict):
     device_status = payload.get("deviceStatus") or payload.get("device_status", "Online")
     prc_license = payload.get("prcLicense") or payload.get("prc_license") or "VET-894102"
     ptr_number = payload.get("ptrNumber") or payload.get("ptr_number") or "1948201"
+    signature_image = payload.get("signatureImage") or payload.get("signature_image")
     version = payload.get("version", 1)
     now = datetime.utcnow()
 
     sql = """
-        INSERT INTO users (id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, updated_at)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
+        INSERT INTO users (id, username, name, role, prc_license, ptr_number, signature_image, device_status, sync_status, version, updated_at)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 'synced', %s, %s)
         ON DUPLICATE KEY UPDATE
             name = VALUES(name),
             username = VALUES(username),
             role = VALUES(role),
             prc_license = VALUES(prc_license),
             ptr_number = VALUES(ptr_number),
+            signature_image = COALESCE(VALUES(signature_image), signature_image),
             device_status = VALUES(device_status),
             sync_status = 'synced',
             version = VALUES(version),
             updated_at = VALUES(updated_at);
     """
-    cursor.execute(sql, (user_id, username, name, role, prc_license, ptr_number, device_status, version, now))
+    cursor.execute(sql, (user_id, username, name, role, prc_license, ptr_number, signature_image, device_status, version, now))
 
 
 def delete_user(cursor, entity_id: str):
@@ -1565,7 +1593,7 @@ def sync_pull(since: Optional[str] = Query(None, description="ISO timestamp"), a
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            user_cols = "id, username, name, role, prc_license, ptr_number, device_status, sync_status, version, created_at, updated_at"
+            user_cols = "id, username, name, role, prc_license, ptr_number, signature_image, device_status, sync_status, version, created_at, updated_at"
             if since:
                 cursor.execute(f"SELECT {user_cols} FROM users WHERE updated_at > %s;", (since,))
                 users = cursor.fetchall()

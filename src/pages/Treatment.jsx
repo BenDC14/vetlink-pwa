@@ -395,6 +395,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
   const doctorName = currentUser?.name ? (currentUser.name.startsWith('Dr.') ? currentUser.name : `Dr. ${currentUser.name}`) : (caseData?.doctorName || 'Attending Veterinarian')
   const doctorPrcLicense = (currentUser?.prcLicense || '').trim()
   const doctorPtrNumber = (currentUser?.ptrNumber || '').trim()
+  const doctorSignatureImage = currentUser?.signatureImage || currentUser?.signature_image || null
   const hasPrc = Boolean(doctorPrcLicense && doctorPrcLicense !== 'VET-894102')
   const hasPtr = Boolean(doctorPtrNumber && doctorPtrNumber !== '1948201')
 
@@ -1626,7 +1627,16 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                   Notice: Official prescription issued under Republic Act 9268. Valid for 30 days from date of examination. Substitution requires attending veterinarian authorization.
                 </div>
                 <div style={{ textAlign: 'center', width: 210 }}>
-                  <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: 20 }}></div>
+                  {doctorSignatureImage ? (
+                    <div style={{ marginBottom: 2 }}>
+                      <img
+                        src={doctorSignatureImage}
+                        alt="E-Signature"
+                        style={{ maxHeight: 32, maxWidth: 130, objectFit: 'contain', margin: '0 auto', display: 'block' }}
+                      />
+                    </div>
+                  ) : null}
+                  <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 4, height: doctorSignatureImage ? 4 : 20 }}></div>
                   <strong style={{ fontSize: '0.84rem' }}>{doctorName}</strong><br />
                   {hasPrc && (<><span style={{ fontSize: '0.72rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
                   {hasPtr && (<span style={{ fontSize: '0.72rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
@@ -1975,7 +1985,16 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 Notice: Official prescription issued under Republic Act 9268. Valid for 30 days from date of examination. Substitution requires attending veterinarian authorization.
               </div>
               <div style={{ textAlign: 'center', width: 230 }}>
-                <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 6, height: 32 }}></div>
+                {doctorSignatureImage ? (
+                  <div style={{ marginBottom: 4 }}>
+                    <img
+                      src={doctorSignatureImage}
+                      alt="E-Signature"
+                      style={{ maxHeight: 38, maxWidth: 150, objectFit: 'contain', margin: '0 auto', display: 'block' }}
+                    />
+                  </div>
+                ) : null}
+                <div style={{ borderBottom: '1px solid #0f172a', marginBottom: 6, height: doctorSignatureImage ? 6 : 32 }}></div>
                 <strong style={{ fontSize: '0.92rem' }}>{doctorName}</strong><br />
                 {hasPrc && (<><span style={{ fontSize: '0.8rem', color: '#475569' }}>PRC License No.: {doctorPrcLicense}</span><br /></>)}
                 {hasPtr && (<span style={{ fontSize: '0.8rem', color: '#475569' }}>PTR No.: {doctorPtrNumber}</span>)}
