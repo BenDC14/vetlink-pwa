@@ -1834,7 +1834,15 @@ def predict_disease(req: AIPredictionRequest):
 
         raw_bytes = base64.b64decode(img_b64)
         orig_img = Image.open(io.BytesIO(raw_bytes)).convert("RGB")
-        img_arr = np.array(orig_img.resize((224, 224)), dtype=np.float32)
+        w, h = orig_img.size
+        if w != h:
+            min_dim = min(w, h)
+            left = (w - min_dim) // 2
+            top = (h - min_dim) // 2
+            crop_sq = orig_img.crop((left, top, left + min_dim, top + min_dim))
+        else:
+            crop_sq = orig_img
+        img_arr = np.array(crop_sq.resize((224, 224)), dtype=np.float32)
 
         interpreter, labels = get_ai_model()
         inp_idx = interpreter.get_input_details()[0]["index"]

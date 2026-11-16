@@ -252,6 +252,14 @@ function preprocessImage(imageElement) {
   const tf = window.tf
   return tf.tidy(() => {
     let t = tf.browser.fromPixels(imageElement)    // [H, W, 3] in [0, 255]
+    const h = t.shape[0]
+    const w = t.shape[1]
+    if (h !== w) {
+      const minDim = Math.min(h, w)
+      const startH = Math.floor((h - minDim) / 2)
+      const startW = Math.floor((w - minDim) / 2)
+      t = t.slice([startH, startW, 0], [minDim, minDim, 3])
+    }
     t = tf.image.resizeBilinear(t, [224, 224])     // [224, 224, 3]
     t = t.toFloat()                                // float32 [0, 255]
     return t.expandDims(0)                          // [1, 224, 224, 3]
