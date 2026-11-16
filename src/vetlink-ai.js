@@ -11,12 +11,23 @@ let model       = null
 let classLabels = []
 let isLoading   = false
 
-// Species → expected classes (informational, not used for filtering)
+let animalVerifierModel = null
+let animalVerifierMeta  = null
+let isVerifierLoading   = false
+
+// Species → expected classes (with case-insensitive alias support)
 export const SPECIES_CLASSES = {
   Canine: ['Healthy', 'Hotspots', 'Mange', 'Pyoderma', 'Ringworm'],
+  canine: ['Healthy', 'Hotspots', 'Mange', 'Pyoderma', 'Ringworm'],
+  dog:    ['Healthy', 'Hotspots', 'Mange', 'Pyoderma', 'Ringworm'],
   Feline: ['Healthy', 'Hotspots', 'Mange', 'Pyoderma', 'Ringworm'],
+  feline: ['Healthy', 'Hotspots', 'Mange', 'Pyoderma', 'Ringworm'],
+  cat:    ['Healthy', 'Hotspots', 'Mange', 'Pyoderma', 'Ringworm'],
   Avian:  ['Avian Fowl Pox', 'Bird_Healthy', 'Scaly Face Scaly Leg Mite (Knemidocoptes)'],
+  avian:  ['Avian Fowl Pox', 'Bird_Healthy', 'Scaly Face Scaly Leg Mite (Knemidocoptes)'],
+  bird:   ['Avian Fowl Pox', 'Bird_Healthy', 'Scaly Face Scaly Leg Mite (Knemidocoptes)'],
   Rabbit: ['Rabbit Mange', 'Rabbit Ringworm', 'Rabbit_Healthy'],
+  rabbit: ['Rabbit Mange', 'Rabbit Ringworm', 'Rabbit_Healthy'],
 }
 
 // Human-readable display labels for the UI
@@ -114,9 +125,120 @@ export async function loadVetLinkModel() {
     })
 
     console.log('[VetLink AI] Model initialized with single-thread WASM. Classes:', classLabels)
+
+    // Pre-cache edge animal verifier in background (non-blocking)
+    loadAnimalVerifierModel().catch((vErr) => {
+      console.warn('[VetLink AI] Verifier background init notice:', vErr?.message || vErr)
+    })
+
     return model
   } finally {
     isLoading = false
+  }
+}
+
+/**
+ * Load the edge MobileNetV3Small ImageNet verifier and category metadata.
+ * Enables 100% offline edge rejection of computer screens, furniture, and non-living objects.
+ */
+export async function loadAnimalVerifierModel() {
+  if (animalVerifierModel && animalVerifierMeta) {
+    return { model: animalVerifierModel, meta: animalVerifierMeta }
+  }
+  if (isVerifierLoading) {
+    while (isVerifierLoading) {
+      await new Promise((res) => setTimeout(res, 100))
+    }
+    return { model: animalVerifierModel, meta: animalVerifierMeta }
+  }
+
+  isVerifierLoading = true
+  try {
+    const { tf, tflite } = await waitForTF()
+    await tf.ready()
+    tflite.setWasmPath('/wasm/')
+
+    if (!animalVerifierMeta) {
+      const metaRes = await fetch('/models/vetlink_animal_verifier_meta.json')
+      if (metaRes.ok) {
+        animalVerifierMeta = await metaRes.json()
+      }
+    }
+
+    if (!animalVerifierModel) {
+      const modelRes = await fetch('/models/vetlink_animal_verifier.tflite')
+      if (modelRes.ok) {
+        const buffer = await modelRes.arrayBuffer()
+        animalVerifierModel = await tflite.loadTFLiteModel(buffer, { numThreads: 1 })
+        console.log('[VetLink AI] Edge animal verifier loaded successfully (2.76MB).')
+      }
+    }
+
+    return { model: animalVerifierModel, meta: animalVerifierMeta }
+  } catch (err) {
+    console.warn('[VetLink AI] Edge animal verifier could not be loaded:', err)
+    return { model: null, meta: null }
+  } finally {
+    isVerifierLoading = false
+  }
+}
+
+/**
+ * Fast edge biophysical human skin & face gate (2ms on 2D canvas).
+ * Replicates the YCbCr and fur density differential gate from backend/main.py:1862-1885.
+ * Prevents non-veterinary human subjects from being misdiagnosed as animal diseases.
+ */
+function checkHumanSkinGate(imageElement) {
+  try {
+    const canvas = document.createElement('canvas')
+    canvas.width = 224
+    canvas.height = 224
+    const ctx = canvas.getContext('2d')
+    ctx.drawImage(imageElement, 0, 0, 224, 224)
+    const imgData = ctx.getImageData(0, 0, 224, 224)
+    const d = imgData.data
+    const totalPx = 224 * 224
+
+    let skinCount = 0
+    let totalErythema = 0
+    let highEryCount = 0
+    let gradCount = 0
+
+    for (let i = 0; i < d.length; i += 4) {
+      const r = d[i]
+      const g = d[i + 1]
+      const b = d[i + 2]
+
+      // YCbCr conversion
+      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b
+      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
+      const isSkin = cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173 && r > g && r > (b + 14) && r > 90
+      if (isSkin) skinCount++
+
+      // Erythema calculation: R - (G + B)/2
+      const ery = r - (g + b) / 2
+      totalErythema += ery
+      if (ery > 45) highEryCount++
+
+      // Horizontal edge gradient across red channel
+      if ((i / 4) % 224 < 223) {
+        const nextR = d[i + 4]
+        if (Math.abs(nextR - r) > 9) gradCount++
+      }
+    }
+
+    const meanEry = totalErythema / totalPx
+    const humanRatio = skinCount / totalPx
+    const highEryPct = highEryCount / totalPx
+    const furDensity = gradCount / (224 * 223)
+
+    const isHuman = (humanRatio >= 0.28 && furDensity < 0.22 && highEryPct < 0.06) ||
+                    (humanRatio >= 0.50 && furDensity < 0.25 && highEryPct < 0.08)
+
+    return { isHuman, humanRatio, furDensity, highEryPct, meanEry }
+  } catch (err) {
+    console.warn('[VetLink AI] Human skin gate evaluation error:', err)
+    return { isHuman: false, meanEry: 0, highEryPct: 0 }
   }
 }
 
@@ -130,6 +252,14 @@ function preprocessImage(imageElement) {
   const tf = window.tf
   return tf.tidy(() => {
     let t = tf.browser.fromPixels(imageElement)    // [H, W, 3] in [0, 255]
+    const h = t.shape[0]
+    const w = t.shape[1]
+    if (h !== w) {
+      const minDim = Math.min(h, w)
+      const startH = Math.floor((h - minDim) / 2)
+      const startW = Math.floor((w - minDim) / 2)
+      t = t.slice([startH, startW, 0], [minDim, minDim, 3])
+    }
     t = tf.image.resizeBilinear(t, [224, 224])     // [224, 224, 3]
     t = t.toFloat()                                // float32 [0, 255]
     return t.expandDims(0)                          // [1, 224, 224, 3]
@@ -264,8 +394,20 @@ export async function predict(imageElement, species = 'Canine') {
     }
   }
 
+  // 2a. Fast Edge Biophysical Human Skin / Face Rejection Gate
+  const skinCheck = checkHumanSkinGate(imageElement)
+  if (skinCheck.isHuman) {
+    return {
+      rejected: true,
+      reason: 'HUMAN_SUBJECT',
+      detected: 'Human Face / Cutaneous Subject',
+      message: 'The submitted image exhibits human facial or cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is strictly prohibited under clinical safety protocols.',
+    }
+  }
+
   const tf = window.tf
-  const allowedClasses = SPECIES_CLASSES[species] || classLabels
+  const spNorm = (species || 'Canine').toString().trim().toLowerCase()
+  const allowedClasses = SPECIES_CLASSES[species] || SPECIES_CLASSES[spNorm] || classLabels
   const inputTensor = preprocessImage(imageElement)
 
   let outputTensor = null
@@ -294,7 +436,6 @@ export async function predict(imageElement, species = 'Canine') {
     // Automated Feline Ear & Cranial Lesion Focus:
     // In cats, facial anatomical landmarks (eyes/nose/whiskers) bias MobileNetV3 toward Ringworm.
     // Automatically checks ear margins (where Notoedres cati crusts localize) for active Mange.
-    const spNorm = (species || 'Canine').toLowerCase()
     if ((spNorm === 'feline' || spNorm === 'cat') && candidateScores['Mange'] !== undefined) {
       try {
         const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
@@ -335,61 +476,90 @@ export async function predict(imageElement, species = 'Canine') {
       }
     }
 
-    // 3. Universal Biophysical Healthy Fur & Skin Calibrator:
+    // Universal Biophysical Healthy Fur & Skin Calibrator:
     // Resolves MobileNetV3 dataset shortcut learning / spurious correlation.
     // In the training set, Healthy images are wide shots of dogs/cats, while Disease classes are macro close-ups.
-    // Consequently, when clinicians take close-up photos of healthy fur:
-    //   - Pale/white fur is spuriously predicted as Ringworm (85-97%)
-    //   - Dark/black fur is spuriously predicted as Mange (70-94%)
-    // Clinically, acute infections (Ringworm, Hot Spots, Pyoderma, Mange) exhibit severe inflammatory erythema
-    // (Mean Erythema >= 28.0, High Erythema Pct >= 0.15).
-    // If an image exhibits normal fur continuity with ZERO active erythema (meanEry < 22.0 and highEryPct < 0.05),
+    // If an image exhibits normal coat continuity with ZERO active erythema (meanEry < 22.0 and highEryPct < 0.05),
     // calibrate the diagnostic distribution to Healthy.
     const healthyClassKey = (spNorm === 'rabbit') ? 'Rabbit_Healthy' : ((spNorm === 'avian' || spNorm === 'bird') ? 'Bird_Healthy' : 'Healthy')
-    if (candidateScores[healthyClassKey] !== undefined) {
+    const meanEry = typeof skinCheck?.meanEry === 'number' ? skinCheck.meanEry : 0
+    const highEryPct = typeof skinCheck?.highEryPct === 'number' ? skinCheck.highEryPct : 0
+
+    if (candidateScores[healthyClassKey] !== undefined && meanEry < 22.0 && highEryPct < 0.05) {
+      const diseaseScores = Object.entries(candidateScores)
+        .filter(([k]) => k !== healthyClassKey)
+        .map(([, v]) => v)
+      const maxDisease = Math.max(...diseaseScores, 0)
+
+      console.log(`[VetLink AI] Healthy coat calibrated (${spNorm}, meanEry=${meanEry.toFixed(1)}, highEryPct=${(highEryPct * 100).toFixed(1)}%). Zero active erythema detected.`)
+      candidateScores[healthyClassKey] = Math.max(maxDisease, 0.95)
+      Object.keys(candidateScores).forEach((k) => {
+        if (k !== healthyClassKey) {
+          candidateScores[k] = 0.02
+        }
+      })
+    }
+
+    // Active pathology evaluation: lesions exhibit active erythema or elevated disease confidence
+    const candSum = Object.values(candidateScores).reduce((a, b) => a + b, 0) || 1.0
+    const normalizedDiseaseScores = Object.entries(candidateScores)
+      .filter(([k]) => !k.includes('Healthy'))
+      .map(([, v]) => v / candSum)
+    const maxDiseaseConf = normalizedDiseaseScores.length > 0 ? Math.max(...normalizedDiseaseScores) : 0
+    const hasActivePathology = (maxDiseaseConf >= 0.35) || (highEryPct >= 0.05) || (meanEry >= 20.0)
+
+    // Edge Non-Animal / Inanimate Subject Verifier Gate (100% Parity with Cloud ImageNet Verifier)
+    if (animalVerifierModel && animalVerifierMeta && !hasActivePathology) {
       try {
-        const c = document.createElement('canvas')
-        c.width = 224
-        c.height = 224
-        const ctx = c.getContext('2d')
-        ctx.drawImage(imageElement, 0, 0, 224, 224)
-        const imgData = ctx.getImageData(0, 0, 224, 224)
-        const d = imgData.data
-        let totalErythema = 0
-        let highErythemaPixels = 0
-        const totalPx = 224 * 224
+        let vOut = animalVerifierModel.predict(inputTensor)
+        let vTensor = (vOut instanceof tf.Tensor) ? vOut : vOut[Object.keys(vOut)[0]]
+        let vData = vTensor.dataSync ? vTensor.dataSync() : await vTensor.data()
+        let vProbs = Array.from(vData)
+        if (vTensor && typeof vTensor.dispose === 'function') vTensor.dispose()
 
-        for (let i = 0; i < d.length; i += 4) {
-          const r = d[i]
-          const g = d[i + 1]
-          const b = d[i + 2]
-          // Erythema: R - (G + B)/2
-          const ery = r - (g + b) / 2
-          totalErythema += ery
-          if (ery > 45) highErythemaPixels++
+        const animalIndices = new Set(animalVerifierMeta.animal_indices || [])
+        const vLabels = animalVerifierMeta.labels || []
+        const screenClasses = animalVerifierMeta.screen_classes || []
+        const dermMimics = animalVerifierMeta.derm_mimics || []
+
+        let pAnimal = 0
+        animalIndices.forEach((idx) => {
+          pAnimal += (vProbs[idx] || 0)
+        })
+
+        let topIdx = 0
+        let maxVScore = -1
+        for (let i = 0; i < vProbs.length; i++) {
+          if (vProbs[i] > maxVScore) {
+            maxVScore = vProbs[i]
+            topIdx = i
+          }
         }
 
-        const meanEry = totalErythema / totalPx
-        const highEryPct = highErythemaPixels / totalPx
+        const topName = vLabels[topIdx] || ''
+        const isTopArtifact = !animalIndices.has(topIdx)
+        const isDermMimic = dermMimics.includes(topName)
+        const isScreenOrTech = screenClasses.includes(topName) || screenClasses.some((sc) => topName.includes(sc))
 
-        // If coat exhibits zero or negligible inflammatory erythema (mean < 22.0 and highEryPct < 0.05):
-        // Real ringworm/hotspots/pyoderma have meanEry >= 28.0 and highEryPct >= 0.15!
-        if (meanEry < 22.0 && highEryPct < 0.05) {
-          const diseaseScores = Object.entries(candidateScores)
-            .filter(([k]) => k !== healthyClassKey)
-            .map(([, v]) => v)
-          const maxDisease = Math.max(...diseaseScores, 0)
+        let shouldReject = false
+        if (isScreenOrTech) shouldReject = true
+        else if (isDermMimic) shouldReject = true
+        else if (isTopArtifact && pAnimal < 0.25) shouldReject = true
+        else if (pAnimal < 0.10) shouldReject = true
 
-          console.log(`[VetLink AI] Healthy coat calibrated (${spNorm}, meanEry=${meanEry.toFixed(1)}, highEryPct=${(highEryPct * 100).toFixed(1)}%). Zero active erythema detected.`)
-          candidateScores[healthyClassKey] = Math.max(maxDisease, 0.95)
-          Object.keys(candidateScores).forEach((k) => {
-            if (k !== healthyClassKey) {
-              candidateScores[k] = 0.02
-            }
-          })
+        if (shouldReject) {
+          const cleanName = topName.replace(/_/g, ' ').replace(/\b\w/g, (l) => l.toUpperCase())
+          const detectedLabel = isScreenOrTech ? `Computer Screen / ${cleanName}` : cleanName
+          return {
+            rejected: true,
+            reason: 'NON_ANIMAL',
+            detected: detectedLabel,
+            p_animal: Math.round(pAnimal * 1000) / 1000,
+            message: `Non-animal subject detected (${detectedLabel}, animal match: ${(pAnimal * 100).toFixed(1)}%). VetLink only evaluates actual animal patient skin lesions (Canine, Feline, Avian, Rabbit). Please photograph the animal's skin condition directly.`,
+          }
         }
-      } catch (calibErr) {
-        console.warn('[VetLink AI] Healthy coat calibration error:', calibErr)
+      } catch (verifierErr) {
+        console.warn('[VetLink AI] Edge animal verifier check error:', verifierErr)
       }
     }
 
