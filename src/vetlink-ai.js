@@ -476,29 +476,9 @@ export async function predict(imageElement, species = 'Canine') {
       }
     }
 
-    // Universal Biophysical Healthy Fur & Skin Calibrator:
-    // Resolves MobileNetV3 dataset shortcut learning / spurious correlation.
-    // In the training set, Healthy images are wide shots of dogs/cats, while Disease classes are macro close-ups.
-    // If an image exhibits normal coat continuity with ZERO active erythema (meanEry < 22.0 and highEryPct < 0.05),
-    // calibrate the diagnostic distribution to Healthy.
-    const healthyClassKey = (spNorm === 'rabbit') ? 'Rabbit_Healthy' : ((spNorm === 'avian' || spNorm === 'bird') ? 'Bird_Healthy' : 'Healthy')
+    // Biophysical Surface Telemetry (Erythema metrics for clinical telemetry)
     const meanEry = typeof skinCheck?.meanEry === 'number' ? skinCheck.meanEry : 0
     const highEryPct = typeof skinCheck?.highEryPct === 'number' ? skinCheck.highEryPct : 0
-
-    if (candidateScores[healthyClassKey] !== undefined && meanEry < 22.0 && highEryPct < 0.05) {
-      const diseaseScores = Object.entries(candidateScores)
-        .filter(([k]) => k !== healthyClassKey)
-        .map(([, v]) => v)
-      const maxDisease = Math.max(...diseaseScores, 0)
-
-      console.log(`[VetLink AI] Healthy coat calibrated (${spNorm}, meanEry=${meanEry.toFixed(1)}, highEryPct=${(highEryPct * 100).toFixed(1)}%). Zero active erythema detected.`)
-      candidateScores[healthyClassKey] = Math.max(maxDisease, 0.95)
-      Object.keys(candidateScores).forEach((k) => {
-        if (k !== healthyClassKey) {
-          candidateScores[k] = 0.02
-        }
-      })
-    }
 
     // Active pathology evaluation: lesions exhibit active erythema or elevated disease confidence
     const candSum = Object.values(candidateScores).reduce((a, b) => a + b, 0) || 1.0
