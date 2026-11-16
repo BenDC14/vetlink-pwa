@@ -17,7 +17,7 @@ os.environ["PYTHONPATH"] = f"{str(ROOT_DIR)}{os.pathsep}{current_pythonpath}" if
 env_path = Path(__file__).parent / ".env"
 load_dotenv(dotenv_path=env_path)
 
-port = int(os.getenv("API_PORT", 8000))
+port = int(os.getenv("PORT", os.getenv("API_PORT", 8000)))
 
 if __name__ == "__main__":
     print(f"Starting VetLink FastAPI Cloud Sync Server on http://localhost:{port}")
