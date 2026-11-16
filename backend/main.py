@@ -1855,7 +1855,7 @@ def get_animal_verifier():
             is_cat = (281 <= i <= 293)
             is_rabbit = ("rabbit" in name or "hare" in name)
             is_bird = (7 <= i <= 24) or (80 <= i <= 100) or (127 <= i <= 146) or ("cock" in name or "hen" in name or "parrot" in name or "bird" in name)
-            is_mammal = ("guinea_pig" in name or "hamster" in name or "wool" in name or "fleece" in name or "horse" in name or "pig" in name)
+            is_mammal = (330 <= i <= 388) or ("guinea_pig" in name or "hamster" in name or "wool" in name or "fleece" in name or "horse" in name or "pig" in name or "hog" in name)
             if is_dog or is_cat or is_rabbit or is_bird or is_mammal:
                 _animal_mask[i] = True
     except Exception as e:
@@ -1969,21 +1969,10 @@ def predict_disease(req: AIPredictionRequest):
                 "message": "The submitted image exhibits human facial or cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is strictly prohibited under clinical safety protocols."
             }
 
-        # 2c. Universal Biophysical Healthy Fur & Skin Calibrator
-        # Resolves MobileNetV3 dataset shortcut learning where close-up fur without active erythema
-        # is spuriously classified as Ringworm (white fur) or Mange (dark/black fur).
-        healthy_key = "Rabbit_Healthy" if sp_key == "rabbit" else ("Bird_Healthy" if sp_key in ["avian", "bird"] else "Healthy")
-        if healthy_key in filtered:
-            ery = r_chan - (g_chan + b_chan) / 2.0
-            mean_ery = float(np.mean(ery))
-            high_ery_pct = float(np.mean(ery > 45))
-
-            if mean_ery < 22.0 and high_ery_pct < 0.05:
-                max_disease = max([v for k, v in filtered.items() if "Healthy" not in k] or [0.0])
-                filtered[healthy_key] = max(max_disease, 0.95)
-                for k in list(filtered.keys()):
-                    if "Healthy" not in k:
-                        filtered[k] = 0.02
+        # 2c. Biophysical Surface Telemetry (Erythema metrics for clinical telemetry)
+        ery = r_chan - (g_chan + b_chan) / 2.0
+        mean_ery = float(np.mean(ery))
+        high_ery_pct = float(np.mean(ery > 45))
 
         tot = sum(filtered.values()) or 1.0
         normalized = sorted([(lbl, filtered[lbl] / tot) for lbl in allowed], key=lambda x: x[1], reverse=True)
@@ -2020,13 +2009,13 @@ def predict_disease(req: AIPredictionRequest):
                 has_active_pathology = (max_disease_conf >= 0.35) or (high_ery_pct >= 0.05) or (mean_ery >= 20.0)
 
                 should_reject = False
-                if is_screen_or_tech and not has_active_pathology:
+                if is_screen_or_tech:
                     should_reject = True
                 elif is_derm_mimic and not has_active_pathology:
                     should_reject = True
                 elif is_top_artifact and not has_active_pathology and p_animal < 0.25:
                     should_reject = True
-                elif p_animal < 0.10 and not has_active_pathology:
+                elif p_animal < 0.10 and not is_derm_mimic:
                     should_reject = True
 
                 if should_reject:
