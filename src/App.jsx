@@ -11,6 +11,7 @@ import NewPatient from './pages/NewPatient'
 import Settings from './pages/Settings'
 import Treatment from './pages/Treatment'
 import AuditLogs from './pages/AuditLogs'
+import NotificationPopover from './components/NotificationPopover'
 import { getPendingSyncQueue, performCloudSync, isSyncLocked } from './db/database'
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000'
@@ -44,6 +45,8 @@ function App() {
   const [syncBadgeClass, setSyncBadgeClass] = useState('')
   const [pendingSyncCount, setPendingSyncCount] = useState(0)
   const [lastSyncTime, setLastSyncTime] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem('vetlink_last_sync_time') : null))
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
 
   useEffect(() => {
     const isStandalone =
@@ -661,22 +664,40 @@ function App() {
                 )}</h2>
               </div>
               <div className="header-actions">
-                <button
-                  type="button"
-                  className="header-icon-btn notification-btn"
-                  title="Notifications & Alerts"
-                  onClick={() => alert(pendingSyncCount > 0 ? `${pendingSyncCount} clinical record(s) queued locally for cloud sync.` : 'All clinical records synchronized locally. No pending alerts.')}
-                >
-                  <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                  </svg>
-                  {pendingSyncCount > 0 ? (
-                    <span className="notification-dot" style={{ background: '#f59e0b' }} />
-                  ) : (
-                    <span className="notification-dot" />
-                  )}
-                </button>
+                <div className="notification-wrapper">
+                  <button
+                    type="button"
+                    className={`header-icon-btn notification-btn ${showNotifications ? 'active' : ''}`}
+                    title="Notifications & Alerts"
+                    aria-label="Notifications & Alerts"
+                    aria-expanded={showNotifications}
+                    onClick={() => setShowNotifications((prev) => !prev)}
+                  >
+                    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </svg>
+                    {notificationUnreadCount > 0 && (
+                      <span className="notification-badge-count">
+                        {notificationUnreadCount > 9 ? '9+' : notificationUnreadCount}
+                      </span>
+                    )}
+                  </button>
+                  <NotificationPopover
+                    isOpen={showNotifications}
+                    onClose={() => setShowNotifications(false)}
+                    currentUser={currentUser}
+                    pendingSyncCount={pendingSyncCount}
+                    lastSyncTime={lastSyncTime}
+                    onUnreadCountChange={setNotificationUnreadCount}
+                    onNavigate={(targetView) => {
+                      setActiveView(targetView)
+                      setShowSettings(false)
+                      setShowNewPatient(false)
+                      setTreatmentCaseData(null)
+                    }}
+                  />
+                </div>
                 <button
                   type="button"
                   className="header-icon-btn"
