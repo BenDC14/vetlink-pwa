@@ -65,6 +65,26 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
   const [successMessage, setSuccessMessage] = useState('')
   const [isSaving, setIsSaving] = useState(false)
   const [selectedSpecies, setSelectedSpecies] = useState('All')
+  const [selectedSyncStatus, setSelectedSyncStatus] = useState('All')
+  const [selectedCaseStatus, setSelectedCaseStatus] = useState('All')
+  const [isFilterOpen, setIsFilterOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const [pageSize, setPageSize] = useState(10)
+  const filterRef = useRef(null)
+
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (filterRef.current && !filterRef.current.contains(event.target)) {
+        setIsFilterOpen(false)
+      }
+    }
+    if (isFilterOpen) {
+      document.addEventListener('mousedown', handleClickOutside)
+    }
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside)
+    }
+  }, [isFilterOpen])
 
   const getSpeciesAvatar = (patient) => {
     return (patient?.name || patient?.species || 'P').charAt(0).toUpperCase()
@@ -208,8 +228,25 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
         ? pSpecies === 'rabbit' || pSpecies === 'lagomorph'
         : pSpecies === selectedSpecies.toLowerCase())
 
-    return matchesSearch && matchesSpecies
+    const matchesSync =
+      selectedSyncStatus === 'All' ||
+      (selectedSyncStatus === 'pending' ? patient.syncStatus === 'pending' : patient.syncStatus !== 'pending')
+
+    const pStatus = String(patient.status || 'Active').toLowerCase()
+    const matchesCaseStatus =
+      selectedCaseStatus === 'All' ||
+      (selectedCaseStatus === 'Active' ? (pStatus === 'active' || pStatus === 'under treatment') : pStatus === selectedCaseStatus.toLowerCase())
+
+    return matchesSearch && matchesSpecies && matchesSync && matchesCaseStatus
   })
+
+  const totalPages = Math.max(1, Math.ceil(visiblePatients.length / pageSize))
+  const paginatedPatients = visiblePatients.slice((currentPage - 1) * pageSize, currentPage * pageSize)
+
+  const activeFilterCount =
+    (selectedSpecies !== 'All' ? 1 : 0) +
+    (selectedSyncStatus !== 'All' ? 1 : 0) +
+    (selectedCaseStatus !== 'All' ? 1 : 0)
 
   const openEditPatient = (patient) => {
     setEditingPatient(patient)
@@ -709,17 +746,185 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
               </button>
             )}
           </div>
-          <button
-            type="button"
-            className="search-filter-action-btn"
-            onClick={() => setSelectedSpecies(selectedSpecies === 'All' ? 'Canine' : 'All')}
-            title="Toggle species filters"
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-            </svg>
-            <span>Filter</span>
-          </button>
+          <div ref={filterRef} style={{ position: 'relative' }}>
+            <button
+              type="button"
+              className="search-filter-action-btn"
+              onClick={() => setIsFilterOpen((prev) => !prev)}
+              title="Open Clinical Filters"
+              style={{
+                position: 'relative',
+                background: activeFilterCount > 0 ? 'rgba(13, 148, 136, 0.15)' : undefined,
+                borderColor: activeFilterCount > 0 ? '#0d9488' : undefined,
+                color: activeFilterCount > 0 ? '#0d9488' : undefined,
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
+              </svg>
+              <span>Filter</span>
+              {activeFilterCount > 0 && (
+                <span
+                  style={{
+                    background: '#0d9488',
+                    color: '#ffffff',
+                    borderRadius: '999px',
+                    padding: '1px 6px',
+                    fontSize: '0.72rem',
+                    fontWeight: 700,
+                    marginLeft: '4px',
+                  }}
+                >
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
+
+            {isFilterOpen && (
+              <div
+                className="filter-popover-menu"
+                style={{
+                  position: 'absolute',
+                  top: 'calc(100% + 8px)',
+                  right: 0,
+                  width: '280px',
+                  background: 'var(--surface, #1e293b)',
+                  border: '1px solid var(--border, #334155)',
+                  borderRadius: '12px',
+                  boxShadow: '0 10px 25px -5px rgba(0, 0, 0, 0.4), 0 8px 10px -6px rgba(0, 0, 0, 0.3)',
+                  padding: '16px',
+                  zIndex: 50,
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '14px',
+                }}
+              >
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', borderBottom: '1px solid var(--border, #334155)', paddingBottom: '8px' }}>
+                  <strong style={{ fontSize: '0.92rem', color: 'var(--text, #f8fafc)' }}>Filter Patients</strong>
+                  {activeFilterCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedSpecies('All')
+                        setSelectedSyncStatus('All')
+                        setSelectedCaseStatus('All')
+                        setCurrentPage(1)
+                      }}
+                      style={{
+                        background: 'none',
+                        border: 'none',
+                        color: '#0d9488',
+                        fontSize: '0.78rem',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        padding: '2px 4px',
+                      }}
+                    >
+                      Reset All
+                    </button>
+                  )}
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted, #94a3b8)', marginBottom: '6px' }}>
+                    SPECIES
+                  </label>
+                  <select
+                    value={selectedSpecies}
+                    onChange={(e) => {
+                      setSelectedSpecies(e.target.value)
+                      setCurrentPage(1)
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border, #334155)',
+                      background: 'var(--surface-input, #0f172a)',
+                      color: 'var(--text, #f8fafc)',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <option value="All">All Species</option>
+                    <option value="Canine">Canine</option>
+                    <option value="Feline">Feline</option>
+                    <option value="Avian">Avian</option>
+                    <option value="Rabbit">Rabbit</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted, #94a3b8)', marginBottom: '6px' }}>
+                    CLOUD SYNC STATUS
+                  </label>
+                  <select
+                    value={selectedSyncStatus}
+                    onChange={(e) => {
+                      setSelectedSyncStatus(e.target.value)
+                      setCurrentPage(1)
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border, #334155)',
+                      background: 'var(--surface-input, #0f172a)',
+                      color: 'var(--text, #f8fafc)',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <option value="All">All Records</option>
+                    <option value="synced">Synced with Cloud</option>
+                    <option value="pending">Pending Sync (Offline)</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted, #94a3b8)', marginBottom: '6px' }}>
+                    CLINICAL STATUS
+                  </label>
+                  <select
+                    value={selectedCaseStatus}
+                    onChange={(e) => {
+                      setSelectedCaseStatus(e.target.value)
+                      setCurrentPage(1)
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px 10px',
+                      borderRadius: '6px',
+                      border: '1px solid var(--border, #334155)',
+                      background: 'var(--surface-input, #0f172a)',
+                      color: 'var(--text, #f8fafc)',
+                      fontSize: '0.85rem',
+                    }}
+                  >
+                    <option value="All">All Case Statuses</option>
+                    <option value="Active">Active Cases</option>
+                    <option value="Discharged">Discharged</option>
+                  </select>
+                </div>
+
+                <div style={{ display: 'flex', justifyContent: 'flex-end', paddingTop: '6px' }}>
+                  <button
+                    type="button"
+                    className="capture-btn"
+                    onClick={() => setIsFilterOpen(false)}
+                    style={{
+                      padding: '6px 14px',
+                      fontSize: '0.82rem',
+                      fontWeight: 600,
+                      background: '#0d9488',
+                      color: '#ffffff',
+                      borderRadius: '6px',
+                    }}
+                  >
+                    Apply
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -747,9 +952,9 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
           <tbody>
             {isLoading ? (
               <tr><td colSpan="9" style={{ textAlign: 'center', padding: '32px' }}>Loading patients from local database...</td></tr>
-            ) : visiblePatients.length === 0 ? (
+            ) : paginatedPatients.length === 0 ? (
               <tr><td colSpan="9" style={{ textAlign: 'center', padding: '32px' }}>No patients found matching your search.</td></tr>
-            ) : visiblePatients.map((patient) => (
+            ) : paginatedPatients.map((patient) => (
               <tr key={patient.id}>
                 <td>
                   <div className="patient-avatar-circle" title={patient.species}>
@@ -887,6 +1092,95 @@ export default function Patients({ authToken, apiBaseUrl = 'http://localhost:800
             ))}
           </tbody>
         </table>
+
+        {/* Responsive Table Pagination Controls */}
+        {visiblePatients.length > 0 && (
+          <div
+            className="patients-pagination-bar"
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              flexWrap: 'wrap',
+              gap: '12px',
+              padding: '14px 20px',
+              borderTop: '1px solid var(--border, #334155)',
+              background: 'var(--surface-subtle, rgba(15, 23, 42, 0.4))',
+              fontSize: '0.88rem',
+              color: 'var(--text-muted, #94a3b8)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+              <span>Show</span>
+              <select
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value))
+                  setCurrentPage(1)
+                }}
+                style={{
+                  padding: '4px 8px',
+                  borderRadius: '6px',
+                  border: '1px solid var(--border, #334155)',
+                  background: 'var(--surface, #1e293b)',
+                  color: 'inherit',
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                <option value={10}>10</option>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+              </select>
+              <span>per page</span>
+              <span style={{ marginLeft: '12px', color: '#64748b' }}>
+                Showing {Math.min((currentPage - 1) * pageSize + 1, visiblePatients.length)} to {Math.min(currentPage * pageSize, visiblePatients.length)} of {visiblePatients.length} patients
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <button
+                type="button"
+                className="small-outline"
+                onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                disabled={currentPage <= 1}
+                style={{
+                  padding: '6px 12px',
+                  minHeight: '36px',
+                  borderRadius: '6px',
+                  cursor: currentPage <= 1 ? 'not-allowed' : 'pointer',
+                  opacity: currentPage <= 1 ? 0.5 : 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                Previous
+              </button>
+              <span style={{ padding: '0 8px', fontWeight: 600, color: 'var(--text, #f8fafc)' }}>
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                className="small-outline"
+                onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                disabled={currentPage >= totalPages}
+                style={{
+                  padding: '6px 12px',
+                  minHeight: '36px',
+                  borderRadius: '6px',
+                  cursor: currentPage >= totalPages ? 'not-allowed' : 'pointer',
+                  opacity: currentPage >= totalPages ? 0.5 : 1,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px',
+                }}
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       {editingPatient && (

@@ -28,6 +28,16 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState('')
 
+  const cachedUser = (() => {
+    try {
+      const str = typeof localStorage !== 'undefined' ? localStorage.getItem('vetlink_cached_user') : null
+      return str ? JSON.parse(str) : null
+    } catch {
+      return null
+    }
+  })()
+  const cachedEmail = typeof localStorage !== 'undefined' ? localStorage.getItem('vetlink_offline_verified_email') || cachedUser?.email : null
+
   const handleSubmit = async (event) => {
     event.preventDefault()
     setError('')
@@ -67,6 +77,27 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
       <div className="hero-copy">
         <p className="eyebrow" style={{ textAlign: 'center' }}>{requiresPasswordChange ? 'Set a new password' : 'Welcome back'}</p>
       </div>
+
+      {cachedUser && !email && (
+        <div style={{ textAlign: 'center', marginBottom: '12px' }}>
+          <button
+            type="button"
+            onClick={() => setEmail(cachedEmail || cachedUser.email || '')}
+            style={{
+              background: 'rgba(13, 148, 136, 0.1)',
+              border: '1px solid rgba(13, 148, 136, 0.3)',
+              borderRadius: '6px',
+              padding: '6px 12px',
+              fontSize: '0.78rem',
+              color: '#0d9488',
+              cursor: 'pointer',
+              fontWeight: 600,
+            }}
+          >
+            Offline Workspace Ready: {cachedUser.full_name || cachedEmail}
+          </button>
+        </div>
+      )}
 
       <form className="login-form" onSubmit={handleSubmit}>
         {!requiresPasswordChange ? (

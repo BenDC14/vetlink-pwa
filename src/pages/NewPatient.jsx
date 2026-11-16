@@ -206,6 +206,23 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
   const [intakeSuccess, setIntakeSuccess] = useState(false)
   const [savedSummary, setSavedSummary] = useState(null)
   const [saveSuccessMessage, setSaveSuccessMessage] = useState('')
+  const [showConfirmModal, setShowConfirmModal] = useState(false)
+  const [pendingProceed, setPendingProceed] = useState(false)
+
+  const promptSaveConfirmation = (proceedToTreatment = false) => {
+    if (!name.trim()) { setError('Patient name is required.'); return }
+    if (!selectedFile) { setError('Please capture or upload a photo first.'); return }
+    if (qualityRejection) { setError(`Cannot save: Image was rejected (${qualityRejection.reason || 'Quality Check Failed'}).`); return }
+    if (!aiResult) { setError('Waiting for AI analysis to complete.'); return }
+    setError('')
+    setPendingProceed(proceedToTreatment)
+    setShowConfirmModal(true)
+  }
+
+  const handleConfirmedSave = () => {
+    setShowConfirmModal(false)
+    handleSave(pendingProceed)
+  }
 
   const fileInputRef = useRef(null)
 
@@ -1579,7 +1596,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                           <button
                             className="capture-btn"
                             type="button"
-                            onClick={() => handleSave(true)}
+                            onClick={() => promptSaveConfirmation(true)}
                             disabled={isSaving}
                             style={{
                               background: 'linear-gradient(135deg, #0d9488, #0f766e)',
@@ -1594,7 +1611,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                           <button
                             className="secondary-btn"
                             type="button"
-                            onClick={() => handleSave(false)}
+                            onClick={() => promptSaveConfirmation(false)}
                             disabled={isSaving}
                             style={{
                               padding: '12px 18px',
@@ -1612,7 +1629,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                         <button
                           className="capture-btn"
                           type="button"
-                          onClick={() => handleSave(false)}
+                          onClick={() => promptSaveConfirmation(false)}
                           disabled={isSaving}
                           style={{
                             background: 'linear-gradient(135deg, #0284c7, #0369a1)',
@@ -1655,6 +1672,132 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         onConfirmCrop={handleConfirmCrop}
         onUseFullImage={handleUseFullImage}
       />
+
+      {/* Clinical Intake Confirmation Modal */}
+      {showConfirmModal && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="confirm-intake-title">
+          <div
+            className="modal-dialog"
+            style={{
+              maxWidth: 500,
+              background: 'var(--surface, #1e293b)',
+              color: 'var(--text, #f8fafc)',
+              borderRadius: '12px',
+              padding: '24px',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 10px 10px -5px rgba(0, 0, 0, 0.3)',
+              border: '1px solid var(--border, #334155)',
+            }}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+              <div
+                style={{
+                  width: '38px',
+                  height: '38px',
+                  borderRadius: '50%',
+                  background: 'rgba(13, 148, 136, 0.2)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  color: '#0d9488',
+                }}
+              >
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <path d="M20 6L9 17l-5-5" />
+                </svg>
+              </div>
+              <h3 id="confirm-intake-title" style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700 }}>
+                Confirm Patient Admission
+              </h3>
+            </div>
+
+            <p style={{ margin: '0 0 16px 0', fontSize: '0.88rem', color: 'var(--text-muted, #94a3b8)', lineHeight: 1.5 }}>
+              Please verify patient and clinical details before committing this record to the official clinical database:
+            </p>
+
+            <div
+              style={{
+                background: 'var(--surface-input, #0f172a)',
+                borderRadius: '8px',
+                padding: '14px 16px',
+                border: '1px solid var(--border, #334155)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '8px',
+                fontSize: '0.88rem',
+                marginBottom: '20px',
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#94a3b8' }}>Patient:</span>
+                <strong>{name} ({species}{breed ? `, ${breed}` : ''})</strong>
+              </div>
+              {(weight || age) && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#94a3b8' }}>Metrics:</span>
+                  <span>{weight ? `${weight} kg` : ''}{weight && age ? ' • ' : ''}{age ? `Age: ${age}` : ''}</span>
+                </div>
+              )}
+              {ownerName && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#94a3b8' }}>Owner:</span>
+                  <span>{ownerName}{ownerPhone ? ` (${ownerPhone})` : ''}</span>
+                </div>
+              )}
+              {areaOfConcern && (
+                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                  <span style={{ color: '#94a3b8' }}>Chief Concern:</span>
+                  <span style={{ maxWidth: '60%', textAlign: 'right' }}>{areaOfConcern}</span>
+                </div>
+              )}
+              {aiResult && (
+                <div style={{ display: 'flex', justifyContent: 'space-between', borderTop: '1px dashed var(--border, #334155)', paddingTop: '8px', marginTop: '4px' }}>
+                  <span style={{ color: '#94a3b8' }}>AI Screening:</span>
+                  <span style={{ fontWeight: 700, color: '#0d9488' }}>
+                    {aiResult.displayLabel || aiResult.label} ({aiResult.percent})
+                  </span>
+                </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                <span style={{ color: '#94a3b8' }}>Next Action:</span>
+                <span style={{ fontWeight: 600, color: pendingProceed ? '#0284c7' : '#f59e0b' }}>
+                  {pendingProceed ? 'Proceed to Consultation Rx' : 'Admit Patient to Clinical Ledger'}
+                </span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => setShowConfirmModal(false)}
+                style={{
+                  padding: '10px 16px',
+                  fontWeight: 600,
+                  fontSize: '0.88rem',
+                  borderRadius: '6px',
+                }}
+              >
+                Review / Edit
+              </button>
+              <button
+                type="button"
+                className="capture-btn"
+                onClick={handleConfirmedSave}
+                style={{
+                  padding: '10px 18px',
+                  fontWeight: 700,
+                  fontSize: '0.88rem',
+                  background: 'linear-gradient(135deg, #0d9488, #0f766e)',
+                  borderRadius: '6px',
+                  boxShadow: '0 4px 12px rgba(13, 148, 136, 0.25)',
+                }}
+              >
+                Confirm & Save Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   )
 }
