@@ -326,6 +326,7 @@ function App() {
       if (typeof localStorage !== 'undefined') {
         localStorage.setItem('vetlink_auth_token', result.access_token)
         localStorage.setItem('vetlink_cached_user', JSON.stringify({ ...result.user, must_change_password: result.must_change_password }))
+        localStorage.setItem('vetlink_offline_verified_email', loginEmail.toLowerCase().trim())
       }
       setAuthToken(result.access_token)
       setCurrentUser({ ...result.user, must_change_password: result.must_change_password })
@@ -333,7 +334,25 @@ function App() {
       return result
     } catch (err) {
       if (err.name === 'TypeError' || err.message?.includes('fetch') || err.message?.includes('NetworkError') || err.message?.includes('Failed to fetch')) {
-        throw new Error('Cannot connect to clinic server (Backend unreachable). Please ensure the backend server is online and check your connection.')
+        // Offline / Network unreachable fallback
+        const cachedUserStr = typeof localStorage !== 'undefined' ? localStorage.getItem('vetlink_cached_user') : null
+        const cachedEmail = typeof localStorage !== 'undefined' ? (localStorage.getItem('vetlink_offline_verified_email') || '').toLowerCase().trim() : ''
+
+        if (cachedUserStr && cachedEmail && cachedEmail === loginEmail.toLowerCase().trim()) {
+          try {
+            const cachedUser = JSON.parse(cachedUserStr)
+            const offlineUser = { ...cachedUser, isOffline: true }
+            setCurrentUser(offlineUser)
+            setLoggedIn(true)
+            return { user: offlineUser, isOffline: true }
+          } catch (_) {}
+        }
+
+        if (cachedUserStr && cachedEmail) {
+          throw new Error(`Server is offline. You may only unlock this device offline using the verified clinician account (${cachedEmail}).`)
+        }
+
+        throw new Error('Initial online setup required: Cannot connect to clinic server. Please connect to the internet once to authenticate and download clinic models to this device.')
       }
       throw err
     }
@@ -369,7 +388,6 @@ function App() {
 
     if (typeof localStorage !== 'undefined') {
       localStorage.removeItem('vetlink_auth_token')
-      localStorage.removeItem('vetlink_cached_user')
     }
     setAuthToken('')
     setCurrentUser(null)
