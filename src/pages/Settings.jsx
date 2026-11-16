@@ -278,6 +278,60 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
     localStorage.setItem('vetlink_clinic_info', JSON.stringify(clinicInfo))
   }, [clinicInfo])
 
+  const cropCanvasToContent = (sourceCanvas) => {
+    const ctx = sourceCanvas.getContext('2d')
+    const width = sourceCanvas.width
+    const height = sourceCanvas.height
+    const imgData = ctx.getImageData(0, 0, width, height)
+    const d = imgData.data
+
+    let minX = width, minY = height, maxX = 0, maxY = 0
+    let found = false
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const idx = (y * width + x) * 4
+        const alpha = d[idx + 3]
+        const r = d[idx]
+        const g = d[idx + 1]
+        const b = d[idx + 2]
+        if (alpha > 20 && (r < 225 || g < 225 || b < 225)) {
+          if (x < minX) minX = x
+          if (x > maxX) maxX = x
+          if (y < minY) minY = y
+          if (y > maxY) maxY = y
+          found = true
+        }
+      }
+    }
+
+    if (!found) return sourceCanvas.toDataURL('image/png')
+
+    const pad = 4
+    minX = Math.max(0, minX - pad)
+    minY = Math.max(0, minY - pad)
+    maxX = Math.min(width - 1, maxX + pad)
+    maxY = Math.min(height - 1, maxY + pad)
+
+    const cropW = maxX - minX + 1
+    const cropH = maxY - minY + 1
+
+    const croppedCanvas = document.createElement('canvas')
+    croppedCanvas.width = cropW
+    croppedCanvas.height = cropH
+    const cropCtx = croppedCanvas.getContext('2d')
+
+    const croppedData = ctx.getImageData(minX, minY, cropW, cropH)
+    const cd = croppedData.data
+    for (let i = 0; i < cd.length; i += 4) {
+      if (cd[i] > 220 && cd[i + 1] > 220 && cd[i + 2] > 220) {
+        cd[i + 3] = 0
+      }
+    }
+    cropCtx.putImageData(croppedData, 0, 0)
+    return croppedCanvas.toDataURL('image/png')
+  }
+
   const handleSignatureFileChange = (e) => {
     const file = e.target.files?.[0]
     if (!file) return
@@ -305,9 +359,9 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
         canvas.height = h
         const ctx = canvas.getContext('2d')
         ctx.drawImage(img, 0, 0, w, h)
-        const dataUrl = canvas.toDataURL('image/png')
+        const dataUrl = cropCanvasToContent(canvas)
         setProfileSignature(dataUrl)
-        setProfileSuccessMsg('Signature uploaded! Click "Save Profile" to finalize.')
+        setProfileSuccessMsg('Signature uploaded & trimmed! Click "Save Profile" to finalize.')
       }
       img.src = event.target.result
     }
@@ -334,7 +388,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
     ctx.bezierCurveTo(95, 66, 195, 54, 260, 60)
     ctx.stroke()
 
-    const dataUrl = canvas.toDataURL('image/png')
+    const dataUrl = cropCanvasToContent(canvas)
     setProfileSignature(dataUrl)
     setProfileSuccessMsg('Digital e-signature generated! Click "Save Profile" to finalize.')
   }
@@ -602,7 +656,7 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                   setProfileSuccessMsg(null)
                 }}
               >
-                Edit Name
+                Edit Account
               </button>
             )}
           </div>

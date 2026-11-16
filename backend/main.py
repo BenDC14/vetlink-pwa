@@ -756,25 +756,56 @@ def generate_prescription_pdf_bytes(req: EmailPrescriptionRequest) -> bytes:
         sig_lines.append(f"PTR No.: {ptr_no}")
     sig_right = "<br/>".join(sig_lines)
 
-    sig_right_cell = []
+    sig_right_rows = []
     if req.signature_image:
         try:
+            import numpy as np
+            from PIL import Image as PILImage
             raw_sig = req.signature_image
             if "base64," in raw_sig:
                 raw_sig = raw_sig.split("base64,", 1)[1]
             sig_bytes = base64.b64decode(raw_sig)
-            sig_io = io.BytesIO(sig_bytes)
-            sig_img = RLImage(sig_io, width=80, height=26)
-            sig_img.hAlign = 'RIGHT'
-            sig_right_cell.append(sig_img)
-            sig_right_cell.append(Spacer(1, 2))
+            raw_im = PILImage.open(io.BytesIO(sig_bytes))
+
+            # Auto-crop transparent padding and convert near-white paper backgrounds to transparent
+            arr = np.array(raw_im.convert('RGBA'))
+            white_mask = (arr[:, :, 0] > 220) & (arr[:, :, 1] > 220) & (arr[:, :, 2] > 220)
+            arr[white_mask, 3] = 0
+            proc_im = PILImage.fromarray(arr)
+            bbox = proc_im.getbbox()
+            if bbox:
+                proc_im = proc_im.crop(bbox)
+
+            w, h = proc_im.size
+            aspect = w / max(h, 1)
+            target_h = 24
+            target_w = round(target_h * aspect)
+            if target_w > 90:
+                target_w = 90
+                target_h = round(target_w / aspect)
+
+            sig_buf = io.BytesIO()
+            proc_im.save(sig_buf, format='PNG')
+            sig_buf.seek(0)
+            sig_img = RLImage(sig_buf, width=target_w, height=target_h)
+            sig_right_rows.append([sig_img])
         except Exception as sig_err:
             print(f"[WARN] Could not parse prescription signature: {sig_err}")
 
-    sig_right_cell.append(Paragraph(sig_right, ParagraphStyle('SigR', parent=sig_text, alignment=2)))
+    sig_right_rows.append([Paragraph(sig_right, ParagraphStyle('SigR', parent=sig_text, fontName='Helvetica', alignment=2))])
+
+    right_subtable = Table(sig_right_rows, colWidths=[140])
+    right_subtable.setStyle(TableStyle([
+        ('ALIGN', (0,0), (-1,-1), 'RIGHT'),
+        ('VALIGN', (0,0), (-1,-1), 'BOTTOM'),
+        ('TOPPADDING', (0,0), (-1,-1), 0),
+        ('BOTTOMPADDING', (0,0), (-1,-1), 1),
+        ('LEFTPADDING', (0,0), (-1,-1), 0),
+        ('RIGHTPADDING', (0,0), (-1,-1), 0),
+    ]))
 
     sig_table = Table([
-        [Paragraph(sig_left, sig_text), sig_right_cell]
+        [Paragraph(sig_left, sig_text), right_subtable]
     ], colWidths=[232, 140])
     sig_table.setStyle(TableStyle([
         ('LINEABOVE', (0,0), (-1,-1), 0.75, colors.HexColor('#cbd5e1')),
