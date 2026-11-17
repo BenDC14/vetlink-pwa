@@ -99,6 +99,13 @@ export async function loadVetLinkModel() {
   try {
     const { tf, tflite } = await waitForTF()
     await tf.ready()
+    try {
+      if (tf.findBackend && tf.findBackend('cpu')) {
+        await tf.setBackend('cpu')
+      }
+    } catch (bErr) {
+      console.warn('[VetLink AI] CPU backend notice:', bErr)
+    }
 
     // Set local WASM path for self-hosted zero-latency, 100% offline-ready TFLite runtime
     tflite.setWasmPath('/wasm/')
@@ -156,6 +163,13 @@ export async function loadAnimalVerifierModel() {
   try {
     const { tf, tflite } = await waitForTF()
     await tf.ready()
+    try {
+      if (tf.findBackend && tf.findBackend('cpu')) {
+        await tf.setBackend('cpu')
+      }
+    } catch (bErr) {
+      console.warn('[VetLink AI] CPU backend notice (verifier):', bErr)
+    }
     tflite.setWasmPath('/wasm/')
 
     if (!animalVerifierMeta) {
@@ -247,28 +261,48 @@ function checkHumanSkinGate(imageElement) {
  * The model was exported with include_preprocessing=True (Node 0: MUL 1/127.5, Node 1: ADD -1),
  * so it expects float32 pixels in [0, 255].
  * Output: float32 Tensor4D [1, 224, 224, 3]
+ *
+ * Uses direct CPU pixel buffer extraction via Canvas 2D context instead of tf.browser.fromPixels.
+ * This completely bypasses mobile WebGL texture allocation and gl.readPixels synchronization stalls
+ * which previously returned empty all-zero buffers on mobile devices.
  */
 function preprocessImage(imageElement) {
   const tf = window.tf
-  return tf.tidy(() => {
-    // Offscreen 2D canvas normalization:
-    // 1. Normalizes mobile camera EXIF orientation and removes alpha transparency
-    // 2. Protects tablet/phone memory from giant 12MP-48MP raw image allocations
-    const canvas = document.createElement('canvas')
-    canvas.width = 224
-    canvas.height = 224
-    const ctx = canvas.getContext('2d')
-    const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
-    const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
-    const minDim = Math.min(origW, origH)
-    const sx = Math.floor((origW - minDim) / 2)
-    const sy = Math.floor((origH - minDim) / 2)
-    ctx.drawImage(imageElement, sx, sy, minDim, minDim, 0, 0, 224, 224)
+  const canvas = document.createElement('canvas')
+  canvas.width = 224
+  canvas.height = 224
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
 
-    let t = tf.browser.fromPixels(canvas)    // [224, 224, 3] in [0, 255]
-    t = t.toFloat()                                // float32 [0, 255]
-    return t.expandDims(0)                          // [1, 224, 224, 3]
-  })
+  // Fill opaque black background to prevent transparent alpha artifacts
+  ctx.fillStyle = '#000000'
+  ctx.fillRect(0, 0, 224, 224)
+
+  const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
+  const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
+  const minDim = Math.min(origW, origH)
+  const sx = Math.floor((origW - minDim) / 2)
+  const sy = Math.floor((origH - minDim) / 2)
+  ctx.drawImage(imageElement, sx, sy, minDim, minDim, 0, 0, 224, 224)
+
+  // Direct CPU memory readback of 224x224 RGBA bytes
+  const imgData = ctx.getImageData(0, 0, 224, 224).data
+  const rgbFloats = new Float32Array(1 * 224 * 224 * 3)
+  let pixelSum = 0
+
+  for (let i = 0, j = 0; i < imgData.length; i += 4, j += 3) {
+    const r = imgData[i]
+    const g = imgData[i + 1]
+    const b = imgData[i + 2]
+    rgbFloats[j]     = r // Red [0.0, 255.0]
+    rgbFloats[j + 1] = g // Green [0.0, 255.0]
+    rgbFloats[j + 2] = b // Blue [0.0, 255.0]
+    pixelSum += (r + g + b)
+  }
+
+  const meanPixel = pixelSum / (224 * 224 * 3)
+  console.log(`[VetLink AI WASM Preprocessing] Extracted 224x224 RGB Float32Array. Mean pixel: ${meanPixel.toFixed(2)}`)
+
+  return tf.tensor4d(rgbFloats, [1, 224, 224, 3], 'float32')
 }
 
 import { generateGradCAM } from './gradcam'
@@ -430,6 +464,7 @@ export async function predict(imageElement, species = 'Canine') {
     const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
     console.timeEnd('[VetLink AI] Inference Time')
     const probabilities = Array.from(rawData)
+    console.log('[VetLink AI WASM] Raw inference probabilities:', classLabels.map((lbl, idx) => `${lbl}: ${(probabilities[idx] * 100).toFixed(1)}%`).join(', '))
 
     let candidateScores = {}
     classLabels.forEach((lbl, idx) => {
@@ -591,9 +626,11 @@ export async function predict(imageElement, species = 'Canine') {
     console.error('[VetLink AI] WASM inference error:', wasmErr)
     throw wasmErr
   } finally {
-    inputTensor.dispose()
+    if (inputTensor && typeof inputTensor.dispose === 'function') {
+      try { inputTensor.dispose() } catch (_) {}
+    }
     if (outputTensor && typeof outputTensor.dispose === 'function') {
-      outputTensor.dispose()
+      try { outputTensor.dispose() } catch (_) {}
     }
   }
 }
