@@ -7,6 +7,7 @@
  * Do NOT import them as npm modules — they are not bundled.
  */
 
+let onnxModel   = null
 let model       = null
 let classLabels = []
 let isLoading   = false
@@ -87,16 +88,61 @@ function waitForTF(maxWaitMs = 8000) {
  * Call once on app startup; safe to call multiple times (cached).
  */
 export async function loadVetLinkModel() {
-  if (model) return model
+  if (onnxModel || model) return onnxModel || model
   if (isLoading) {
     while (isLoading) {
       await new Promise((res) => setTimeout(res, 100))
     }
-    return model
+    return onnxModel || model
   }
 
   isLoading = true
   try {
+    // 1. Fetch label map
+    if (classLabels.length === 0) {
+      try {
+        const labelResponse = await fetch('/models/vetlink_labels_v2.json')
+        if (labelResponse.ok) {
+          const labelMap = await labelResponse.json()
+          classLabels = Object.keys(labelMap)
+            .sort((a, b) => parseInt(a) - parseInt(b))
+            .map((key) => labelMap[key])
+        }
+      } catch (lErr) {
+        console.warn('[VetLink AI] Could not load labels map:', lErr)
+      }
+    }
+
+    // 2. Primary Edge Inference Engine: ONNX Runtime Web (Universal WebGL / WebAssembly)
+    if (window.ort) {
+      try {
+        const ort = window.ort
+        ort.env.wasm.wasmPaths = '/wasm/'
+        ort.env.wasm.numThreads = 1
+
+        const modelRes = await fetch('/models/vetlink_model_v2.onnx')
+        if (modelRes.ok) {
+          const modelBuf = await modelRes.arrayBuffer()
+          try {
+            onnxModel = await ort.InferenceSession.create(modelBuf, { executionProviders: ['webgl', 'wasm'] })
+          } catch {
+            onnxModel = await ort.InferenceSession.create(modelBuf, { executionProviders: ['wasm'] })
+          }
+          console.log('[VetLink AI] Universal ONNX Web edge model initialized successfully. Classes:', classLabels)
+
+          // Pre-cache edge animal verifier in background (non-blocking)
+          loadAnimalVerifierModel().catch((vErr) => {
+            console.warn('[VetLink AI] Verifier background init notice:', vErr?.message || vErr)
+          })
+
+          return onnxModel
+        }
+      } catch (onnxErr) {
+        console.warn('[VetLink AI] ONNX Web initialization notice, evaluating fallback:', onnxErr)
+      }
+    }
+
+    // 3. Fallback: TensorFlow Lite WASM Runner
     const { tf, tflite } = await waitForTF()
     await tf.ready()
     try {
@@ -107,38 +153,22 @@ export async function loadVetLinkModel() {
       console.warn('[VetLink AI] CPU backend notice:', bErr)
     }
 
-    // Set local WASM path for self-hosted zero-latency, 100% offline-ready TFLite runtime
     tflite.setWasmPath('/wasm/')
-
-    // 1. Fetch label map
-    const labelResponse = await fetch('/models/vetlink_labels_v2.json')
-    if (!labelResponse.ok) throw new Error('Could not load label map')
-    const labelMap = await labelResponse.json()
-
-    // { "0": "Avian Fowl Pox", ... } → ["Avian Fowl Pox", ...]
-    classLabels = Object.keys(labelMap)
-      .sort((a, b) => parseInt(a) - parseInt(b))
-      .map((key) => labelMap[key])
-
-    // 2. Explicitly fetch model file as ArrayBuffer (avoids relative path resolution bugs in worker)
     const modelResponse = await fetch('/models/vetlink_model_v2.tflite')
-    if (!modelResponse.ok) throw new Error(`Could not fetch model: HTTP ${modelResponse.status}`)
-    const modelBuffer = await modelResponse.arrayBuffer()
-    console.log('[VetLink AI] Model buffer fetched successfully:', modelBuffer.byteLength, 'bytes')
-
-    // 3. Load model from ArrayBuffer with numThreads: 1 to ensure instant, deadlock-free execution
-    model = await tflite.loadTFLiteModel(modelBuffer, {
-      numThreads: 1,
-    })
-
-    console.log('[VetLink AI] Model initialized with single-thread WASM. Classes:', classLabels)
+    if (modelResponse.ok) {
+      const modelBuffer = await modelResponse.arrayBuffer()
+      model = await tflite.loadTFLiteModel(modelBuffer, {
+        numThreads: 1,
+      })
+      console.log('[VetLink AI] TFLite WASM fallback model initialized.')
+    }
 
     // Pre-cache edge animal verifier in background (non-blocking)
     loadAnimalVerifierModel().catch((vErr) => {
       console.warn('[VetLink AI] Verifier background init notice:', vErr?.message || vErr)
     })
 
-    return model
+    return onnxModel || model
   } finally {
     isLoading = false
   }
@@ -305,6 +335,36 @@ function preprocessImage(imageElement) {
   return tf.tensor4d(rgbFloats, [1, 224, 224, 3], 'float32')
 }
 
+/**
+ * Universal CPU Float32 pixel extraction directly from HTML5 Canvas 2D.
+ * Extracts [1, 224, 224, 3] Float32Array in [0.0, 255.0] range.
+ * Runs deterministically across Android, iPadOS Safari, tablets, and desktops.
+ */
+function extractFloat32Pixels(imageElement) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 224
+  canvas.height = 224
+  const ctx = canvas.getContext('2d', { willReadFrequently: true })
+  ctx.fillStyle = '#000000'
+  ctx.fillRect(0, 0, 224, 224)
+
+  const origW = imageElement.naturalWidth || imageElement.videoWidth || imageElement.width || 224
+  const origH = imageElement.naturalHeight || imageElement.videoHeight || imageElement.height || 224
+  const minDim = Math.min(origW, origH)
+  const sx = Math.floor((origW - minDim) / 2)
+  const sy = Math.floor((origH - minDim) / 2)
+  ctx.drawImage(imageElement, sx, sy, minDim, minDim, 0, 0, 224, 224)
+
+  const imgData = ctx.getImageData(0, 0, 224, 224).data
+  const rgbFloats = new Float32Array(1 * 224 * 224 * 3)
+  for (let i = 0, j = 0; i < imgData.length; i += 4, j += 3) {
+    rgbFloats[j]     = imgData[i]     // Red [0.0, 255.0]
+    rgbFloats[j + 1] = imgData[i + 1] // Green [0.0, 255.0]
+    rgbFloats[j + 2] = imgData[i + 2] // Blue [0.0, 255.0]
+  }
+  return rgbFloats
+}
+
 import { generateGradCAM } from './gradcam'
 
 /**
@@ -420,15 +480,15 @@ export async function predict(imageElement, species = 'Canine') {
     }
   }
 
-  // 2. FALLBACK PATH: Client-side in-browser WASM inference
-  console.warn('[VetLink AI] Backend unreachable; attempting client-side WASM inference...')
-  if (!model) {
+  // 2. FALLBACK PATH: Client-side in-browser edge inference
+  console.warn('[VetLink AI] Backend unreachable; attempting client-side edge inference...')
+  if (!onnxModel && !model) {
     try {
       await loadVetLinkModel()
     } catch (loadErr) {
       console.error('[VetLink AI] Could not load offline model weights:', loadErr)
       throw new Error(
-        'Offline AI Model Not Cached: Local neural weights are not yet cached in this browser. Please connect to the internet once while opening VetLink so the local AI weights (~3.5MB) can download for 100% offline use.'
+        'Offline AI Model Not Cached: Local neural weights are not yet cached in this browser. Please connect to the internet once while opening VetLink so the local AI weights (~3.1MB) can download for 100% offline use.'
       )
     }
   }
@@ -447,24 +507,38 @@ export async function predict(imageElement, species = 'Canine') {
   const tf = window.tf
   const spNorm = (species || 'Canine').toString().trim().toLowerCase()
   const allowedClasses = SPECIES_CLASSES[species] || SPECIES_CLASSES[spNorm] || classLabels
-  const inputTensor = preprocessImage(imageElement)
 
+  let inputTensor = null
   let outputTensor = null
-  let rawOutput = null
+  let probabilities = []
 
   try {
-    rawOutput = model.predict(inputTensor)
-    if (rawOutput instanceof tf.Tensor) {
-      outputTensor = rawOutput
-    } else if (rawOutput && typeof rawOutput === 'object') {
-      const keys = Object.keys(rawOutput)
-      if (keys.length === 0) throw new Error('TFLite model returned empty outputs')
-      outputTensor = rawOutput[keys[0]]
+    if (onnxModel && window.ort) {
+      const rgbFloats = extractFloat32Pixels(imageElement)
+      const ort = window.ort
+      const inTensor = new ort.Tensor('float32', rgbFloats, [1, 224, 224, 3])
+      const res = await onnxModel.run({ [onnxModel.inputNames[0]]: inTensor })
+      const rawOut = res[onnxModel.outputNames[0]].data
+      probabilities = Array.from(rawOut)
+      console.timeEnd('[VetLink AI] Inference Time')
+      console.log('[VetLink AI ONNX Web] Raw inference probabilities:', classLabels.map((lbl, idx) => `${lbl}: ${(probabilities[idx] * 100).toFixed(1)}%`).join(', '))
+    } else if (model && tf) {
+      inputTensor = preprocessImage(imageElement)
+      const rawOutput = model.predict(inputTensor)
+      if (rawOutput instanceof tf.Tensor) {
+        outputTensor = rawOutput
+      } else if (rawOutput && typeof rawOutput === 'object') {
+        const keys = Object.keys(rawOutput)
+        if (keys.length === 0) throw new Error('TFLite model returned empty outputs')
+        outputTensor = rawOutput[keys[0]]
+      }
+      const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
+      console.timeEnd('[VetLink AI] Inference Time')
+      probabilities = Array.from(rawData)
+      console.log('[VetLink AI WASM] Raw inference probabilities:', classLabels.map((lbl, idx) => `${lbl}: ${(probabilities[idx] * 100).toFixed(1)}%`).join(', '))
+    } else {
+      throw new Error('Local offline AI model could not be executed.')
     }
-    const rawData = outputTensor.dataSync ? outputTensor.dataSync() : await outputTensor.data()
-    console.timeEnd('[VetLink AI] Inference Time')
-    const probabilities = Array.from(rawData)
-    console.log('[VetLink AI WASM] Raw inference probabilities:', classLabels.map((lbl, idx) => `${lbl}: ${(probabilities[idx] * 100).toFixed(1)}%`).join(', '))
 
     let candidateScores = {}
     classLabels.forEach((lbl, idx) => {
@@ -491,13 +565,22 @@ export async function predict(imageElement, species = 'Canine') {
           c.height = 224
           const ctx = c.getContext('2d')
           ctx.drawImage(imageElement, box.sx, box.sy, box.sw, box.sh, 0, 0, 224, 224)
-          const tensor = preprocessImage(c)
-          let out = model.predict(tensor)
-          let tensorOut = (out instanceof tf.Tensor) ? out : out[Object.keys(out)[0]]
-          const data = tensorOut.dataSync ? tensorOut.dataSync() : await tensorOut.data()
-          const probs = Array.from(data)
-          tensor.dispose()
-          if (tensorOut && typeof tensorOut.dispose === 'function') tensorOut.dispose()
+
+          let probs = []
+          if (onnxModel && window.ort) {
+            const earFloats = extractFloat32Pixels(c)
+            const inEar = new window.ort.Tensor('float32', earFloats, [1, 224, 224, 3])
+            const earRes = await onnxModel.run({ [onnxModel.inputNames[0]]: inEar })
+            probs = Array.from(earRes[onnxModel.outputNames[0]].data)
+          } else if (model && tf) {
+            const tensor = preprocessImage(c)
+            let out = model.predict(tensor)
+            let tensorOut = (out instanceof tf.Tensor) ? out : out[Object.keys(out)[0]]
+            const data = tensorOut.dataSync ? tensorOut.dataSync() : await tensorOut.data()
+            probs = Array.from(data)
+            tensor.dispose()
+            if (tensorOut && typeof tensorOut.dispose === 'function') tensorOut.dispose()
+          }
 
           const cand = {}
           classLabels.forEach((lbl, idx) => {
