@@ -79,8 +79,8 @@ export default defineConfig({
         skipWaiting: true,
         clientsClaim: true,
         cleanupOutdatedCaches: true,
-        maximumFileSizeToCacheInBytes: 10 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,json,tflite,wasm}'],
+        maximumFileSizeToCacheInBytes: 35 * 1024 * 1024,
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,json,tflite,wasm,onnx}'],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/.*/i,
