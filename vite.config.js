@@ -80,7 +80,7 @@ export default defineConfig({
         clientsClaim: true,
         cleanupOutdatedCaches: true,
         maximumFileSizeToCacheInBytes: 35 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,json,tflite,wasm,onnx}'],
+        globPatterns: ['**/*.{js,mjs,css,html,ico,png,svg,json,tflite,wasm,onnx}'],
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/cdn\.jsdelivr\.net\/.*/i,

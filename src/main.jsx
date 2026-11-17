@@ -5,6 +5,42 @@ import App from './App.jsx'
 import { initDatabase } from './db/database'
 import { registerSW } from 'virtual:pwa-register'
 
+// Automatic Cache & Service Worker Reset:
+// Purges stale Service Workers and outdated CacheStorage buckets on mobile updates
+// while keeping local IndexedDB clinical records completely safe.
+const APP_CACHE_VERSION = 'vetlink-onnx-v2.1'
+
+async function enforceFreshOfflineCache() {
+  try {
+    if (typeof window === 'undefined' || typeof navigator === 'undefined') return
+    if (!navigator.onLine) return
+
+    const savedVersion = localStorage.getItem('vetlink_cache_version')
+    if (savedVersion === APP_CACHE_VERSION) return
+
+    if ('serviceWorker' in navigator) {
+      const registrations = await navigator.serviceWorker.getRegistrations()
+      for (const reg of registrations) {
+        await reg.unregister()
+      }
+    }
+
+    if ('caches' in window) {
+      const cacheNames = await caches.keys()
+      for (const name of cacheNames) {
+        await caches.delete(name)
+      }
+    }
+
+    localStorage.setItem('vetlink_cache_version', APP_CACHE_VERSION)
+    window.location.reload()
+  } catch (err) {
+    console.warn('[VetLink PWA] Cache cleanup skipped:', err)
+  }
+}
+
+enforceFreshOfflineCache()
+
 // Automated PWA Auto-Update: Ensures mobile phones immediately run the latest build from Vercel
 const updateSW = registerSW({
   immediate: true,
