@@ -1878,7 +1878,7 @@ DERM_TEXTURE_MIMICS = {
     "custard_apple", "jackfruit", "breadfruit", "bolete", "sponge", "cauliflower",
     "coral_fungus", "honeycomb", "sea_anemone", "agaric", "mushroom", "earthstar",
     "wool", "fleece", "feather_boa", "head_cabbage", "acorn_squash", "butternut_squash",
-    "conch", "snail", "slug"
+    "conch", "snail", "slug", "broom", "whisk", "doormat", "paintbrush"
 }
 
 @app.post("/api/ai/predict")
@@ -2015,7 +2015,7 @@ def predict_disease(req: AIPredictionRequest):
                     should_reject = True
                 elif is_top_artifact and not has_active_pathology and p_animal < 0.25:
                     should_reject = True
-                elif p_animal < 0.10 and not is_derm_mimic:
+                elif p_animal < 0.10 and not is_derm_mimic and not has_active_pathology:
                     should_reject = True
 
                 if should_reject:
