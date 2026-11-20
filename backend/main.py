@@ -336,23 +336,43 @@ def update_profile(request: UpdateProfileRequest, authorization: Optional[str] =
     name = request.name.strip()
     if not name:
         raise HTTPException(status_code=400, detail="Display name cannot be empty")
-    prc = request.prc_license.strip() if request.prc_license else None
-    ptr = request.ptr_number.strip() if request.ptr_number else None
-    sig = request.signature_image.strip() if request.signature_image else (None if request.signature_image == "" else user.get("signature_image"))
+    
+    user_role = user.get("role") or ""
+    is_vet_admin = user_role == "Clinic Admin" or "admin" in user_role.lower() or "vet" in user_role.lower()
+
     conn = get_connection()
     try:
         with conn.cursor() as cursor:
-            cursor.execute(
-                """UPDATE users 
+            if is_vet_admin:
+                prc = request.prc_license.strip() if request.prc_license else None
+                ptr = request.ptr_number.strip() if request.ptr_number else None
+                sig = request.signature_image.strip() if request.signature_image else (None if request.signature_image == "" else user.get("signature_image"))
+                cursor.execute(
+                    """UPDATE users 
                    SET name = %s, 
                        prc_license = COALESCE(%s, prc_license), 
                        ptr_number = COALESCE(%s, ptr_number), 
                        signature_image = %s,
                        updated_at = %s 
                    WHERE id = %s""",
-                (name, prc, ptr, sig, datetime.utcnow(), user["id"]),
-            )
-        return {"success": True, "name": name, "prc_license": prc, "ptr_number": ptr, "signature_image": sig}
+                    (name, prc, ptr, sig, datetime.utcnow(), user["id"]),
+                )
+                return {"success": True, "name": name, "prc_license": prc, "ptr_number": ptr, "signature_image": sig}
+            else:
+                cursor.execute(
+                    """UPDATE users 
+                   SET name = %s, 
+                       updated_at = %s 
+                   WHERE id = %s""",
+                    (name, datetime.utcnow(), user["id"]),
+                )
+                return {
+                    "success": True,
+                    "name": name,
+                    "prc_license": user.get("prc_license"),
+                    "ptr_number": user.get("ptr_number"),
+                    "signature_image": user.get("signature_image")
+                }
     finally:
         conn.close()
 
