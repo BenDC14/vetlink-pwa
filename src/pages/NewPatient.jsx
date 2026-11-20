@@ -399,7 +399,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         // Low confidence: keep checkboxes blank to avoid cognitive bias
         setSelectedSymptoms([])
         setLabTestRequired(true)
-        setLabTestReason('AI confidence below 60% decision boundary. Confirmatory lab test (Skin scrape / fungal DTM) recommended.')
+        setLabTestReason('Score below 60% Clinical Protocol Activation Threshold. Confirmatory lab diagnostics (Skin scrape / fungal DTM / tape cytology) recommended.')
       }
 
       // Check subclinical early differential
@@ -1282,7 +1282,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                 {aiResult && !qualityRejection && !isAnalyzing && (
                   <div className="ai-result-box" style={{ background: '#0f172a', color: '#f8fafc', padding: 14, borderRadius: 10, border: '1px solid #334155' }}>
                     <div style={{ textAlign: 'center', fontWeight: 'bold', fontSize: '0.95rem', marginBottom: 10, color: '#38bdf8' }}>
-                      Grad-CAM: {aiResult.displayLabel} ({aiResult.percent} confident)
+                      Grad-CAM: {aiResult.displayLabel} ({aiResult.percent} match)
                     </div>
 
                     {/* 3-Panel Grad-CAM Visualization matching Colab Cell 8 */}
@@ -1304,7 +1304,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                             style={{ width: '100%', aspectRatio: '1/1', objectFit: 'cover', borderRadius: 6, border: '1px solid #475569' }}
                           />
                           <span style={{ fontSize: '0.72rem', color: '#94a3b8', display: 'block', marginTop: 3 }}>
-                            Heatmap<br /><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = AI focused)</span>
+                            Heatmap<br /><span style={{ fontSize: '0.65rem', color: '#f87171' }}>(Red = Salient Lesion Biomarkers)</span>
                           </span>
                         </div>
 
@@ -1329,14 +1329,22 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                       {(() => {
                         const runnerUp = aiResult.top3?.[1]
                         const isAmbiguous = aiResult.confidence < 0.75 || (runnerUp && runnerUp.confidence > 0.25)
+                        const cVal = typeof aiResult.confidence === 'number' ? aiResult.confidence : parseFloat(aiResult.confidence) || 0
+                        const pctStr = aiResult.percent || `${(cVal * 100).toFixed(1)}%`
+                        const matchTier = cVal >= 0.80
+                          ? { tier: 'High Pattern Match', directive: 'Auto-populates provisional first-line protocol', color: '#4ade80' }
+                          : cVal >= 0.60
+                            ? { tier: 'Moderate Pattern Match', directive: 'Clinical confirmation advised', color: '#fbbf24' }
+                            : { tier: 'Equivocal / Low Match', directive: 'Mandatory confirmatory laboratory diagnostics (Scrape/Cytology)', color: '#f87171' }
+
                         if (isAmbiguous) {
                           return (
                             <div>
                               <div style={{ fontSize: '0.88rem', color: '#fbbf24', fontWeight: 'bold' }}>
                                 TENTATIVE CLINICAL IMPRESSION: {aiResult.displayLabel.toUpperCase()}
                               </div>
-                              <div style={{ fontSize: '0.82rem', color: '#cbd5e1', marginLeft: 16 }}>
-                                Confidence: {aiResult.percent} (Differential Ambiguity Zone)
+                              <div style={{ fontSize: '0.82rem', color: matchTier.color, marginLeft: 16, marginTop: 2 }}>
+                                <strong>{matchTier.tier} ({pctStr})</strong> &mdash; <span style={{ color: '#cbd5e1' }}>{matchTier.directive}</span>
                               </div>
                               <div style={{ marginTop: 6, padding: '6px 10px', background: 'rgba(217, 119, 6, 0.25)', border: '1px solid #d97706', borderRadius: 4, fontSize: '0.75rem', color: '#fef3c7', lineHeight: 1.4, fontFamily: 'sans-serif' }}>
                                 <strong>Differential Advisory:</strong> Visual mimicry detected between {aiResult.displayLabel} and {runnerUp ? runnerUp.display : 'secondary condition'} ({runnerUp ? `${(runnerUp.confidence * 100).toFixed(1)}%` : ''}). Confirmatory laboratory testing (Skin Scraping, Fungal Culture, or Tape Cytology) recommended prior to definitive therapy.
@@ -1347,23 +1355,23 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                         return (
                           <div>
                             <div style={{ fontSize: '0.88rem', color: '#4ade80', fontWeight: 'bold' }}>
-                              PREDICTED PRIMARY CONDITION: {aiResult.displayLabel.toUpperCase()}
+                              PRIMARY SCREENING IMPRESSION: {aiResult.displayLabel.toUpperCase()}
                             </div>
-                            <div style={{ fontSize: '0.82rem', color: '#cbd5e1', marginLeft: 16 }}>
-                              Confidence: {aiResult.percent}
+                            <div style={{ fontSize: '0.82rem', color: matchTier.color, marginLeft: 16, marginTop: 2 }}>
+                              <strong>{matchTier.tier} ({pctStr})</strong> &mdash; <span style={{ color: '#cbd5e1' }}>{matchTier.directive}</span>
                             </div>
                           </div>
                         )
                       })()}
 
-                      {/* FR7: 60% Decision Boundary (Thesis pp. 11, 41, 46, 56) */}
+                      {/* FR7: 60% Clinical Protocol Activation Threshold (Thesis pp. 11, 41, 46, 56) */}
                       {aiResult.confidence >= 0.60 ? (
                         <div style={{ marginTop: 6, padding: '5px 8px', background: 'rgba(22, 101, 52, 0.35)', border: '1px solid #16a34a', borderRadius: 4, fontSize: '0.74rem', color: '#86efac', fontFamily: 'sans-serif' }}>
-                          Confidence &ge; 60%: First-line care protocol auto-populated into consultation draft.
+                          Score &ge; 60% Clinical Protocol Activation Threshold: First-line care protocol auto-populated into consultation draft.
                         </div>
                       ) : (
                         <div style={{ marginTop: 6, padding: '6px 8px', background: 'rgba(180, 83, 9, 0.35)', border: '1px solid #d97706', borderRadius: 4, fontSize: '0.74rem', color: '#fde68a', fontFamily: 'sans-serif' }}>
-                          Confidence &lt; 60% decision boundary: Secondary confirmatory laboratory diagnostics (Skin Scraping, Fungal Culture, or Tape Cytology) recommended.
+                          Score &lt; 60% Clinical Protocol Activation Threshold: Secondary confirmatory laboratory diagnostics (Skin Scraping, Fungal Culture, or Tape Cytology) recommended.
                         </div>
                       )}
 
@@ -1395,7 +1403,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                         if (!comorb.isComorbid) return null
                         return (
                           <div style={{ marginTop: 8, padding: '8px 10px', background: 'rgba(59, 130, 246, 0.25)', border: '1px solid #3b82f6', borderRadius: 6, fontSize: '0.78rem', color: '#bfdbfe', lineHeight: 1.4, fontFamily: 'sans-serif' }}>
-                            <strong>Suspected Comorbidity / Secondary Condition:</strong> Elevated probability detected for both <strong>{comorb.primary} ({(comorb.primaryConf * 100).toFixed(1)}%)</strong> and <strong>{comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%)</strong>. Clinical evaluation for secondary opportunistic infection (e.g. bacterial colonization over fungal/parasitic lesion) recommended.
+                            <strong>Suspected Secondary / Opportunistic Infection:</strong> Elevated probability detected for both <strong>{comorb.primary} ({(comorb.primaryConf * 100).toFixed(1)}%)</strong> and <strong>{comorb.secondary} ({(comorb.secondaryConf * 100).toFixed(1)}%)</strong>. Clinical evaluation for secondary opportunistic infection (e.g. bacterial colonization over fungal/parasitic lesion) recommended.
                           </div>
                         )
                       })()}

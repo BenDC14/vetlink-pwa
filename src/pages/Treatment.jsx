@@ -492,7 +492,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
   const safeDiagnosis = String(diagnosis || '')
   const safeSecondaryDiagnosis = typeof secondaryDiagnosis === 'string' ? secondaryDiagnosis : ''
 
-  // FR7: 60% Confidence Decision Boundary Rule (Thesis pp. 11, 41, 46, 56)
+  // FR7: 60% Clinical Protocol Activation Threshold Rule (Thesis pp. 11, 41, 46, 56)
   const isSubThreshold = (aiResult?.confidence !== undefined && aiResult.confidence < 0.60) &&
                          !safeDiagnosis.toLowerCase().includes('healthy') && !isOverridden
 
@@ -515,7 +515,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
   }
 
   if (isSubThreshold) {
-    treatmentSteps.unshift('[CONFIRMATORY LAB TESTING INDICATED] Pre-screening algorithmic confidence is below the 60% decision boundary. Attending veterinarian should execute secondary confirmatory diagnostics (microscopic skin scraping, fungal DTM culture, or tape cytology) to rule out differential conditions.')
+    treatmentSteps.unshift('[CONFIRMATORY LAB TESTING INDICATED] Pre-screening algorithmic score is below the 60% Clinical Protocol Activation Threshold. Attending veterinarian should execute secondary confirmatory diagnostics (microscopic skin scraping, fungal DTM culture, or tape cytology) to rule out differential conditions.')
   }
 
   // Initial combined prescription text
@@ -532,7 +532,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
   if (isOverridden) {
     initialNotes = `[VETERINARIAN CLINICAL OVERRIDE]: Attending clinician modified diagnosis to ${safeDiagnosis}${caseData?.overrideNotes ? `: "${caseData.overrideNotes}"` : '.'} ${initialNotes}`
   } else if (isSubThreshold) {
-    initialNotes = `[FR7 Triage Notice]: AI pre-screening confidence was below the calibrated 60% decision boundary (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${initialNotes}`
+    initialNotes = `[FR7 Triage Notice]: AI pre-screening match was below the calibrated 60% Clinical Protocol Activation Threshold (${aiResult?.percent ?? '<60%'}). Secondary confirmatory laboratory diagnostics are advised. ${initialNotes}`
   }
 
   // Interactive Editable State
@@ -1120,11 +1120,16 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                   <span style={{ fontSize: '0.82rem', padding: '3px 8px', borderRadius: 6, background: '#f1f5f9', color: '#334155', fontWeight: 700 }}>
                     Protocol: {primaryProtocol.category || patientSpecies}
                   </span>
-                  {aiResult?.percent && !isOverridden && (
-                    <span style={{ fontSize: '0.9rem', color: '#16a34a', fontWeight: 'bold' }}>
-                      AI Confidence: {aiResult.percent}
-                    </span>
-                  )}
+                  {aiResult?.percent && !isOverridden && (() => {
+                    const cVal = typeof aiResult.confidence === 'number' ? aiResult.confidence : parseFloat(aiResult.confidence) || 0
+                    const tierLabel = cVal >= 0.80 ? 'High Pattern Match' : cVal >= 0.60 ? 'Moderate Pattern Match' : 'Equivocal Match'
+                    const tierColor = cVal >= 0.80 ? '#16a34a' : cVal >= 0.60 ? '#d97706' : '#dc2626'
+                    return (
+                      <span style={{ fontSize: '0.88rem', color: tierColor, fontWeight: 'bold' }}>
+                        {tierLabel}: {aiResult.percent}
+                      </span>
+                    )
+                  })()}
                 </div>
                 {isComorbid && secondaryDiagnosis && (
                   <div style={{ padding: '6px 10px', background: '#dbeafe', borderRadius: 6, border: '1px solid #93c5fd', color: '#1e40af', fontSize: '0.85rem' }}>
@@ -1753,7 +1758,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                   SUSPECTED DERMATOLOGICAL ETIOLOGY:
                 </div>
                 <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: '0.85rem' }}>
-                  <strong>Primary:</strong> {diagnosis} • <strong>Comorbidity Flag:</strong> {secondaryDiagnosis || 'None'}<br />
+                  <strong>Primary:</strong> {diagnosis} • <strong>Secondary Infection Flag:</strong> {secondaryDiagnosis || 'None'}<br />
                   <strong>Algorithmic Triage Flag:</strong> {aiResult?.percent || '<60%'} (Confirmatory testing mandated prior to pharmacological dispensing)
                 </div>
               </div>
@@ -1875,7 +1880,7 @@ export default function Treatment({ onBack, caseData, currentUser, authToken, ap
                 SUSPECTED DERMATOLOGICAL ETIOLOGY:
               </div>
               <div style={{ padding: '8px 12px', background: '#f8fafc', border: '1px solid #e2e8f0', borderRadius: 6, fontSize: '0.9rem' }}>
-                <strong>Primary:</strong> {diagnosis} • <strong>Comorbidity Flag:</strong> {secondaryDiagnosis || 'None'}<br />
+                <strong>Primary:</strong> {diagnosis} • <strong>Secondary Infection Flag:</strong> {secondaryDiagnosis || 'None'}<br />
                 <strong>Algorithmic Triage Flag:</strong> {aiResult?.percent || '<60%'} (Confirmatory testing mandated prior to pharmacological dispensing)
               </div>
             </div>

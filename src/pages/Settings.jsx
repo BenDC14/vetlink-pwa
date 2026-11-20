@@ -372,30 +372,6 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
     e.target.value = ''
   }
 
-  const handleGenerateDefaultSignature = () => {
-    const canvas = document.createElement('canvas')
-    canvas.width = 300
-    canvas.height = 90
-    const ctx = canvas.getContext('2d')
-    ctx.clearRect(0, 0, 300, 90)
-    ctx.font = 'italic 30px "Brush Script MT", "Segoe Script", "Dancing Script", cursive'
-    ctx.fillStyle = '#0f172a'
-    ctx.textAlign = 'center'
-    ctx.textBaseline = 'middle'
-    ctx.fillText(profileName || 'Attending Veterinarian', 150, 40)
-
-    ctx.beginPath()
-    ctx.strokeStyle = '#0f172a'
-    ctx.lineWidth = 1.8
-    ctx.moveTo(35, 62)
-    ctx.bezierCurveTo(95, 66, 195, 54, 260, 60)
-    ctx.stroke()
-
-    const dataUrl = cropCanvasToContent(canvas)
-    setProfileSignature(dataUrl)
-    setProfileSuccessMsg('Digital e-signature generated! Click "Save Profile" to finalize.')
-  }
-
   const handleClearSignature = () => {
     setProfileSignature('')
   }
@@ -801,15 +777,6 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
                               disabled={isSavingProfile}
                             />
                           </label>
-                          <button
-                            type="button"
-                            className="settings-outline-btn"
-                            style={{ fontSize: '0.8rem', padding: '6px 12px' }}
-                            onClick={handleGenerateDefaultSignature}
-                            disabled={isSavingProfile}
-                          >
-                            ✍️ Generate Script
-                          </button>
                           {profileSignature && (
                             <button
                               type="button"
