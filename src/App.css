@@ -4734,6 +4734,138 @@ html[data-theme="dark"] .dashboard-panel {
     border-radius: 11px !important;
   }
 
+  /* Mobile Header Install Pill Button */
+  .mobile-install-btn {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 5px;
+    background: linear-gradient(135deg, #0d9488, #0f766e) !important;
+    color: #ffffff !important;
+    border: 1px solid #0d9488 !important;
+    border-radius: 10px !important;
+    padding: 0 10px !important;
+    width: auto !important;
+    min-width: 40px !important;
+    height: 40px !important;
+    box-shadow: 0 2px 8px rgba(13, 148, 136, 0.3) !important;
+    cursor: pointer;
+    font-weight: 700;
+  }
+
+  .mobile-install-btn:hover {
+    background: linear-gradient(135deg, #0f766e, #115e59) !important;
+  }
+
+  .mobile-install-pill-text {
+    font-size: 0.74rem;
+    font-weight: 750;
+    letter-spacing: -0.2px;
+  }
+
+  /* Dedicated Mobile PWA Install Banner */
+  .mobile-pwa-install-banner {
+    display: flex !important;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    background: linear-gradient(135deg, rgba(13, 148, 136, 0.12), rgba(30, 58, 138, 0.08));
+    border: 1.5px solid rgba(13, 148, 136, 0.35);
+    border-radius: 14px;
+    padding: 10px 12px;
+    margin-bottom: 12px;
+    box-shadow: 0 4px 14px rgba(13, 148, 136, 0.08);
+    animation: pwaBannerFadeIn 0.25s ease-out;
+  }
+
+  :root[data-theme="dark"] .mobile-pwa-install-banner {
+    background: linear-gradient(135deg, rgba(13, 148, 136, 0.2), rgba(20, 184, 166, 0.08));
+    border-color: rgba(45, 212, 191, 0.35);
+  }
+
+  .mobile-pwa-banner-main {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .mobile-pwa-banner-icon {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
+    background: #0d9488;
+    color: #ffffff;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    box-shadow: 0 2px 6px rgba(13, 148, 136, 0.35);
+  }
+
+  .mobile-pwa-banner-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .mobile-pwa-banner-text strong {
+    font-size: 0.82rem;
+    font-weight: 750;
+    color: var(--text-h, #0f172a);
+    line-height: 1.2;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-pwa-banner-text span {
+    font-size: 0.70rem;
+    color: var(--muted, #64748b);
+    line-height: 1.25;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .mobile-pwa-banner-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+  }
+
+  .mobile-pwa-download-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    background: #0d9488;
+    color: #ffffff;
+    border: none;
+    border-radius: 9px;
+    padding: 7px 11px;
+    font-size: 0.75rem;
+    font-weight: 750;
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(13, 148, 136, 0.3);
+    white-space: nowrap;
+  }
+
+  .mobile-pwa-download-btn:active {
+    transform: scale(0.96);
+  }
+
+  .mobile-pwa-close-btn {
+    background: transparent;
+    border: none;
+    color: var(--muted, #64748b);
+    font-size: 0.85rem;
+    cursor: pointer;
+    padding: 4px;
+    line-height: 1;
+    border-radius: 6px;
+  }
+
   /* Mobile Bottom Navigation Bar (Native App Style) */
   .mobile-bottom-nav {
     position: fixed !important;
@@ -4890,4 +5022,150 @@ html[data-theme="dark"] .dashboard-panel {
     gap: 8px !important;
   }
 }
+
+/* ==========================================================================
+   PWA INSTALLATION SUPPORT (SETTINGS & LOGIN CARDS)
+   ========================================================================== */
+
+/* Hidden on desktop since desktop has sidebar install button */
+.mobile-install-btn {
+  display: none;
+}
+
+.mobile-pwa-install-banner {
+  display: none;
+}
+
+/* Settings PWA Card Row */
+.settings-install-card-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px;
+  border-radius: 14px;
+  background: var(--surface-2, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  margin-top: 16px;
+  flex-wrap: wrap;
+}
+
+:root[data-theme="dark"] .settings-install-card-row {
+  background: #141f1c;
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.settings-install-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  flex: 1;
+  min-width: 200px;
+}
+
+.settings-install-heading {
+  font-size: 0.88rem;
+  font-weight: 750;
+  color: var(--text-h, #0f172a);
+}
+
+.settings-install-desc {
+  font-size: 0.78rem;
+  color: var(--muted, #64748b);
+  line-height: 1.4;
+}
+
+.settings-installed-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: #dcfce7;
+  color: #166534;
+  border: 1px solid #86efac;
+  font-size: 0.78rem;
+  font-weight: 750;
+}
+
+:root[data-theme="dark"] .settings-installed-badge {
+  background: rgba(22, 101, 52, 0.3);
+  color: #86efac;
+  border-color: rgba(134, 239, 172, 0.3);
+}
+
+/* Login Card PWA Install Banner */
+.login-pwa-install-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-top: 14px;
+}
+
+.login-pwa-install-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 1px dashed var(--border, #cbd5e1);
+  border-radius: 999px;
+  padding: 6px 14px;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--brand, #0d9488);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.login-pwa-install-btn:hover {
+  background: rgba(13, 148, 136, 0.08);
+  border-color: var(--brand, #0d9488);
+}
+
+/* PWA Manual Install Instructions Modal */
+.install-guide-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 12px 0 16px;
+}
+
+.install-guide-platform-card {
+  padding: 12px 14px;
+  background: var(--surface, #f8fafc);
+  border: 1px solid var(--border, #e2e8f0);
+  border-radius: 10px;
+}
+
+:root[data-theme="dark"] .install-guide-platform-card {
+  background: rgba(255, 255, 255, 0.03);
+  border-color: rgba(255, 255, 255, 0.08);
+}
+
+.install-guide-platform-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text-h, #0f172a);
+  margin-bottom: 8px;
+}
+
+.install-guide-steps {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 0.82rem;
+  line-height: 1.5;
+  color: var(--text, #334155);
+}
+
+.install-guide-steps li {
+  margin-bottom: 4px;
+}
+
+.install-guide-steps li:last-child {
+  margin-bottom: 0;
+}
+
 

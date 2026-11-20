@@ -38,7 +38,13 @@ function App() {
   const [currentUser, setCurrentUser] = useState(null)
   const [isCheckingSession, setIsCheckingSession] = useState(Boolean(typeof localStorage !== 'undefined' && localStorage.getItem('vetlink_auth_token')))
   const [deferredPrompt, setDeferredPrompt] = useState(null)
-  const [isInstalled, setIsInstalled] = useState(false)
+  const [isInstalled, setIsInstalled] = useState(() => {
+    if (typeof window === 'undefined') return false
+    return (
+      window.matchMedia?.('(display-mode: standalone)')?.matches ||
+      window.navigator?.standalone === true
+    )
+  })
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [syncBadgeText, setSyncBadgeText] = useState('Offline Ready')
@@ -47,16 +53,16 @@ function App() {
   const [lastSyncTime, setLastSyncTime] = useState(() => (typeof localStorage !== 'undefined' ? localStorage.getItem('vetlink_last_sync_time') : null))
   const [showNotifications, setShowNotifications] = useState(false)
   const [notificationUnreadCount, setNotificationUnreadCount] = useState(0)
+  const [showMobileInstallBanner, setShowMobileInstallBanner] = useState(() => {
+    try {
+      return !sessionStorage.getItem('vetlink_dismiss_pwa_banner')
+    } catch {
+      return true
+    }
+  })
+  const [showInstallGuideModal, setShowInstallGuideModal] = useState(false)
 
   useEffect(() => {
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      window.navigator.standalone === true
-
-    if (isStandalone) {
-      setIsInstalled(true)
-    }
-
     const handleBeforeInstallPrompt = (e) => {
       e.preventDefault()
       setDeferredPrompt(e)
@@ -78,11 +84,7 @@ function App() {
 
   const handleInstallClick = async () => {
     if (!deferredPrompt) {
-      alert(
-        'To install VetLink:\n\n' +
-        '• On Chrome / Edge: Click the install icon in the address bar, or select "Install VetLink" from the browser menu (⋮).\n' +
-        '• On iOS Safari: Tap the Share button and select "Add to Home Screen".'
-      )
+      setShowInstallGuideModal(true)
       return
     }
 
@@ -94,6 +96,7 @@ function App() {
       }
     } catch (err) {
       console.error('Failed to trigger PWA install prompt:', err)
+      setShowInstallGuideModal(true)
     } finally {
       setDeferredPrompt(null)
     }
@@ -485,6 +488,8 @@ function App() {
           setPassword={setPassword}
           onLogin={handleLogin}
           onChangePassword={handleChangePassword}
+          isInstalled={isInstalled}
+          onInstall={handleInstallClick}
         />
       ) : (
         <div className="dashboard-shell">
@@ -682,6 +687,22 @@ function App() {
                 )}</h2>
               </div>
               <div className="header-actions">
+                {!isInstalled && (
+                  <button
+                    type="button"
+                    className="header-icon-btn mobile-install-btn"
+                    title="Download & Install VetLink App"
+                    aria-label="Download & Install VetLink App"
+                    onClick={handleInstallClick}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                    <span className="mobile-install-pill-text">Install</span>
+                  </button>
+                )}
                 <div className="notification-wrapper">
                   <button
                     type="button"
@@ -742,6 +763,44 @@ function App() {
               </div>
             </header>
 
+            {!isInstalled && showMobileInstallBanner && (
+              <div className="mobile-pwa-install-banner no-print">
+                <div className="mobile-pwa-banner-main">
+                  <div className="mobile-pwa-banner-icon">
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                      <polyline points="7 10 12 15 17 10" />
+                      <line x1="12" y1="15" x2="12" y2="3" />
+                    </svg>
+                  </div>
+                  <div className="mobile-pwa-banner-text">
+                    <strong>Install VetLink App</strong>
+                    <span>Instant offline triage &amp; home screen access</span>
+                  </div>
+                </div>
+                <div className="mobile-pwa-banner-actions">
+                  <button
+                    type="button"
+                    className="mobile-pwa-download-btn"
+                    onClick={handleInstallClick}
+                  >
+                    Download PWA
+                  </button>
+                  <button
+                    type="button"
+                    className="mobile-pwa-close-btn"
+                    onClick={() => {
+                      setShowMobileInstallBanner(false)
+                      try { sessionStorage.setItem('vetlink_dismiss_pwa_banner', '1') } catch {}
+                    }}
+                    aria-label="Dismiss banner"
+                  >
+                    ✕
+                  </button>
+                </div>
+              </div>
+            )}
+
             {showSettings ? (
               <Settings
                 currentUser={currentUser}
@@ -755,6 +814,8 @@ function App() {
                     localStorage.setItem('vetlink_cached_user', JSON.stringify(updatedUser))
                   }
                 }}
+                isInstalled={isInstalled}
+                onInstall={handleInstallClick}
               />
             ) : showNewPatient ? (
               <NewPatient
@@ -936,6 +997,72 @@ function App() {
               </div>
             </div>
           )}
+        </div>
+      )}
+
+      {showInstallGuideModal && (
+        <div className="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="pwa-install-guide-title">
+          <div className="modal-dialog" style={{ maxWidth: '480px' }}>
+            <header className="modal-header">
+              <h3 id="pwa-install-guide-title">Install VetLink PWA</h3>
+              <button
+                type="button"
+                className="modal-close-btn"
+                onClick={() => setShowInstallGuideModal(false)}
+                aria-label="Close dialog"
+              >
+                ✕
+              </button>
+            </header>
+            <div className="modal-form">
+              <p style={{ margin: 0, fontSize: '0.86rem', color: 'var(--muted, #64748b)' }}>
+                VetLink is an installable Progressive Web App. Add it to your home screen for rapid offline triage and full-screen access.
+              </p>
+
+              <div className="install-guide-list">
+                <div className="install-guide-platform-card">
+                  <div className="install-guide-platform-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                      <line x1="12" y1="18" x2="12.01" y2="18" />
+                    </svg>
+                    <span>Android (Google Chrome)</span>
+                  </div>
+                  <ol className="install-guide-steps">
+                    <li>Tap Chrome&apos;s menu icon (<strong>⋮</strong>) in the top-right corner.</li>
+                    <li>Tap <strong>Install app</strong> or <strong>Add to Home screen</strong>.</li>
+                    <li>Tap <strong>Install</strong> to confirm.</li>
+                  </ol>
+                </div>
+
+                <div className="install-guide-platform-card">
+                  <div className="install-guide-platform-title">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="5" y="2" width="14" height="20" rx="2" ry="2" />
+                      <line x1="12" y1="18" x2="12.01" y2="18" />
+                    </svg>
+                    <span>iPhone &amp; iPad (Apple Safari)</span>
+                  </div>
+                  <ol className="install-guide-steps">
+                    <li>Tap the <strong>Share</strong> button (box with an arrow pointing up) in Safari.</li>
+                    <li>Scroll down and tap <strong>Add to Home Screen</strong>.</li>
+                    <li>Tap <strong>Add</strong> in the top-right corner.</li>
+                  </ol>
+                </div>
+              </div>
+
+              <div className="modal-actions" style={{ marginTop: '10px' }}>
+                <button
+                  type="button"
+                  className="action-btn blue"
+                  style={{ width: '100%', justifyContent: 'center' }}
+                  onClick={() => setShowInstallGuideModal(false)}
+                >
+                  Got It
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
     </main>

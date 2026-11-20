@@ -5,7 +5,7 @@ import { initDatabase, updateStaffUser, logAuditEvent } from '../db/database'
  * Settings page — Option A (Stacked Cards) layout.
  * Renders inside the dashboard-panel when the Settings header icon is clicked.
  */
-export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, onUpdateUser, onLogout }) {
+export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, onUpdateUser, onLogout, isInstalled, onInstall }) {
   // --- Notifications state (persisted in localStorage) ---
   const [notifications, setNotifications] = useState(() => {
     try {
@@ -1434,6 +1434,34 @@ export default function Settings({ currentUser, onBack, authToken, apiBaseUrl, o
             {updateStatus && (
               <span className="settings-update-msg">{updateStatus}</span>
             )}
+          </div>
+
+          <div className="settings-install-card-row">
+            <div className="settings-install-info">
+              <span className="settings-install-heading">Mobile &amp; Desktop Application</span>
+              <span className="settings-install-desc">
+                {isInstalled
+                  ? 'VetLink is installed and operating in standalone PWA application mode.'
+                  : 'Install VetLink to your home screen or desktop for full offline-first access and fast launching without browser address bars.'}
+              </span>
+            </div>
+            {isInstalled ? (
+              <span className="settings-installed-badge">✓ App Installed</span>
+            ) : onInstall ? (
+              <button
+                type="button"
+                className="settings-primary-btn"
+                onClick={onInstall}
+                style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download PWA
+              </button>
+            ) : null}
           </div>
         </div>
       </div>

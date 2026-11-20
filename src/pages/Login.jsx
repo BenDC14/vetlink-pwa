@@ -18,7 +18,7 @@ function EyeOffIcon() {
   )
 }
 
-export default function Login({ email, password, setEmail, setPassword, onLogin, onChangePassword }) {
+export default function Login({ email, password, setEmail, setPassword, onLogin, onChangePassword, isInstalled, onInstall }) {
   const [requiresPasswordChange, setRequiresPasswordChange] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
@@ -195,6 +195,24 @@ export default function Login({ email, password, setEmail, setPassword, onLogin,
         )}
         {error && <p role="alert" className="login-error">{error}</p>}
       </form>
+
+      {!isInstalled && onInstall && (
+        <div className="login-pwa-install-row">
+          <button
+            type="button"
+            className="login-pwa-install-btn"
+            onClick={onInstall}
+            title="Download & Install VetLink on this device"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            Download VetLink Mobile App
+          </button>
+        </div>
+      )}
 
       <p className="login-note">Access is limited to registered VetLink clinic staff.</p>
     </section>
