@@ -535,6 +535,7 @@ export async function predict(imageElement, species = 'Canine') {
             top3:         data.top3 || [],
             gradcam,
             engine:       'backend',
+            biophysicalTelemetry: data.biophysical_telemetry || null,
           }
         }
       } catch (err) {
@@ -764,6 +765,16 @@ export async function predict(imageElement, species = 'Canine') {
       top3,
       gradcam,
       engine: 'wasm',
+      biophysicalTelemetry: {
+        highEryPct: coatAudit.highEryPct,
+        furDensity: coatAudit.furDensity,
+        centerFurDensity: coatAudit.centerFurDensity,
+        outerFurDensity: coatAudit.outerFurDensity,
+        centerOuterRatio: coatAudit.centerOuterRatio,
+        crustRatio: coatAudit.crustRatio,
+        meanLuminance: coatAudit.meanLum,
+        isIntactHealthy: coatAudit.isIntactHealthy,
+      },
     }
   } catch (wasmErr) {
     console.error('[VetLink AI] WASM inference error:', wasmErr)
