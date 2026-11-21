@@ -1031,7 +1031,7 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
                 lineHeight: 1.45,
                 textAlign: 'left',
               }}>
-                <strong>Clinical Imaging Tip:</strong> Take a tight close-up photo where the lesion fills 70–80% of the frame. Wide shots showing the full dog face or body will cause the AI to focus on surrounding healthy fur instead of the lesion.
+                <strong>Clinical Imaging Tip:</strong> Part the fur and focus tightly on the lesion so it fills 70–80% of the viewfinder. For healthy coat screenings, capture unbroken fur texture under clear, even lighting.
               </div>
             </div>
 
