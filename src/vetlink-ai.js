@@ -199,8 +199,29 @@ export async function loadAnimalVerifierModel() {
  * Replicates the YCbCr and fur density differential gate from backend/main.py:1862-1885.
  * Prevents non-veterinary human subjects from being misdiagnosed as animal diseases.
  */
-function checkHumanSkinGate(imageElement) {
+/**
+ * Fast Client-Side Human Face & Skin Rejection Gate (100% Offline Universal).
+ * Combines native browser FaceDetector (when supported in Chromium/Android/Edge)
+ * with broadened YCbCr central-region skin spectrum analysis across all browsers (including Safari/iOS).
+ * Rejects human portraits, faces, and human cutaneous subjects before veterinary classification.
+ */
+async function checkHumanSkinGate(imageElement) {
   try {
+    // 1. Fast Native Browser FaceDetector Check (when available)
+    let faceDetected = false
+    if (typeof window !== 'undefined' && 'FaceDetector' in window) {
+      try {
+        const faceDetector = new window.FaceDetector({ fastMode: true, maxDetectedFaces: 3 })
+        const faces = await faceDetector.detect(imageElement)
+        if (faces && faces.length > 0) {
+          faceDetected = true
+        }
+      } catch (fdErr) {
+        console.warn('[VetLink AI] Native FaceDetector check warning:', fdErr)
+      }
+    }
+
+    // 2. Universal Canvas YCbCr + Central Skin Density Analysis
     const canvas = document.createElement('canvas')
     canvas.width = 224
     canvas.height = 224
@@ -211,42 +232,75 @@ function checkHumanSkinGate(imageElement) {
     const totalPx = 224 * 224
 
     let skinCount = 0
+    let centerSkinCount = 0
     let totalErythema = 0
     let highEryCount = 0
-    let gradCount = 0
+    let skinGradCount = 0
+    let totalGradCount = 0
 
-    for (let i = 0; i < d.length; i += 4) {
-      const r = d[i]
-      const g = d[i + 1]
-      const b = d[i + 2]
+    for (let y = 0; y < 224; y++) {
+      for (let x = 0; x < 224; x++) {
+        const i = (y * 224 + x) * 4
+        const r = d[i]
+        const g = d[i + 1]
+        const b = d[i + 2]
 
-      // YCbCr conversion
-      const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b
-      const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
-      const isSkin = cb >= 77 && cb <= 127 && cr >= 133 && cr <= 173 && r > g && r > (b + 14) && r > 90
-      if (isSkin) skinCount++
+        // Broadened YCbCr human skin spectrum (fair, tan, brown, deep brown)
+        const cb = 128 - 0.168736 * r - 0.331264 * g + 0.5 * b
+        const cr = 128 + 0.5 * r - 0.418688 * g - 0.081312 * b
+        const isSkin = cb >= 70 && cb <= 132 && cr >= 130 && cr <= 180 && r > g && r > (b + 8)
 
-      // Erythema calculation: R - (G + B)/2
-      const ery = r - (g + b) / 2
-      totalErythema += ery
-      if (ery > 45) highEryCount++
+        if (isSkin) {
+          skinCount++
+          // Central 112x112 facial/skin box (rows 56 to 168, cols 56 to 168)
+          if (x >= 56 && x < 168 && y >= 56 && y < 168) {
+            centerSkinCount++
+          }
+        }
 
-      // Horizontal edge gradient across red channel
-      if ((i / 4) % 224 < 223) {
-        const nextR = d[i + 4]
-        if (Math.abs(nextR - r) > 9) gradCount++
+        // Erythema calculation: R - (G + B)/2
+        const ery = r - (g + b) / 2
+        totalErythema += ery
+        if (ery > 45) highEryCount++
+
+        // Edge gradient across red channel
+        if (x < 223) {
+          const nextR = d[i + 4]
+          const isEdge = Math.abs(nextR - r) > 9
+          if (isEdge) {
+            totalGradCount++
+            if (isSkin) skinGradCount++
+          }
+        }
       }
     }
 
-    const meanEry = totalErythema / totalPx
+    const centerPx = 112 * 112
+    const centerSkinRatio = centerSkinCount / centerPx
     const humanRatio = skinCount / totalPx
     const highEryPct = highEryCount / totalPx
-    const furDensity = gradCount / (224 * 223)
+    const meanEry = totalErythema / totalPx
+    const furDensity = totalGradCount / (224 * 223)
+    const skinFurDensity = skinCount > 0 ? (skinGradCount / skinCount) : 0
 
-    const isHuman = (humanRatio >= 0.28 && furDensity < 0.22 && highEryPct < 0.06) ||
-                    (humanRatio >= 0.50 && furDensity < 0.25 && highEryPct < 0.08)
+    // Decision Logic:
+    // A: Native FaceDetector confirmed face + central skin presence
+    if (faceDetected && centerSkinRatio >= 0.25) {
+      return { isHuman: true, detected: 'Human Face Detected', centerSkinRatio, skinFurDensity, furDensity, highEryPct, meanEry }
+    }
 
-    return { isHuman, humanRatio, furDensity, highEryPct, meanEry }
+    // B: High central human skin ratio (>= 0.35) with smooth skin texture (skinFurDensity < 0.20)
+    // (Excludes hair bangs / eyelashes and accounts for eyes/mouth inside 112x112 box)
+    if (centerSkinRatio >= 0.35 && skinFurDensity < 0.20) {
+      return { isHuman: true, detected: 'Human Face / Cutaneous Subject', centerSkinRatio, skinFurDensity, furDensity, highEryPct, meanEry }
+    }
+
+    // C: Dominant total human skin ratio (>= 0.50) with low fur density
+    if (humanRatio >= 0.50 && skinFurDensity < 0.18) {
+      return { isHuman: true, detected: 'Human Cutaneous Subject', centerSkinRatio, skinFurDensity, furDensity, highEryPct, meanEry }
+    }
+
+    return { isHuman: false, humanRatio, centerSkinRatio, skinFurDensity, furDensity, highEryPct, meanEry }
   } catch (err) {
     console.warn('[VetLink AI] Human skin gate evaluation error:', err)
     return { isHuman: false, meanEry: 0, highEryPct: 0 }
@@ -486,6 +540,19 @@ function imageToBase64(imageElement) {
 export async function predict(imageElement, species = 'Canine') {
   console.time('[VetLink AI] Inference Time')
 
+  // 0. Pre-Flight Client-Side Human Face & Skin Rejection Gate (Strict Gate-First)
+  const earlySkinCheck = await checkHumanSkinGate(imageElement)
+  if (earlySkinCheck.isHuman) {
+    console.timeEnd('[VetLink AI] Inference Time')
+    return {
+      rejected: true,
+      reason: 'HUMAN_SUBJECT',
+      detected: earlySkinCheck.detected || 'Human Face / Cutaneous Subject',
+      message: 'Human face or human skin detected. VetLink only analyzes real animal skin and fur conditions (Dog, Cat, Bird, Rabbit). Please upload or capture a photo of an actual animal.',
+      instructions: 'Please take or upload a photo showing an actual animal patient with a visible skin or fur condition.',
+    }
+  }
+
   // 1. PRIMARY PATH: High-speed native TFLite inference via backend
   const b64 = imageToBase64(imageElement)
   if (b64) {
@@ -558,13 +625,14 @@ export async function predict(imageElement, species = 'Canine') {
   }
 
   // 2a. Fast Edge Biophysical Human Skin / Face Rejection Gate
-  const skinCheck = checkHumanSkinGate(imageElement)
+  const skinCheck = earlySkinCheck
   if (skinCheck.isHuman) {
     return {
       rejected: true,
       reason: 'HUMAN_SUBJECT',
-      detected: 'Human Face / Cutaneous Subject',
-      message: 'The submitted image exhibits human facial or cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is strictly prohibited under clinical safety protocols.',
+      detected: skinCheck.detected || 'Human Face / Cutaneous Subject',
+      message: 'Human face or human skin detected. VetLink only analyzes real animal skin and fur conditions (Dog, Cat, Bird, Rabbit). Please upload or capture a photo of an actual animal.',
+      instructions: 'Please take or upload a photo showing an actual animal patient with a visible skin or fur condition.',
     }
   }
 

@@ -372,11 +372,11 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         setUploadProgress(null)
         setUploadStage('')
         setQualityRejection({
-          title: 'Image Rejected: Non-Animal Subject Detected',
+          title: result.reason === 'HUMAN_SUBJECT' ? 'Image Rejected: Human Subject Detected' : 'Image Rejected: Non-Animal Subject Detected',
           reason: result.reason || 'NON_ANIMAL',
           detected: result.detected,
           message: result.message || 'VetLink is trained exclusively on domestic animal dermatological lesions (Canine, Feline, Avian, Rabbit). Non-animal subjects are rejected to prevent diagnostic errors and model overload.',
-          instructions: 'Please take or upload a photo showing an actual animal patient with a visible skin or fur condition.',
+          instructions: result.instructions || 'Please take or upload a photo showing an actual animal patient with a visible skin or fur condition.',
         })
         setIsAnalyzing(false)
         return // HARD STOP - Do not accept non-animal images!
@@ -468,11 +468,11 @@ export default function NewPatient({ onBack, onViewPending, onCapture, currentUs
         const result = await predict(imgElement, newSpecies)
         if (result.rejected) {
           setQualityRejection({
-            title: 'Image Rejected: Non-Animal Subject Detected',
+            title: result.reason === 'HUMAN_SUBJECT' ? 'Image Rejected: Human Subject Detected' : 'Image Rejected: Non-Animal Subject Detected',
             reason: result.reason || 'NON_ANIMAL',
             detected: result.detected,
             message: result.message,
-            instructions: 'Please take or upload a photo showing an animal patient.',
+            instructions: result.instructions || 'Please take or upload a photo showing an animal patient.',
           })
           setUploadProgress(null)
     setUploadStage('')

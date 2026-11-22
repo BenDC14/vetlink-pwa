@@ -1981,6 +1981,66 @@ def predict_disease(req: AIPredictionRequest):
             crop_sq = orig_img
         img_arr = np.array(crop_sq.resize((224, 224)), dtype=np.float32)
 
+        # ── Step 0: Human Face & Cutaneous Subject Rejection Gate (Strict Gate-First) ──
+        # Evaluates whether the image contains a human face or human cutaneous subject.
+        # Runs BEFORE MobileNetV3 and BEFORE healthy coat re-calibration.
+        r_chan = img_arr[:, :, 0]
+        g_chan = img_arr[:, :, 1]
+        b_chan = img_arr[:, :, 2]
+        cb = 128 - 0.168736 * r_chan - 0.331264 * g_chan + 0.5 * b_chan
+        cr = 128 + 0.5 * r_chan - 0.418688 * g_chan - 0.081312 * b_chan
+        is_skin = (cb >= 70) & (cb <= 132) & (cr >= 130) & (cr <= 180) & (r_chan > g_chan) & (r_chan > b_chan + 8)
+
+        center_skin = float(np.mean(is_skin[56:168, 56:168]))
+        total_skin = float(np.mean(is_skin))
+
+        dx = np.abs(r_chan[:, 1:] - r_chan[:, :-1])
+        is_skin_slice = is_skin[:, :-1]
+        skin_px = np.sum(is_skin_slice)
+        skin_fur_density = float(np.sum((dx > 9) & is_skin_slice) / skin_px) if skin_px > 0 else 0.0
+
+        # Check OpenCV Haar cascade face detection if cv2 is installed
+        faces_detected = 0
+        try:
+            import cv2
+            face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+            gray = cv2.cvtColor(np.array(crop_sq), cv2.COLOR_RGB2GRAY)
+            faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=7, minSize=(60, 60))
+            faces_detected = len(faces)
+        except Exception:
+            faces_detected = 0
+
+        is_human_subject = False
+        human_detected_label = "Human Face / Cutaneous Subject"
+        if faces_detected > 0 and center_skin >= 0.25:
+            is_human_subject = True
+            human_detected_label = "Human Face Detected"
+        elif center_skin >= 0.35 and skin_fur_density < 0.20:
+            # Check ImageNet verifier to confirm non-animal before final decision
+            verifier, animal_mask = get_animal_verifier()
+            if verifier and animal_mask is not None:
+                try:
+                    import tensorflow as tf
+                    arr_norm = tf.keras.applications.mobilenet_v3.preprocess_input(img_arr.copy())
+                    v_preds = verifier.predict(np.expand_dims(arr_norm, axis=0), verbose=0)
+                    p_animal = float(np.sum(v_preds[0, animal_mask]))
+                    if p_animal < 0.25:
+                        is_human_subject = True
+                        human_detected_label = "Human Face / Cutaneous Subject"
+                except Exception:
+                    is_human_subject = True
+            else:
+                is_human_subject = True
+
+        if is_human_subject:
+            return {
+                "rejected": True,
+                "reason": "HUMAN_SUBJECT",
+                "detected": human_detected_label,
+                "message": "Human face or human skin detected. VetLink only analyzes real animal skin and fur conditions (Dog, Cat, Bird, Rabbit). Please upload or capture a photo of an actual animal.",
+                "instructions": "Take a close-up photo of the animal lesion or fur."
+            }
+
         interpreter, labels = get_ai_model()
         inp_idx = interpreter.get_input_details()[0]["index"]
         out_idx = interpreter.get_output_details()[0]["index"]
@@ -2032,37 +2092,6 @@ def predict_disease(req: AIPredictionRequest):
             for k in other_keys:
                 filtered[k] = filtered[k] * scale
             filtered[healthy_target] = dyn_h
-
-        # 2c. Human Skin Rejection Gate
-        r_chan = img_arr[:, :, 0]
-        g_chan = img_arr[:, :, 1]
-        b_chan = img_arr[:, :, 2]
-        cb = 128 - 0.168736 * r_chan - 0.331264 * g_chan + 0.5 * b_chan
-        cr = 128 + 0.5 * r_chan - 0.418688 * g_chan - 0.081312 * b_chan
-        is_skin = (cb >= 77) & (cb <= 127) & (cr >= 133) & (cr <= 173) & (r_chan > g_chan) & (r_chan > b_chan + 14) & (r_chan > 90)
-        dx = np.abs(r_chan[:, 1:] - r_chan[:, :-1])
-        fur_density = float(np.mean(dx > 9))
-        human_ratio = float(np.mean(is_skin))
-
-        # Check active inflammatory erythema (lesions)
-        ery = r_chan - (g_chan + b_chan) / 2.0
-        mean_ery = float(np.mean(ery))
-        high_ery_pct = float(np.mean(ery > 45))
-
-        # Human Face & Cutaneous Subject Gate:
-        # Differentiates human skin / face from animal lesions and fur.
-        # Animal lesions exhibit high inflammatory erythema (high_ery_pct >= 0.08) or dense fur margins.
-        # Human skin (whether limbs or human faces with hair/eyes) exhibits low erythema (high_ery_pct < 0.06).
-        is_human_subject = (human_ratio >= 0.28 and fur_density < 0.22 and high_ery_pct < 0.06) or \
-                           (human_ratio >= 0.50 and fur_density < 0.25 and high_ery_pct < 0.08)
-
-        if is_human_subject:
-            return {
-                "rejected": True,
-                "reason": "HUMAN_SUBJECT",
-                "detected": "Human Face / Cutaneous Subject",
-                "message": "The submitted image exhibits human facial or cutaneous characteristics. VetLink AI is strictly calibrated for veterinary companion animals (Canine, Feline, Avian, Rabbit). Human dermatological screening is strictly prohibited under clinical safety protocols."
-            }
 
         # 2c. Biophysical Surface Telemetry (Erythema metrics for clinical telemetry)
         ery = r_chan - (g_chan + b_chan) / 2.0
