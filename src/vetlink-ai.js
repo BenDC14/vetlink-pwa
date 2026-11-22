@@ -482,6 +482,199 @@ function extractFloat32Pixels(imageElement) {
   return rgbFloats
 }
 
+/**
+ * Objective 1.4 Diagnostic Test Mapping & Differential Database.
+ * When confidence is < 60% or atypical lesion morphology is detected,
+ * maps observed visual cues and clinician symptoms to confirmatory secondary diagnostics.
+ */
+export const DIAGNOSTIC_WORKUP_RULES = {
+  DRY_SCALY_ALOPECIA: {
+    id: 'DRY_SCALY_ALOPECIA',
+    visualCue: 'Dry, Scaly, or Alopecic Plaque',
+    differentials: {
+      Canine: ['Dermatophytosis (Microsporum canis)', 'Seborrheic Dermatitis', 'Focal Demodicosis'],
+      Feline: ['Feline Dermatophytosis (M. canis)', 'Demodex cati', 'Psychogenic Barbering Alopecia'],
+      Avian:  ['Psittacine Beak and Feather Disease (PBFD)', 'Feather Plucking / Follicular Dysplasia'],
+      Rabbit: ['Trichophyton mentagrophytes (Dermatophytosis)', 'Cheyletiellosis (Walking Dandruff)'],
+    },
+    tests: [
+      { name: "Wood's Lamp Examination", reason: 'Evaluate pteridine fluorescence for Microsporum canis.' },
+      { name: 'Fungal DTM Culture', reason: 'Confirmatory dermatophyte growth and rapid alkaline red color change.' },
+      { name: 'Trichogram & Feather Pulp Cytology', reason: 'Microscopic inspection of hair shaft fungal spores/hyphae or ectoparasites.' },
+    ],
+  },
+  CRUSTY_PRURITIC: {
+    id: 'CRUSTY_PRURITIC',
+    visualCue: 'Crusty, Thickened, or Pruritic Skin',
+    differentials: {
+      Canine: ['Sarcoptic Mange (Scabies)', 'Flea Allergy Dermatitis (FAD)', 'Demodicosis'],
+      Feline: ['Notoedric Mange (Notoedres cati)', 'Flea Bite Hypersensitivity', 'Otodectic Acariasis'],
+      Avian:  ['Scaly Face / Scaly Leg Mite (Knemidocoptes pilae)', 'Bacterial Encrustation'],
+      Rabbit: ['Psoroptes cuniculi (Ear Canker Mite)', 'Sarcoptic Mange'],
+    },
+    tests: [
+      { name: 'Deep & Superficial Skin Scraping', reason: 'Mineral oil mount microscopy to detect burrowing and surface mite species.' },
+      { name: 'Flea Combing & Surface Examination', reason: 'Rule out flea dirt, live ectoparasites, and flea bite hypersensitivity.' },
+      { name: 'Otic Swab Microscopy', reason: 'Examine ear canal crusts for acariasis or secondary bacterial/yeast co-infection.' },
+    ],
+  },
+  MOIST_MALODOROUS_FOLD: {
+    id: 'MOIST_MALODOROUS_FOLD',
+    visualCue: 'Moist, Greasy, or Malodorous Fold',
+    differentials: {
+      Canine: ['Acute Moist Dermatitis (Hot Spot)', 'Malassezia Yeast Dermatitis', 'Superficial Bacterial Intertrigo'],
+      Feline: ['Facial Fold Intertrigo', 'Feline Acne with Secondary Infection', 'Superficial Pyoderma'],
+      Avian:  ['Superficial Bacterial Folliculitis', 'Necrotizing Vent Intertrigo'],
+      Rabbit: ['Moist Dewlap Dermatitis', 'Pseudomonas Blue Fur Disease', 'Cutaneous Candidiasis'],
+    },
+    tests: [
+      { name: 'Adhesive Tape Strip Cytology', reason: 'Diff-Quik stained impression to quantify Malassezia yeast and cocci.' },
+      { name: 'Direct Impression Smear Cytology', reason: 'Evaluate inflammatory infiltrates (degenerate neutrophils, phagocytosed bacteria).' },
+      { name: 'Topical Aerobic Culture & Sensitivity', reason: 'Identify specific bacterial pathogens and determine targeted antimicrobial susceptibility.' },
+    ],
+  },
+  OPEN_LACERATION_TRAUMA: {
+    id: 'OPEN_LACERATION_TRAUMA',
+    visualCue: 'Deep Open Laceration / Ulcer / Footpad Eschar / Cutaneous Mass',
+    differentials: {
+      Canine: ['Traumatic Laceration / Bite Wound Cavity', 'Cutaneous Ulceration', 'Infiltrative Subcutaneous Mass'],
+      Feline: ['Deep Cat Fight Abscess / Cavitary Laceration', 'Indolent Eosinophilic Ulcer', 'Cutaneous Mast Cell Lesion'],
+      Avian:  ['Pododermatitis (Bumblefoot, Grades 3-5)', 'Traumatic Keel Laceration'],
+      Rabbit: ['Severe Ulcerative Sore Hock (Pododermatitis)', 'Subcutaneous Caseous Abscess'],
+    },
+    tests: [
+      { name: 'Physical Wound Exploration & Sterile Surgical Lavage', reason: 'Inspect tissue depth, fascial planes, devitalized tissue, and foreign bodies under aseptic conditions.' },
+      { name: 'Fine-Needle Aspiration (FNA) Cytology', reason: 'Differentiate inflammatory wound cavity from cystic lesion or cutaneous neoplasia.' },
+      { name: 'Tissue Aerobic & Anaerobic Culture & Sensitivity', reason: 'Isolate deep opportunistic tissue pathogens and guide systemic antibiotic therapy.' },
+    ],
+  },
+}
+
+/**
+ * Deterministic Zero-Dependency Out-of-Scope (OOD) & Objective 1.4 Assessment Module.
+ * Preserves 97.33% model weights while preventing overconfidence on open trauma/lacerations.
+ */
+export function evaluateOutOfScopeCondition({
+  rgbFloats,
+  topLabel = '',
+  topConf = 0.0,
+  candidateScores = {},
+  species = 'Canine',
+  selectedSymptoms = [],
+}) {
+  const spNorm = (species || 'Canine').toString().trim().toLowerCase()
+  let speciesKey = 'Canine'
+  if (spNorm.includes('fel') || spNorm.includes('cat') || spNorm.includes('pusa')) speciesKey = 'Feline'
+  else if (spNorm.includes('avi') || spNorm.includes('bird') || spNorm.includes('ibon')) speciesKey = 'Avian'
+  else if (spNorm.includes('rab') || spNorm.includes('kuneho')) speciesKey = 'Rabbit'
+
+  // 1. Extreme Non-Trained Biophysical Cavities: Dense, deep-crimson hemorrhagic tissue
+  let hemorrhagicCount = 0
+  if (rgbFloats && rgbFloats.length >= 224 * 224 * 3) {
+    const totalPx = 224 * 224
+    for (let i = 0; i < totalPx * 3; i += 3) {
+      const r = rgbFloats[i]
+      const g = rgbFloats[i + 1]
+      const b = rgbFloats[i + 2]
+      if (r > 130 && r > g * 2.2 && r > b * 2.2) {
+        hemorrhagicCount++
+      }
+    }
+  }
+  const hemorrhagicRatio = hemorrhagicCount / (224 * 224)
+  const isExtremeHemorrhagic = hemorrhagicRatio >= 0.035
+
+  // 2. High Softmax Uncertainty & Split Predictions
+  const scores = Object.values(candidateScores)
+  const sumScore = scores.reduce((a, b) => a + b, 0) || 1.0
+  const probs = scores.map((s) => s / sumScore).filter((p) => p > 0.0001)
+  const K = probs.length
+  let entropy = 0
+  for (const p of probs) {
+    entropy -= p * Math.log(p)
+  }
+  const maxEntropy = K > 1 ? Math.log(K) : 1
+  const normalizedEntropy = K > 1 ? entropy / maxEntropy : 0
+
+  const sortedProbs = [...probs].sort((a, b) => b - a)
+  const margin = sortedProbs.length > 1 ? sortedProbs[0] - sortedProbs[1] : 1.0
+  const isHighUncertainty = normalizedEntropy > 0.85 || (margin < 0.15 && topConf < 0.75)
+
+  // 3. Clinician Contradiction Check
+  let isSymptomMismatch = false
+  if (selectedSymptoms && selectedSymptoms.length > 0) {
+    const isHealthyTop = topLabel.toLowerCase().includes('healthy')
+    const hasPathology = selectedSymptoms.some((s) =>
+      ['SYM-EXUDATE', 'SYM-PUSTULES', 'SYM-LICHEN', 'SYM-PRURITUS', 'SYM-ODOR'].includes(s)
+    )
+    if (isHealthyTop && hasPathology) {
+      isSymptomMismatch = true
+    } else if (topLabel.toLowerCase().includes('ringworm') && selectedSymptoms.includes('SYM-ODOR')) {
+      isSymptomMismatch = true
+    }
+  }
+
+  // 4. Strict High-Confidence Pass-Through Guardrail:
+  // Protects textbook cases of our 11 trained classes (>= 75% with low softmax entropy)
+  // from false OOD triggers unless an extreme open-wound cavity or contradictory symptom is detected.
+  const isTextbookClass = topConf >= 0.75 && !isHighUncertainty && !isSymptomMismatch && !isExtremeHemorrhagic
+
+  let isOutOfScope = false
+  let triggerReason = null
+
+  if (isExtremeHemorrhagic) {
+    isOutOfScope = true
+    triggerReason = 'EXTREME_HEMORRHAGIC_CAVITY'
+  } else if (isSymptomMismatch) {
+    isOutOfScope = true
+    triggerReason = 'CLINICIAN_SYMPTOM_MISMATCH'
+  } else if (!isTextbookClass && (isHighUncertainty || topConf < 0.60)) {
+    isOutOfScope = true
+    triggerReason = isHighUncertainty ? 'HIGH_ENTROPY_SPLIT' : 'SUB_THRESHOLD_CONFIDENCE'
+  }
+
+  // Morphology-to-Diagnostic-Test Selection
+  let ruleKey = 'DRY_SCALY_ALOPECIA'
+  if (isExtremeHemorrhagic) {
+    ruleKey = 'OPEN_LACERATION_TRAUMA'
+  } else if (
+    topLabel.toLowerCase().includes('hot') ||
+    topLabel.toLowerCase().includes('pyoderma') ||
+    selectedSymptoms.includes('SYM-EXUDATE') ||
+    selectedSymptoms.includes('SYM-ODOR')
+  ) {
+    ruleKey = 'MOIST_MALODOROUS_FOLD'
+  } else if (
+    topLabel.toLowerCase().includes('mange') ||
+    topLabel.toLowerCase().includes('flea') ||
+    topLabel.toLowerCase().includes('mite') ||
+    selectedSymptoms.includes('SYM-SCALING') ||
+    selectedSymptoms.includes('SYM-LICHEN') ||
+    selectedSymptoms.includes('SYM-PRURITUS')
+  ) {
+    ruleKey = 'CRUSTY_PRURITIC'
+  } else {
+    ruleKey = 'DRY_SCALY_ALOPECIA'
+  }
+
+  const selectedRule = DIAGNOSTIC_WORKUP_RULES[ruleKey]
+  const differentials = selectedRule.differentials[speciesKey] || selectedRule.differentials['Canine']
+  const clampedConfidence = isOutOfScope ? Math.min(topConf, 0.58) : topConf
+
+  return {
+    isOutOfScope,
+    triggerReason,
+    originalConfidence: topConf,
+    clampedConfidence,
+    morphology: selectedRule.visualCue,
+    ruleKey,
+    differentials,
+    recommendedTests: selectedRule.tests,
+    hemorrhagicRatio: Math.round(hemorrhagicRatio * 1000) / 1000,
+    normalizedEntropy: Math.round(normalizedEntropy * 1000) / 1000,
+  }
+}
+
 import { generateGradCAM } from './gradcam'
 
 /**
@@ -602,6 +795,8 @@ export async function predict(imageElement, species = 'Canine') {
             top3:         data.top3 || [],
             gradcam,
             engine:       'backend',
+            isOutOfScope: Boolean(data.isOutOfScope),
+            outOfScopeAssessment: data.outOfScopeAssessment || null,
             biophysicalTelemetry: data.biophysical_telemetry || null,
           }
         }
@@ -642,10 +837,10 @@ export async function predict(imageElement, species = 'Canine') {
   let inputTensor = null
   let outputTensor = null
   let probabilities = []
+  const rgbFloats = extractFloat32Pixels(imageElement)
 
   try {
     if (onnxModel && window.ort) {
-      const rgbFloats = extractFloat32Pixels(imageElement)
       const ort = window.ort
       const inTensor = new ort.Tensor('float32', rgbFloats, [1, 224, 224, 3])
       const res = await onnxModel.run({ [onnxModel.inputNames[0]]: inTensor })
@@ -816,6 +1011,26 @@ export async function predict(imageElement, species = 'Canine') {
       confidence: item.confidence,
     }))
 
+    // 2c. Multi-Species Out-of-Scope (OOD) & Objective 1.4 Diagnostic Test Engine
+    const outOfScopeResult = evaluateOutOfScopeCondition({
+      rgbFloats,
+      topLabel,
+      topConf,
+      candidateScores,
+      species,
+      selectedSymptoms: [],
+    })
+
+    let finalConf = topConf
+    let finalTop3 = top3
+    if (outOfScopeResult.isOutOfScope) {
+      finalConf = outOfScopeResult.clampedConfidence
+      finalTop3 = top3.map((item, idx) => ({
+        ...item,
+        confidence: idx === 0 ? finalConf : Math.min(item.confidence, finalConf * 0.85),
+      }))
+    }
+
     // Immediate cleanup of input tensor to preserve mobile WebAssembly heap memory
     if (inputTensor && typeof inputTensor.dispose === 'function') {
       try { inputTensor.dispose() } catch (_) {}
@@ -827,14 +1042,17 @@ export async function predict(imageElement, species = 'Canine') {
     return {
       label: topLabel,
       displayLabel: CLASS_DISPLAY[topLabel] || topLabel,
-      confidence: topConf,
-      percent: `${(topConf * 100).toFixed(1)}%`,
+      confidence: finalConf,
+      percent: `${(finalConf * 100).toFixed(1)}%`,
       description: CLASS_DESCRIPTIONS[topLabel] || '',
-      top3,
+      top3: finalTop3,
       gradcam,
       engine: 'wasm',
+      isOutOfScope: outOfScopeResult.isOutOfScope,
+      outOfScopeAssessment: outOfScopeResult,
       biophysicalTelemetry: {
         highEryPct: coatAudit.highEryPct,
+        hemorrhagicRatio: outOfScopeResult.hemorrhagicRatio,
         furDensity: coatAudit.furDensity,
         centerFurDensity: coatAudit.centerFurDensity,
         outerFurDensity: coatAudit.outerFurDensity,
@@ -1173,5 +1391,10 @@ export function getSuggestedSymptomsForDisease(diseaseLabel) {
     }
   }
   return []
+}
+
+if (typeof window !== 'undefined') {
+  window.__vetlink_predict = predict
+  window.__vetlink_evaluateOutOfScopeCondition = evaluateOutOfScopeCondition
 }
 
